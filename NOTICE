@@ -1,0 +1,47 @@
+haruyuki-gui
+Copyright 2026 The Haruyuki GUI Authors
+
+This product includes software developed by third parties. See the THIRD-PARTY
+file for the inventory of third-party components and their licenses.
+
+================================================================================
+How to maintain this file
+================================================================================
+
+NOTICE is an Apache License 2.0 artifact: it carries attribution that must travel
+with both source and binary distributions of this project. THIRD-PARTY is the
+inventory of what we depend on; NOTICE is the legal attribution record.
+
+Add an entry under "Attributions" when -- and only when -- at least one of the
+following is true:
+
+1. We modify third-party code licensed under Apache-2.0 and redistribute it.
+   Section 4(b) of the license requires modified files to carry prominent
+   notices stating that they were changed. Record the component, the files
+   touched, and the nature of the change.
+2. A third-party license requires its NOTICE text (or equivalent attribution) to
+   be preserved in our distribution. Reproduce that text verbatim under
+   "Attributions"; do not reword, summarize, or translate it.
+3. We ship a component whose license obliges us to reproduce an attribution
+   notice in a NOTICE / "about" surface (for example Apache-2.0 components that
+   already have their own NOTICE file, or licenses with an attribution clause).
+
+Do NOT add entries for:
+
+- dependencies that never ship. Lint, test, and build-time tooling are inventoried
+  in THIRD-PARTY under "Dev-only dependencies" instead; the authoritative list is
+  devDependencies in package.json plus pnpm-lock.yaml.
+- code we wrote, or first-party assets we created. Those are covered by the
+  project copyright line above.
+
+Keep every entry factual and minimal: component name, version, upstream URL,
+license, and the exact obligation it satisfies. When an item fits both files,
+record it in both.
+
+================================================================================
+Attributions
+================================================================================
+
+No third-party NOTICE text, and no modified Apache-2.0 third-party code, is
+distributed yet. This section is intentionally empty during P0 and must be filled
+before the first public release that bundles third-party code.

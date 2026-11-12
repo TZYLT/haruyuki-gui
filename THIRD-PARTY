@@ -1,0 +1,46 @@
+# Third-Party Components
+
+`haruyuki-gui` is licensed under the Apache License 2.0 (see LICENSE and NOTICE).
+
+This file is the inventory of third-party software touched by this repository. It
+answers one question: what, exactly, reaches a user?
+
+## Inclusion rules
+
+An entry is required if **any** of the following holds:
+
+1. The dependency is bundled, linked, vendored, or shipped inside a published
+   artifact (Electron application bundle, VS Code extension package, distributed
+   archive, bundled documentation/assets).
+2. The dependency's code or assets are copied into this repository rather than
+   installed at build time.
+3. The dependency's license requires attribution in a distribution surface. Such
+   an obligation also belongs in NOTICE -- see the rules in that file.
+
+No entry is required for:
+
+- **Dev-only dependencies** (lint, formatting, test, type-checking, build
+  tooling). They are not distributed; they are recorded in the note at the bottom
+  of this file, and the authoritative list is `devDependencies` in package.json
+  together with `pnpm-lock.yaml`. Re-evaluate this classification whenever a tool
+  starts shipping inside a release artifact.
+- Transitive dependencies of dev-only dependencies that also never ship.
+- First-party code and first-party assets, which are covered by the project
+  copyright line in NOTICE.
+
+When unsure whether something ships, record it. A missing row is a compliance
+defect; a redundant row is only noise.
+
+## Inventory
+
+| Package | Version | License | Source | Notes |
+| ------- | ------- | ------- | ------ | ----- |
+| _none yet_ | - | - | - | No third-party runtime code is bundled or distributed at P0. |
+
+## Dev-only dependencies (not shipped, therefore not listed above)
+
+All current dependencies are development-time only: ESLint, Prettier, TypeScript,
+typescript-eslint, Vitest, the Vitest coverage provider, madge, and `@types/node`.
+The authoritative versions live in `package.json` (`devDependencies`) and
+`pnpm-lock.yaml`. If any of these ever becomes part of a published artifact, it
+must be moved into the inventory table above.

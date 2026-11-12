@@ -1,0 +1,15 @@
+{
+  "_comment": "Policy for scripts/check-module-ownership.mjs. Two checks read this file: (A) module ownership - some internal modules may only be imported by an explicit allow list; (B) barrel forwarding - a module whose exports only re-export other modules hides ownership and is rejected unless allowed here.",
+  "_fields": {
+    "modules[].path": "Repo-relative posix glob of the protected module domain. It is matched against the RESOLVED file path of the imported module, not against the specifier, so a relative import such as ../../core/src/engine/x.ts is caught too. Glob syntax: '*' matches any run of characters inside one path segment, '**' matches across segments (a trailing '/**' therefore covers a whole directory), '?' matches one non-slash character. Protect a directory with 'dir/**'; a bare 'dir' only matches a file named exactly 'dir'.",
+    "modules[].allowedImporters": "Repo-relative posix globs of the only files that may import the domain. An import from inside the domain itself (importer also matches modules[].path) is always allowed, so a domain never has to allow-list itself.",
+    "modules[].reason": "Optional English sentence copied into the violation message so the reader learns why the boundary exists.",
+    "barrels.forbid": "Required boolean. true = a pure forwarding module is a violation unless its path matches barrels.allow. false = check B is disabled.",
+    "barrels.allow": "Repo-relative posix globs of barrel files that are allowed to exist. Defaults to an empty array when omitted."
+  },
+  "modules": [],
+  "barrels": {
+    "forbid": true,
+    "allow": []
+  }
+}

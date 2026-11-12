@@ -1,0 +1,20 @@
+# Normalize all text files to LF inside the repository (and in the working
+# tree), so Windows and POSIX contributors never produce CRLF churn.
+* text=auto eol=lf
+
+# Binary assets: git must never normalize, diff, or merge these.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+
+# Windows-only scripts keep CRLF (kept in sync with .editorconfig).
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# POSIX scripts stay LF even when checked out on Windows.
+*.sh text eol=lf
