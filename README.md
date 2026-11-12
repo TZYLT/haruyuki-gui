@@ -1,108 +1,55 @@
 # haruyuki-gui
 
-A desktop GUI project built around one shared core: a single Electron desktop
-shell and a single VS Code extension shell, both sitting on the same TypeScript
-packages.
+[English](README.en.md) · 简体中文
 
-> **Status: P0 -- foundation under construction. This project does not run yet.**
->
-> The repository currently holds the workspace skeleton only: package manifests,
-> empty source entry points, and repository tooling. There is no working
-> application, no release artifact, and no supported way to build or launch it.
-> Everything below describes intended structure, not shipped behaviour.
+> **AIGC 声明**：本项目的代码与文档大量由 AI 辅助生成，再由人类维护者审阅、裁决与验证。AI 生成的内容可能包含逻辑错误、过时信息或安全缺陷；本项目按 **"AS IS"** 提供，使用或再分发前请自行审查、测试与评估风险。发现问题欢迎在仓库的 issue 中反馈。
 
-## Repository layout
+## 一、这个项目是什么
 
-```
-packages/
-  protocol/   shared protocol and contract definitions
-  core/       core logic shared by both shells
-  ui/         shared UI layer
-apps/
-  desktop/    Electron desktop shell
-  vscode/     VS Code extension shell
-scripts/      repository automation and verification tooling
-fixtures/     sample trees used by the gate self-tests
-```
+**Haruyuki-gui 是基于 Haruyuki 的桌面应用，以及具有类似功能的衍生插件。**
 
-`fixtures/` and `pnpm-lock.yaml` are intentionally tracked: the lockfile pins the
-build, and the fixture trees exist precisely so the self-test gate has stable
-input. Do not add ignore rules that match them.
+Haruyuki 本身是一个成本节约型陪伴 agent 运行时，具备复杂的机制与丰富的使用场景，TUI 已经不能满足长期使用的需要。
 
-## License
+因此 Haruyuki-gui 致力于为其赋予好用美观的 GUI，让长期和多场景使用成为可能。我们的设计尽量向日常的场景靠拢，但是仍然会有考虑不周之处请谅解，也欢迎贡献不同的想法。
 
-Licensed under the Apache License, Version 2.0 (see [LICENSE](LICENSE)).
+目前项目仍处于初期阶段，尚未有可用的应用，请过段时间再回来看看吧。
 
-- [NOTICE](NOTICE) records third-party attributions that must travel with
-  distributions, and states when an entry has to be added.
-- [THIRD-PARTY](THIRD-PARTY) is the inventory of third-party components that
-  actually ship, plus the rules for adding entries.
+### 我们的目标
 
-Unless required by applicable law or agreed to in writing, all contributions are
-provided on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND.
+| 目标                       | 含义                                                                           |
+| -------------------------- | ------------------------------------------------------------------------------ |
+| **全能易用的桌面应用**     | 覆盖日常使用所需的完整能力，而不是一个只能聊天的窗口；其衍生插件也会尽量做到。   |
+| **完全本地自持**           | 不依赖任何云服务。状态、数据、配置都在你自己的机器上                           |
+| **良好的视觉设计与可视化** | 界面本身要好看、信息要看得懂——把一个强大的运行时，变成一个人愿意每天打开的应用 |
 
-## Getting started
+## 二、当前状态
 
-### Prerequisites
+> **基建仍在开发中，目前没有可用的构建。**
 
-- Node.js `>=24` (the current development machine runs 24.22.3).
-- `corepack`, which ships with Node: do not install pnpm by hand. The root
-  `package.json` pins `packageManager: pnpm@10.24.0`, and `corepack enable`
-  exposes exactly that version.
+仓库里现在只有工程地基：工作区骨架、包边界门禁、门禁自测与提交钩子。**没有可用的应用，没有构建产物，也没有启动方式。**
 
-### Install
+请过段时间再来看看。同时——**仍然非常欢迎你贡献这个项目**，有建议或者想法也欢迎分享。下面的开发计划描述了蓝图与当前进度，不代表已经实现的功能。
 
-```sh
-corepack enable   # once per machine
-pnpm install      # the first run downloads about 250 packages
-```
+## 三、开发计划
 
-If a bare `pnpm` fails with `Cannot find module .../pnpm.cjs`, corepack fell
-back to pnpm 12 instead of the pinned 10.24.0. Check that the root
-`package.json` still has its `packageManager` field: that field is what pins
-the version, so without it corepack has nothing to resolve.
+- [x] **工程基座**：工作区骨架、包边界门禁、门禁自测、提交钩子
+- [ ] **引擎边界**：引擎进程托管与连接握手、事件主循环、能力映射
+- [ ] **共享内核**：事件归并、会话状态、渲染桥帧层
+- [ ] **桌面壳**：Electron 骨架与安全基线、宿主能力适配、进程间搬运
+- [ ] **呈现层**：应用框架、docking 布局、页面注册表
+- [ ] **页面与命令面**：各功能页面与命令面板
+- [ ] **分发与质量**：自包含运行时、打包与发布流程
+- [ ] **VSCode 轨**：扩展骨架、webview 宿主、运行时托管
 
-### Git hooks
+顺序由依赖决定，不按编号推进。勾选只表示"已落地并有门禁守护"，不表示功能可用。
 
-```sh
-pnpm hooks:install                      # write the hook configuration
-node scripts/install-hooks.mjs --check  # report only, exit 1 when not installed
-```
+如果你要动代码：先 `pnpm install`（需要 Node 24 与 corepack），改完确保 `pnpm verify` 通过——那一条命令就是全部门禁。
 
-`pnpm hooks:install` runs `git config core.hooksPath .githooks`, one
-repository-local setting, and it is idempotent. The `pre-commit` hook then runs
-three fast checks - eslint and `prettier --check` over the staged
-`.ts/.mts/.cts/.js/.mjs/.cjs` files, plus the 1000-line per-file limit - and
-refuses the commit when one of them fails. `git commit --no-verify` bypasses it
-for a single commit. The slow checks (typecheck, unit tests, cycle detection)
-deliberately stay out of the hook, so a commit stays under a few seconds.
+## 四、许可证
 
-### Common commands
+以 Apache License 2.0 发布，全文见 [LICENSE](LICENSE)。
 
-| Command                            | What it covers                                        |
-| ---------------------------------- | ----------------------------------------------------- |
-| `pnpm verify`                      | **the full gate in one command** (see below)          |
-| `pnpm verify:full`                 | `verify` plus the three repository-discipline checks  |
-| `pnpm typecheck`                   | `pnpm -r typecheck`, every workspace package          |
-| `pnpm exec eslint .`               | the lint gate, including the package-boundary rules   |
-| `node scripts/check-file-size.mjs` | the 1000-line per-file limit and its ratchet baseline |
-| `node scripts/check-cycles.mjs`    | circular imports, via madge                           |
+- [NOTICE](NOTICE) 记录必须随分发传播的第三方署名，并写明何时需要新增条目
+- [THIRD-PARTY](THIRD-PARTY) 是实际随产物分发的第三方组件清单与登记规则
 
-### What `pnpm verify` runs
-
-| Segment          | What it checks                                                                                                                                                                        |
-| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1 typecheck      | `pnpm -r typecheck`                                                                                                                                                                   |
-| 2 lint           | package-boundary rules, on the raw import strings                                                                                                                                     |
-| 3 boundaries     | the same rules on the **resolved dependency graph** - this is the authoritative check, and it catches relative-path, `require()` and dynamic-`import()` bypasses that lint cannot see |
-| 4 gate self-test | fixture pairs proving each rule still fails when it should - **a failure here means the gate is broken, not your code**                                                               |
-| 5 test           | the remaining unit tests                                                                                                                                                              |
-| 6 coverage       | reported only, never a threshold                                                                                                                                                      |
-
-`pnpm verify:full` appends the file-size ratchet, cycle detection and module
-ownership checks. Those are repository discipline rather than package
-boundaries, so they live outside `verify` - but they also run in the pre-commit
-hook.
-
-Use `git commit --no-verify` to escape a false positive, never to land a real
-violation.
+在适用法律要求的范围内，除非另有书面约定，所有贡献均按 "AS IS" 提供，不附带任何明示或暗示的担保。
