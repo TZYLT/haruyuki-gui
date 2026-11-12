@@ -2,7 +2,7 @@
   "name": "haruyuki-gui",
   "private": true,
   "type": "module",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "packageManager": "pnpm@10.24.0",
   "engines": {
     "node": ">=24"

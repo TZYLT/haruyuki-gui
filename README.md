@@ -81,10 +81,28 @@ deliberately stay out of the hook, so a commit stays under a few seconds.
 
 | Command                            | What it covers                                        |
 | ---------------------------------- | ----------------------------------------------------- |
+| `pnpm verify`                      | **the full gate in one command** (see below)          |
+| `pnpm verify:full`                 | `verify` plus the three repository-discipline checks  |
 | `pnpm typecheck`                   | `pnpm -r typecheck`, every workspace package          |
 | `pnpm exec eslint .`               | the lint gate, including the package-boundary rules   |
 | `node scripts/check-file-size.mjs` | the 1000-line per-file limit and its ratchet baseline |
 | `node scripts/check-cycles.mjs`    | circular imports, via madge                           |
+
+### What `pnpm verify` runs
+
+| Segment          | What it checks                                                                                                                                                                        |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1 typecheck      | `pnpm -r typecheck`                                                                                                                                                                   |
+| 2 lint           | package-boundary rules, on the raw import strings                                                                                                                                     |
+| 3 boundaries     | the same rules on the **resolved dependency graph** - this is the authoritative check, and it catches relative-path, `require()` and dynamic-`import()` bypasses that lint cannot see |
+| 4 gate self-test | fixture pairs proving each rule still fails when it should - **a failure here means the gate is broken, not your code**                                                               |
+| 5 test           | the remaining unit tests                                                                                                                                                              |
+| 6 coverage       | reported only, never a threshold                                                                                                                                                      |
+
+`pnpm verify:full` appends the file-size ratchet, cycle detection and module
+ownership checks. Those are repository discipline rather than package
+boundaries, so they live outside `verify` - but they also run in the pre-commit
+hook.
 
 Use `git commit --no-verify` to escape a false positive, never to land a real
 violation.
