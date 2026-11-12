@@ -53,7 +53,11 @@
  *   realpath, and attributed to `packages/<name>` or `apps/<name>`. Bare
  *   `@haruyuki/<name>` specifiers map by name, deep paths included. `electron`,
  *   `vscode`, `node:*`, bare Node builtins and every other bare name are
- *   external dependencies: never matrix edges, only inputs for R2-R5.
+ *   external dependencies: never matrix edges, only inputs for R2-R5 and R12.
+ *   R12 is the shell-to-shell host-API rule: apps/desktop must not import the
+ *   VSCode host API `vscode`, and apps/vscode must not import the Electron host
+ *   API `electron` or `electron/*`. Internal packages stay matrix edges, so
+ *   `@haruyuki/vscode` is R8/R9 material, never R12 material.
  *
  * Unresolved specifiers
  *   A path specifier that resolves to no file inside the root is a violation
@@ -199,6 +203,23 @@ const RULE_MESSAGES = new Map([
       `R11: @haruyuki/${from} must not import the app shell @haruyuki/${to} ` +
       "(type-only imports included); the dependency edge points the other way",
   ],
+]);
+
+/**
+ * R12: the host API each app shell must never import, keyed by the shell's
+ * workspace package name. A shell binds its own host API (desktop -> electron,
+ * vscode -> vscode); the other one only arrives by accident, for example when
+ * an import is copied from one shell to the other.
+ *
+ * This table is keyed by *host API module name*, not by workspace package. The
+ * internal packages `@haruyuki/desktop` / `@haruyuki/vscode` are ordinary
+ * matrix edges (R8/R9): `packageOfSpecifier()` claims them before the external
+ * branch runs, so a bare `vscode` here can never be mistaken for
+ * `@haruyuki/vscode`.
+ */
+const FOREIGN_HOST_API_BY_SHELL = new Map([
+  ["desktop", "vscode"],
+  ["vscode", "electron"],
 ]);
 
 await runGate(collectViolations, { flags: ["verbose"] });
@@ -354,7 +375,7 @@ function checkSpecifier({ scanRoot, file, sourcePackage, stats, sourceLine, spec
     return edge === null ? [] : violation(edge.rule, edge.message);
   }
 
-  // 3. External dependencies: never matrix edges, only R2-R5.
+  // 3. External dependencies: never matrix edges, only R2-R5 and R12.
   stats.external += 1;
 
   const hostApi = hostApiOf(specifier);
@@ -431,7 +452,12 @@ function evaluateEdge(from, to, typeOnly) {
 }
 
 /**
- * R2/R3/R5: the host-API constraints, which sit outside the matrix.
+ * R2/R3/R5/R12: the host-API constraints, which sit outside the matrix.
+ *
+ * The shared packages must not touch any host API at all. Each app shell owns
+ * one host API and must not import the other one (R12), which is a separate
+ * question from the matrix: `vscode` is a host API module name, while
+ * `@haruyuki/vscode` is an internal package handled by R8/R9.
  *
  * @param {string | null} sourcePackage
  * @param {string} hostApi
@@ -462,6 +488,16 @@ function hostApiViolation(sourcePackage, hostApi) {
       message:
         `R5: @haruyuki/ui is the renderer and must not import the host API "${hostApi}"; ` +
         "talk to the host through @haruyuki/protocol instead",
+    };
+  }
+
+  if (sourcePackage !== null && FOREIGN_HOST_API_BY_SHELL.get(sourcePackage) === hostApi) {
+    return {
+      rule: "R12",
+      message:
+        `R12: @haruyuki/${sourcePackage} (apps/${sourcePackage}) binds its own host API and ` +
+        `must not import the other shell's host API "${hostApi}" (type-only imports included); ` +
+        "keep each shell bound to its own host",
     };
   }
 

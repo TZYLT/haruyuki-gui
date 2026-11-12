@@ -1,11 +1,11 @@
 // ESLint flat config - workspace lint gates.
 //
 // Global ignores + TypeScript parser wiring live in the shared block below.
-// The per-package blocks implement the package-boundary rules R1-R7 (
-// acceptance matrix): importing across a forbidden
-// edge, or value-importing a package that may only be type-imported, is an
-// error. Each rule id is embedded in its message so gate self-tests can assert
-// which rule fired.
+// The per-package blocks implement the package-boundary rules (the frozen
+// acceptance matrix plus the shell host-API rules): importing across a
+// forbidden edge, or value-importing a package that may only be type-imported,
+// or reaching for the other app shell's host API, is an error. Each rule id is
+// embedded in its message so gate self-tests can assert which rule fired.
 //
 // Deliberate choices:
 // - eslint core `no-restricted-imports` is used (the @typescript-eslint copy is
@@ -87,6 +87,13 @@ NODE_BUILTIN_PATTERNS.push("/node:*");
 // Host APIs, anchored the same way: `/electron/*` covers deep imports such as
 // `electron/main`; `vscode` has no public subpaths worth listing.
 const HOST_API_PATTERNS = ["/electron", "/electron/*", "/vscode"];
+
+// R12: each app shell binds exactly one host API and must never import the
+// other shell's one. The leading "/" matters here for the same reason as above:
+// without it, `@haruyuki/vscode` (an internal package, governed by R8/R9) would
+// match the bare `vscode` host pattern and report the wrong rule.
+const VSCODE_HOST_API_PATTERNS = ["/vscode"];
+const ELECTRON_HOST_API_PATTERNS = ["/electron", "/electron/*"];
 
 export default [
   {
@@ -216,9 +223,10 @@ export default [
     },
   },
 
-  // R8: apps/desktop may import protocol/core/ui, but never the sibling app
-  // shell. This is the first rule scoped to apps/desktop; the allowed edges
-  // stay unrestricted on purpose.
+  // R8 + R12: apps/desktop may import protocol/core/ui, but never the sibling
+  // app shell, and it binds the Electron host API, so the VSCode host API is
+  // off limits. Both rules share one config object for the override reason
+  // noted above; the allowed edges stay unrestricted on purpose.
   {
     files: packageFiles("apps/desktop"),
     rules: {
@@ -231,13 +239,18 @@ export default [
               message:
                 "R8: @haruyuki/desktop (apps/desktop) must not import the sibling app shell @haruyuki/vscode (type imports included)",
             },
+            {
+              group: VSCODE_HOST_API_PATTERNS,
+              message:
+                'R12: @haruyuki/desktop (apps/desktop) binds the Electron host API and must not import the VSCode host API "vscode" (type imports included)',
+            },
           ],
         },
       ],
     },
   },
-  // R9: apps/vscode may import protocol/core/ui, but never the sibling app
-  // shell.
+  // R9 + R12: apps/vscode may import protocol/core/ui, but never the sibling
+  // app shell, and it binds the VSCode host API, so Electron is off limits.
   {
     files: packageFiles("apps/vscode"),
     rules: {
@@ -249,6 +262,11 @@ export default [
               group: ["@haruyuki/desktop", "@haruyuki/desktop/*", "@haruyuki/desktop/**"],
               message:
                 "R9: @haruyuki/vscode (apps/vscode) must not import the sibling app shell @haruyuki/desktop (type imports included)",
+            },
+            {
+              group: ELECTRON_HOST_API_PATTERNS,
+              message:
+                "R12: @haruyuki/vscode (apps/vscode) binds the VSCode host API and must not import the Electron host API (electron / electron/*; type imports included)",
             },
           ],
         },

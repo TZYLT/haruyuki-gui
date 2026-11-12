@@ -83,8 +83,8 @@ fi
 
 say "2/3 file-size: whole tree"
 if ! node scripts/check-file-size.mjs; then
-  printf 'pre-commit: a file is over the 1000-line limit (or over its recorded baseline).\n' >&2
-  printf 'pre-commit: split it, or lower scripts/source-file-size-baseline.json.\n' >&2
+  printf 'pre-commit: over the 1000-line limit or over its pinned baseline: split the file.\n' >&2
+  printf 'pre-commit: pinned legacy files must match their exact baseline; adjust it and log why.\n' >&2
   die "file-size failed"
 fi
 

@@ -1,0 +1,9 @@
+{
+  "modules": [],
+  "barrels": {
+    "forbid": true,
+    "allow": [
+      "packages/ui/src/allowed.ts"
+    ]
+  }
+}
