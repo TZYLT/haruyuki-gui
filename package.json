@@ -3,6 +3,14 @@
   "private": true,
   "type": "module",
   "version": "0.1.0",
+  "description": "Desktop GUI foundation: an Electron shell and a VS Code extension shell sharing one core.",
+  "license": "Apache-2.0",
+  "keywords": [
+    "electron",
+    "vscode-extension",
+    "typescript",
+    "monorepo"
+  ],
   "packageManager": "pnpm@10.24.0",
   "engines": {
     "node": ">=24"
