@@ -1,16 +1,17 @@
 /**
- * Vitest configuration for the gate self-tests       .
+ * Vitest configuration for the gate self-tests and package unit tests.
  *
- * Only the gate self-tests live under `scripts/**` and end in `.test.ts`. The
- * fixture trees are deliberately malformed, oversized or cyclic, so they must
- * never be collected as tests; `fixtures/**` is therefore excluded explicitly.
+ * Gate self-tests live under `scripts/**` and end in `.test.ts`; package unit
+ * tests are co-located next to their sources under each package's `src` tree.
+ * The fixture trees are deliberately malformed, oversized or cyclic, so they
+ * must never be collected as tests; `fixtures/**` is therefore excluded.
  */
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
     environment: "node",
-    include: ["scripts/**/*.test.ts"],
+    include: ["scripts/**/*.test.ts", "packages/*/src/**/*.test.ts"],
     exclude: [
       "**/node_modules/**",
       "**/dist/**",
