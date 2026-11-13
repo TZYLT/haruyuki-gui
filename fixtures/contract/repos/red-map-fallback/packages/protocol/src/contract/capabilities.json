@@ -12,7 +12,7 @@
     },
     {
       "name": "agent.fallback",
-      "wire": "agent_list",
+      "wire": "file_ops",
       "since": "0.6.0",
       "scope": "none",
       "shape": "request-response",

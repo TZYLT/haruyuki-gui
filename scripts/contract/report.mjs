@@ -12,10 +12,9 @@
  *   1 added          2 removed        3 suspected renames   4 field changes
  *   5 parity         6 capability impact                   7 action required
  *
- * The order follows route doc 08 section 4.2 and the assigned work package
- * (added before removed). Requirements doc 07 section 6.5 lists removed before
- * added; that is the single known ordering discrepancy and is recorded as a
- * Deviation instead of being silently reordered.
+ * The order follows route doc 08 section 4.2 and the assigned work package:
+ * added before removed. Requirements doc 07 section 6.5 was aligned to the same
+ * order (decision D-18), so section 1 is added and section 2 is removed.
  *
  * Rendering is pure: `renderReport(result)` takes the object produced by
  * `scripts/contract/diff.mjs`, returns a string array and never reads files.

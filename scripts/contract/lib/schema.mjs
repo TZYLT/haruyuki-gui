@@ -17,9 +17,10 @@
  *   });
  *   // canonicalizeSnapshot(): frozen key order at every level, arrays sorted
  *   // (commands/messages by wire, fields by name, direction and the health /
- *   // special string arrays lexicographically). It never drops or invents data:
- *   // unknown keys are appended in lexicographic order so the validator can
- *   // report them instead of the writer silently trusting them.
+ *   // special string arrays lexicographically). It is an ordering pass only: it
+ *   // never drops or invents data. Unknown keys are appended in lexicographic
+ *   // order and an illegal array element is kept in place, so the validator
+ *   // reports them instead of the writer silently trusting them.
  *
  *   const { ok, violations } = validateSnapshot(snapshot);
  *   // ok === false -> each violation is {path, rule, message}, English, single
@@ -30,6 +31,9 @@
  * not depend on the host locale. `engine.extractedAt` is a normal field here;
  * ignoring it during diff is the diff's job.
  */
+
+import { canonicalizeSnapshot as canonicalize } from "./canonical.mjs";
+import { compareStrings, isPlainObject } from "./json.mjs";
 
 /** The only accepted schema version. Bumping it needs a route-doc change. */
 export const SNAPSHOT_SCHEMA_VERSION = 1;
@@ -110,30 +114,22 @@ const HOME_PATTERN = /^[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*:\d+$/;
 /**
  * Canonicalize a snapshot: frozen key order, sorted arrays, no data loss.
  *
- * Unknown keys are kept (appended lexicographically) so the validator can flag
- * them; silently deleting them would turn an accidental schema extension into a
- * "looks valid" snapshot. Only array-like fields are sorted; scalars are copied
- * as-is.
+ * Implemented in `canonical.mjs` and re-exported here so every consumer keeps
+ * one import site. See that module for the no-data-loss guarantee.
  *
  * @param {unknown} snapshot
  * @returns {Record<string, unknown>}
  */
 export function canonicalizeSnapshot(snapshot) {
-  const source = isPlainObject(snapshot) ? snapshot : {};
-
-  return {
-    schemaVersion: source.schemaVersion,
-    engine: orderKeys(source.engine, SNAPSHOT_KEY_ORDER.engine),
-    counts: orderKeys(source.counts, SNAPSHOT_KEY_ORDER.counts),
-    commands: canonicalCommands(source.commands),
-    messages: canonicalMessages(source.messages),
-    special: canonicalSpecial(source.special),
-    health: canonicalHealth(source.health),
-  };
+  return canonicalize(snapshot, SNAPSHOT_KEY_ORDER);
 }
 
 /**
  * Validate a snapshot against v1. Never throws.
+ *
+ * Besides the per-record shape rules, the seven `counts` are cross-checked
+ * against the detail sections (`count-mismatch`), so a stale or hand-edited
+ * count cannot pass.
  *
  * @param {unknown} snapshot
  * @returns {{ ok: boolean, violations: {path: string, rule: string, message: string}[] }}
@@ -172,8 +168,122 @@ export function validateSnapshot(snapshot) {
   validateMessages(snapshot.messages, violations);
   validateSpecial(snapshot.special, violations);
   validateHealth(snapshot.health, violations);
+  validateCountConsistency(snapshot, violations);
 
   return { ok: violations.length === 0, violations };
+}
+
+/**
+ * Cross-check the seven derived counts against the records they describe.
+ *
+ * `counts` used to be write-only: any integer passed, and a snapshot could claim
+ * 124 commands while carrying one. The equalities are all derivable from the
+ * detail sections, so a stale or hand-edited count is now a hard violation:
+ *
+ *   wireCommands    = command records with a non-null wire (07 section 6.6)
+ *   messages        = message records
+ *   inboundAccepted = inbound command records + inboundOnly (set arithmetic:
+ *                     |accepted| = |accepted & commands| + |accepted - commands|)
+ *   advertisedCommands / dispatchCases = the lengths of the arrays in `special`
+ *
+ * A count of the wrong type is skipped here so `validateCounts` reports it once.
+ *
+ * @param {Record<string, unknown>} snapshot
+ * @param {{path: string, rule: string, message: string}[]} violations
+ */
+function validateCountConsistency(snapshot, violations) {
+  const counts = isPlainObject(snapshot.counts) ? snapshot.counts : null;
+
+  if (!counts) {
+    return;
+  }
+
+  const path = "$.counts";
+  const commands = Array.isArray(snapshot.commands)
+    ? snapshot.commands.filter((command) => isPlainObject(command))
+    : null;
+  const messages = Array.isArray(snapshot.messages) ? snapshot.messages : null;
+
+  if (commands) {
+    const wired = commands.filter((command) => typeof command.wire === "string").length;
+    const inbound = commands.filter((command) => command.inbound === true).length;
+
+    checkCountEquals(
+      counts.wireCommands,
+      wired,
+      `${path}.wireCommands`,
+      violations,
+      "command records with a wire",
+    );
+
+    if (Number.isInteger(counts.inboundOnly)) {
+      checkCountEquals(
+        counts.inboundAccepted,
+        inbound + counts.inboundOnly,
+        `${path}.inboundAccepted`,
+        violations,
+        "inbound command records plus inboundOnly",
+      );
+    }
+  }
+
+  if (messages) {
+    checkCountEquals(
+      counts.messages,
+      messages.length,
+      `${path}.messages`,
+      violations,
+      "message records",
+    );
+  }
+
+  const special = isPlainObject(snapshot.special) ? snapshot.special : {};
+  const remote = isPlainObject(special.remoteCommands) ? special.remoteCommands : null;
+
+  if (remote) {
+    if (Array.isArray(remote.advertised)) {
+      checkCountEquals(
+        counts.advertisedCommands,
+        remote.advertised.length,
+        `${path}.advertisedCommands`,
+        violations,
+        "remoteCommands.advertised entries",
+      );
+    }
+
+    if (Array.isArray(remote.dispatchCases)) {
+      checkCountEquals(
+        counts.dispatchCases,
+        remote.dispatchCases.length,
+        `${path}.dispatchCases`,
+        violations,
+        "remoteCommands.dispatchCases entries",
+      );
+    }
+  }
+}
+
+/**
+ * @param {unknown} declared count as written in the snapshot
+ * @param {number} actual value derived from the detail sections
+ * @param {string} path
+ * @param {{path: string, rule: string, message: string}[]} violations
+ * @param {string} subject what the count must equal
+ */
+function checkCountEquals(declared, actual, path, violations, subject) {
+  if (typeof declared !== "number" || !Number.isInteger(declared)) {
+    return;
+  }
+
+  if (declared !== actual) {
+    violations.push(
+      violation(
+        path,
+        "count-mismatch",
+        `${path.split(".").pop()} must be ${actual} (${subject}), received ${declared}`,
+      ),
+    );
+  }
 }
 
 /**
@@ -715,189 +825,4 @@ function checkKeys(object, order, path, violations, requireAll) {
  */
 function violation(path, rule, message) {
   return { path, rule, message };
-}
-
-/**
- * @param {unknown} value
- * @returns {value is Record<string, unknown>}
- */
-function isPlainObject(value) {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-/**
- * Copy known keys in frozen order, then unknown keys lexicographically.
- *
- * @param {unknown} value
- * @param {readonly string[]} order
- * @returns {Record<string, unknown>}
- */
-function orderKeys(value, order) {
-  const source = isPlainObject(value) ? value : {};
-  const ordered = {};
-
-  for (const key of order) {
-    if (Object.hasOwn(source, key)) {
-      ordered[key] = source[key];
-    }
-  }
-
-  const extras = Object.keys(source)
-    .filter((key) => !order.includes(key))
-    .sort(compareStrings);
-
-  for (const key of extras) {
-    ordered[key] = source[key];
-  }
-
-  return ordered;
-}
-
-/**
- * @param {unknown} commands
- * @returns {Record<string, unknown>[]}
- */
-function canonicalCommands(commands) {
-  if (!Array.isArray(commands)) {
-    return [];
-  }
-
-  return commands
-    .filter(isPlainObject)
-    .map((command) => ({
-      wire: command.wire,
-      type: command.type,
-      home: command.home,
-      direction: sortStrings(command.direction),
-      inbound: command.inbound,
-      fields: canonicalFields(command.fields),
-      shapeFingerprint: command.shapeFingerprint,
-      fieldLevel: command.fieldLevel,
-      health: command.health,
-    }))
-    .sort((left, right) => compareRecords(left, right));
-}
-
-/**
- * @param {unknown} messages
- * @returns {Record<string, unknown>[]}
- */
-function canonicalMessages(messages) {
-  if (!Array.isArray(messages)) {
-    return [];
-  }
-
-  return messages
-    .filter(isPlainObject)
-    .map((message) => ({
-      wire: message.wire,
-      type: message.type,
-      home: message.home,
-      fields: canonicalFields(message.fields),
-      shapeFingerprint: message.shapeFingerprint,
-      fieldLevel: message.fieldLevel,
-      health: message.health,
-    }))
-    .sort((left, right) => compareRecords(left, right));
-}
-
-/**
- * @param {unknown} fields
- * @returns {Record<string, unknown>[]}
- */
-function canonicalFields(fields) {
-  if (!Array.isArray(fields)) {
-    return [];
-  }
-
-  return fields
-    .filter(isPlainObject)
-    .map((field) => orderKeys(field, SNAPSHOT_KEY_ORDER.field))
-    .sort((left, right) => compareStrings(stringOrEmpty(left.name), stringOrEmpty(right.name)));
-}
-
-/**
- * @param {unknown} special
- * @returns {Record<string, unknown>}
- */
-function canonicalSpecial(special) {
-  const source = isPlainObject(special) ? special : {};
-  const fileOps = isPlainObject(source.fileOps) ? source.fileOps : {};
-  const remote = isPlainObject(source.remoteCommands) ? source.remoteCommands : {};
-  const startup = isPlainObject(source.startupText) ? source.startupText : {};
-
-  return {
-    fileOps: {
-      wire: fileOps.wire,
-      directions: sortStrings(fileOps.directions),
-    },
-    remoteCommands: {
-      advertised: sortStrings(remote.advertised),
-      handledElsewhere: orderKeys(remote.handledElsewhere, []),
-      unadvertisedAliases: orderKeys(remote.unadvertisedAliases, []),
-      dispatchCases: sortStrings(remote.dispatchCases),
-    },
-    startupText: {
-      required: sortStrings(startup.required),
-      optional: sortStrings(startup.optional),
-    },
-  };
-}
-
-/**
- * @param {unknown} health
- * @returns {Record<string, unknown>}
- */
-function canonicalHealth(health) {
-  const source = isPlainObject(health) ? health : {};
-
-  return {
-    degraded: source.degraded,
-    coarse: sortStrings(source.coarse),
-    unparsed: sortStrings(source.unparsed),
-  };
-}
-
-/**
- * @param {unknown} value
- * @returns {string[]}
- */
-function sortStrings(value) {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  return value.filter((item) => typeof item === "string").sort(compareStrings);
-}
-
-/**
- * @param {Record<string, unknown>} left
- * @param {Record<string, unknown>} right
- * @returns {number}
- */
-function compareRecords(left, right) {
-  const byWire = compareStrings(stringOrEmpty(left.wire), stringOrEmpty(right.wire));
-
-  if (byWire !== 0) {
-    return byWire;
-  }
-
-  return compareStrings(stringOrEmpty(left.type), stringOrEmpty(right.type));
-}
-
-/**
- * @param {string} left
- * @param {string} right
- * @returns {number}
- */
-function compareStrings(left, right) {
-  return left < right ? -1 : left > right ? 1 : 0;
-}
-
-/**
- * @param {unknown} value
- * @returns {string}
- */
-function stringOrEmpty(value) {
-  return typeof value === "string" ? value : "";
 }

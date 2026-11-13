@@ -2,16 +2,17 @@
  * Message extraction tests: the `WsProtocolMessage` union, the `parseServerMessage`
  * inbound accepted set and the two-direction `file_ops` case.
  *
- * Every count asserted here is read from the real read-only engine mirror at
+ * The locked counts are asserted against the real read-only engine mirror at
  * `_research/haruyuki` (v0.6.0 @ 1641a4f), because 127 union members, 124
  * OR-chain items and 136 wire records are locked facts, not fixture choices. A
- * missing mirror is a hard failure with a clear message; silently skipping would
- * let the seam rot until Starts.
+ * missing mirror skips those suites instead of failing: the mirror is not
+ * committed and a clean clone must stay green.
  *
  * The string fixtures at the bottom drive the pure helpers only, so the contract
  * reuse the same red cases for its gate fixtures without an engine checkout.
- * Nothing here writes to the repository, spawns the engine or touches the
- * network.
+ * They are plain `describe` suites because they never read `_research`, so they
+ * keep running in a clean clone. Nothing here writes to the repository, spawns
+ * the engine or touches the network.
  */
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
@@ -39,17 +40,12 @@ import {
   resolveInboundGuard,
 } from "./contract/lib/inbound.mjs";
 import { createTypeIndex } from "./contract/lib/scan.mjs";
+import { assertFailure } from "./lib/test-assert.js";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const ENGINE_ROOT = path.join(REPO_ROOT, "_research", "haruyuki");
 const EXTRACTOR_FILE = path.join(REPO_ROOT, "scripts", "contract", "extract-messages.mjs");
 const INBOUND_MODULE_FILE = path.join(REPO_ROOT, "scripts", "contract", "lib", "inbound.mjs");
-
-const MISSING_MIRROR_HINT =
-  `engine mirror is missing at ${ENGINE_ROOT}. ` +
-  " reads the pinned engine source: create the read-only mirror with " +
-  "`git clone --shared <main checkout>/_research/haruyuki _research/haruyuki` " +
-  "and check out commit 1641a4f (v0.6.0).";
 
 /** One inbound guard fixture: an `is<Type>` function comparing `type`. */
 const GUARD_FIXTURE =
@@ -68,8 +64,8 @@ const ENGINE_AVAILABLE = existsSync(path.join(ENGINE_ROOT, "src", "types"));
 /**
  * Engine-bound suites skip themselves in a clean clone: the pinned mirror is
  * not committed, and a clean-clone `verify` must stay green.
- * Run them where `_research/haruyuki` exists; the fixture-driven gate test
- * covers the pipeline without the mirror.
+ * Run them where `_research/haruyuki` exists; the string-fixture suites below
+ * cover the pure helpers without the mirror.
  */
 const describeWithEngine = ENGINE_AVAILABLE ? describe : describe.skip;
 
@@ -214,6 +210,29 @@ describeWithEngine("extract-messages: the WsProtocolMessage union", () => {
     }
   });
 
+  it("folds the RuntimeEnvelope base into every inherited message (P4-1)", () => {
+    const inherited = result.messages.filter((/** @type {object} */ message) =>
+      ["stream_delta", "turn_finished", "update_subagent_state"].includes(message.wire),
+    );
+
+    expect(inherited).toHaveLength(3);
+
+    for (const message of inherited) {
+      const names = message.fields.map((/** @type {object} */ field) => field.name);
+
+      expect(names, message.wire).toContain("runtime");
+      expect(names, message.wire).toContain("event_seq");
+      expect(names, message.wire).toContain("emitted_at");
+      expect(names, message.wire).toContain("idempotency_key");
+    }
+
+    const delta = result.messages.find(
+      (/** @type {object} */ message) => message.wire === "stream_delta",
+    );
+
+    expect(delta.fields).toHaveLength(7);
+  });
+
   it("marks a nested field nested and never emits readonly on this engine", () => {
     const record = result.messages.find(
       (/** @type {object} */ message) => message.wire === "runtime_start_response",
@@ -333,7 +352,37 @@ describeWithEngine("extract-messages: the file_ops special case", () => {
   });
 });
 
-describeWithEngine("extract-messages: pure helpers on string fixtures", () => {
+describeWithEngine("extract-messages: guard lookup through the real index", () => {
+  it("reverse-looks-up is<Name> through the index", () => {
+    expect(lookupGuardType(index, "isInputCommand", PROTOCOL_TYPES_FILE)).toEqual({
+      ok: true,
+      type: "InputCommand",
+      wire: "input",
+      home: "src/types/protocol_v2.ts:712",
+    });
+    expect(lookupGuardType(index, "isNoSuchCommand", PROTOCOL_TYPES_FILE)).toMatchObject({
+      ok: false,
+      type: "NoSuchCommand",
+      code: "unresolved-symbol",
+    });
+    expect(lookupGuardType(index, "notAGuard", PROTOCOL_TYPES_FILE)).toMatchObject({
+      ok: false,
+      code: GUARD_CODES.GUARD_NAME_INVALID,
+    });
+    // The evaluator rejects a missing index explicitly ("a type index with
+    // resolveTypeRef is required", GUARD_NAME_INVALID), but its JSDoc `@param`
+    // declares a required object. The annotation is narrower than the
+    // behaviour this line pins, so the call is suppressed; an unused directive
+    // (TS2578) will flag it once the JSDoc learns about `null`.
+    // @ts-expect-error - null index is handled at run time (see above).
+    expect(lookupGuardType(null, "isInputCommand", PROTOCOL_TYPES_FILE)).toMatchObject({
+      ok: false,
+      code: GUARD_CODES.GUARD_NAME_INVALID,
+    });
+  });
+});
+
+describe("extract-messages: pure helpers on string fixtures", () => {
   it("collects the is<Name> calls of an OR chain in source order", () => {
     const chain = [
       "if (",
@@ -428,28 +477,6 @@ describeWithEngine("extract-messages: pure helpers on string fixtures", () => {
     expect(() => readWireLiteralFromTypeText("NotParsable ((( ")).not.toThrow();
   });
 
-  it("reverse-looks-up is<Name> through the index", () => {
-    expect(lookupGuardType(index, "isInputCommand", PROTOCOL_TYPES_FILE)).toEqual({
-      ok: true,
-      type: "InputCommand",
-      wire: "input",
-      home: "src/types/protocol_v2.ts:712",
-    });
-    expect(lookupGuardType(index, "isNoSuchCommand", PROTOCOL_TYPES_FILE)).toMatchObject({
-      ok: false,
-      type: "NoSuchCommand",
-      code: "unresolved-symbol",
-    });
-    expect(lookupGuardType(index, "notAGuard", PROTOCOL_TYPES_FILE)).toMatchObject({
-      ok: false,
-      code: GUARD_CODES.GUARD_NAME_INVALID,
-    });
-    expect(lookupGuardType(null, "isInputCommand", PROTOCOL_TYPES_FILE)).toMatchObject({
-      ok: false,
-      code: GUARD_CODES.GUARD_NAME_INVALID,
-    });
-  });
-
   it("falls back to a guard body only when the index cannot answer", () => {
     const blind = {
       resolveTypeRef: () => ({ ok: false, code: "unresolved-symbol", message: "not indexed" }),
@@ -468,7 +495,7 @@ describeWithEngine("extract-messages: pure helpers on string fixtures", () => {
 
     const failure = resolveInboundGuard(blind, "isMissingCommand", sources, PROTOCOL_TYPES_FILE);
 
-    expect(failure.ok).toBe(false);
+    assertFailure(failure, "resolveInboundGuard on a guard that is not in the chain");
     expect(failure.unresolved.code).toBe("unresolved-symbol");
     expect(failure.unresolved.message).toContain("guard-not-found");
     expect(resolveInboundGuard(blind, "isMissingCommand", [], PROTOCOL_TYPES_FILE)).toMatchObject({

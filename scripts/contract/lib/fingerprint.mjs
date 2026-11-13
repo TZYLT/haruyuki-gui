@@ -4,7 +4,13 @@
  * Frozen definition (A2-D02 / 08 section 3.2):
  *   shapeFingerprint = sha256(interface body text with comments stripped and
  *                               whitespace collapsed)[0..12)
- *   fieldFingerprint = sha256(canonical field JSON)[0..12)
+ *   fieldFingerprint = sha256(canonical field JSON with field type text comment
+ *                               free and whitespace collapsed)[0..12)
+ *
+ * Both fingerprints strip comments before hashing. The scan-level field `type`
+ * is raw source text, so an inline comment inside the type text would otherwise
+ * make a comment-only edit look like a field change while `shapeFingerprint`
+ * (which always stripped comments) stayed identical.
  *
  * Seam for command extraction, message extraction and snapshot assembly:
  *
@@ -56,9 +62,11 @@ export function shapeFingerprint(bodyText) {
  * Field fingerprint: sha256 over the canonical field JSON, sorted by name.
  *
  * Canonical key order is name, type, optional, readonly, nested. Missing or
- * non-boolean flags are coerced to false; type text is whitespace-collapsed.
- * Both scan-level fields and snapshot-level fields ({name, type, optional})
- * hash consistently, because absent flags become false on both sides.
+ * non-boolean flags are coerced to false; type text is comment free and
+ * whitespace-collapsed, matching the `shapeFingerprint` treatment so a
+ * comment-only edit is invisible to both. Both scan-level fields and
+ * snapshot-level fields ({name, type, optional}) hash consistently, because
+ * absent flags become false on both sides.
  *
  * @param {{name?: unknown, type?: unknown, optional?: unknown, readonly?: unknown, nested?: unknown}[]} fields
  * @returns {string} 12 lowercase hex characters
@@ -67,7 +75,7 @@ export function fieldFingerprint(fields) {
   const canonical = (Array.isArray(fields) ? fields : [])
     .map((field) => ({
       name: typeof field?.name === "string" ? field.name : String(field?.name ?? ""),
-      type: collapseWhitespace(
+      type: normalizeTypeText(
         typeof field?.type === "string" ? field.type : String(field?.type ?? ""),
       ),
       optional: Boolean(field?.optional),
@@ -77,6 +85,19 @@ export function fieldFingerprint(fields) {
     .sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0));
 
   return sha256Hex(JSON.stringify(canonical)).slice(0, FINGERPRINT_LENGTH);
+}
+
+/**
+ * Normalize one raw type text for hashing: strip comments, collapse whitespace.
+ *
+ * Fields and shapes must use the same rule, otherwise the two fingerprints
+ * disagree about whether a comment-only edit is a change.
+ *
+ * @param {string} text
+ * @returns {string}
+ */
+export function normalizeTypeText(text) {
+  return normalizeBodyText(text);
 }
 
 /**

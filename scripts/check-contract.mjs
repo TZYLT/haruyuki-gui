@@ -5,7 +5,8 @@
  * This file is a wrapper, not a check. The verdict comes from
  * `checkMap()` in `./contract/map.mjs`, which compares the committed
  * artifact against a fresh generation from the two truth sources and runs the
- * six capability-table rules plus the coverage closure and the health flags.
+ * capability-table rules, the coverage closure, the snapshot schema check and
+ * the three `execute_command` parity invariants.
  *
  * Contract (route doc 08 section 3.4c, gate-cli shared contract):
  *
@@ -24,9 +25,10 @@
  *         table is valid and the coverage closure holds; warnings alone never
  *         fail the gate.
  *     1 = at least one error-level violation (a hand-edited or missing artifact,
- *         a broken capability entry, a coverage mismatch, a degraded snapshot).
+ *         a broken capability entry, a snapshot that violates the v1 schema, a
+ *         coverage or parity mismatch, a degraded or empty parity surface).
  *     2 = the script itself is broken: unreadable truth source, unparsable JSON,
- *         bad argument, I/O error.
+ *         unsupported `schemaVersion`, bad argument, I/O error.
  *
  * Severity is the one trap `checkMap()` sets up: `checkMap().violations` also carries
  * warnings (`coarse` entries, a name-level-only map is still usable). Handing
@@ -126,8 +128,9 @@ function staleLineOf(entry) {
  * Run the contract checks for one tree and return the error-level violations.
  *
  * Pure: reads the three contract files, never writes, never calls `process.exit`.
- * Throws when a truth source is missing, unreadable or not JSON - that is the
- * script's own failure (exit code 2), never a violation.
+ * Throws when a truth source is missing, unreadable, not JSON or carries an
+ * unsupported `schemaVersion` - that is the script's own failure (exit code 2),
+ * never a violation.
  *
  * @param {{ root?: string, verbose?: boolean }} [options]
  * @returns {import("./lib/gate-cli.mjs").Violation[]}

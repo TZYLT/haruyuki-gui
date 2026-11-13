@@ -10,31 +10,32 @@
  * rendered by `report.mjs`. Section 6 reverse-looks-up affected wires in
  * `capabilities.json` and marks field-level (`detail`) capabilities.
  *
+ * Section 5 (PARITY) also owns two drift signals the frozen seven-section layout
+ * has no section for (P5-1): the per-command `inbound` flag
+ * (`inbound.accepted` lost/gained) and the report counts (`counts.<attribute>`
+ * changed from/to, `inboundOnly` included). Both reach `summary.parityChanges`
+ * and therefore `summary.total`; every entry also yields a section-7 action.
+ * `counts` drift is contract drift, so `check --engine` - which gates on
+ * `summary.total` - exits 1 for it. The independent `diff` CLI below stays in
+ * report mode and still exits 0 when the report has changes.
+ *
  * Exit codes: 0 = report generated, even with changes (report mode); 1 = never
  * used here (gate-only); 2 = broken input (missing file, bad JSON, unknown
  * schemaVersion, malformed snapshot or capability table). `engine.extractedAt`
  * is ignored. `runDiff({a, b, out})` throws `DiffInputError` for the caller to
  * caller to map to 2; field changes need `fieldLevel` on both sides; suspected
  * renames pair unique fingerprints only; added/removed lists stay complete.
+ * The `special`-block/count comparison itself lives in `lib/diff-parity.mjs`.
  */
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { diffParity } from "./lib/diff-parity.mjs";
 import { fieldFingerprint } from "./lib/fingerprint.mjs";
 import { SNAPSHOT_SCHEMA_VERSION } from "./lib/schema.mjs";
 import { renderReport } from "./report.mjs";
 export const DEFAULT_SNAPSHOT_PATH = "packages/protocol/src/contract/snapshot.json";
 export const DEFAULT_CAPABILITIES_PATH = "packages/protocol/src/contract/capabilities.json";
-export const SUMMARY_KEYS = Object.freeze([
-  "added",
-  "removed",
-  "suspectedRenames",
-  "fieldChanges",
-  "parityChanges",
-  "capabilityImpacts",
-  "actions",
-  "total",
-]);
 const KIND_LABEL = Object.freeze({ commands: "command", messages: "message" });
 const TARGET_CAPABILITIES = "capabilities.json";
 const TARGET_B4 = "B4";
@@ -191,7 +192,9 @@ export function diffSnapshots(left, right, options = {}) {
   const detailToggles = [...commandFields.toggles, ...messageFields.toggles].sort(
     (first, second) => compareText(first.kind, second.kind) || compareText(first.wire, second.wire),
   );
-  const parity = diffParity(a, b);
+  const leftCounts = countsFact(a);
+  const rightCounts = countsFact(b);
+  const parity = diffParity(a, b, leftCounts, rightCounts);
   const capabilityImpacts = diffCapabilityImpact({
     commandDiff,
     messageDiff,
@@ -228,8 +231,8 @@ export function diffSnapshots(left, right, options = {}) {
     actions,
   );
   return {
-    a: { engine: engineFact(a), counts: countsFact(a) },
-    b: { engine: engineFact(b), counts: countsFact(b) },
+    a: { engine: engineFact(a), counts: leftCounts },
+    b: { engine: engineFact(b), counts: rightCounts },
     added,
     removed,
     suspectedRenames,
@@ -368,46 +371,6 @@ function indexFields(fields, wire) {
     index.set(field.name, field);
   }
   return index;
-}
-// Compare the parity surface: the four `remoteCommands` sub-keys, the two `startupText` lists and `fileOps`.
-function diffParity(a, b) {
-  const left = specialView(a);
-  const right = specialView(b);
-  const changes = [];
-  diffStringArray("remoteCommands.advertised", left.advertised, right.advertised, changes);
-  diffObjectKeys(
-    "remoteCommands.handledElsewhere",
-    left.handledElsewhere,
-    right.handledElsewhere,
-    changes,
-  );
-  diffObjectKeys(
-    "remoteCommands.unadvertisedAliases",
-    left.unadvertisedAliases,
-    right.unadvertisedAliases,
-    changes,
-  );
-  diffStringArray("remoteCommands.dispatchCases", left.dispatchCases, right.dispatchCases, changes);
-  diffStringArray("startupText.required", left.startupRequired, right.startupRequired, changes);
-  diffStringArray("startupText.optional", left.startupOptional, right.startupOptional, changes);
-  const leftWire = typeof left.fileOps.wire === "string" ? left.fileOps.wire : "";
-  const rightWire = typeof right.fileOps.wire === "string" ? right.fileOps.wire : "";
-  if (leftWire !== rightWire) {
-    changes.push({
-      area: "fileOps.wire",
-      change: "changed",
-      from: leftWire.length > 0 ? leftWire : "unknown",
-      to: rightWire.length > 0 ? rightWire : "unknown",
-    });
-  }
-  diffStringArray("fileOps.directions", left.directions, right.directions, changes);
-  changes.sort(
-    (first, second) =>
-      compareText(first.area, second.area) ||
-      compareText(first.change, second.change) ||
-      compareText(first.key, second.key),
-  );
-  return { changes, fileOpsWire: rightWire.length > 0 ? rightWire : leftWire };
 }
 // Reverse-look-up every affected wire in the capability table.
 function diffCapabilityImpact({ commandDiff, messageDiff, fieldChanges, parity, capsByWire }) {
@@ -585,7 +548,22 @@ function buildActions(input) {
     }
   }
   for (const change of parityChanges) {
+    if (typeof change.area === "string" && change.area.startsWith("counts.")) {
+      add(
+        TARGET_NOTICE,
+        `count attribute ${change.area.slice("counts.".length)} drifted ${change.from} -> ${change.to};` +
+          " the records and the declared counts disagree, re-run contract:update --engine <dir>",
+      );
+      continue;
+    }
     switch (change.area) {
+      case "inbound.accepted":
+        add(
+          TARGET_NOTICE,
+          `inbound accepted set changed (${change.change} ${change.key});` +
+            " re-check the parseServerMessage OR guards and the parity pin",
+        );
+        break;
       case "remoteCommands.advertised":
         add(
           TARGET_NOTICE,
@@ -721,7 +699,8 @@ function engineFact(snapshot) {
     commit: typeof engine.commit === "string" ? engine.commit : "unknown",
   };
 }
-// Counts the header prints, with array-length fallbacks for hand-built input.
+// Counts the header prints, plus `inboundOnly` (the accepted-set-minus-union
+// count), with array-length fallbacks for hand-built input.
 function countsFact(snapshot) {
   const counts = asObject(snapshot.counts);
   const commands = asArray(snapshot.commands);
@@ -734,6 +713,7 @@ function countsFact(snapshot) {
       commands.filter((record) => record.inbound === true).length,
     ),
     advertised: integerOr(counts.advertisedCommands, stringArray(remote.advertised).length),
+    inboundOnly: integerOr(counts.inboundOnly, 0),
   };
 }
 // Build the per-section counts plus their total.
@@ -764,45 +744,6 @@ function summarize(
     summary.capabilityImpacts +
     summary.actions;
   return summary;
-}
-// Normalize the `special` block for comparison.
-function specialView(snapshot) {
-  const special = asObject(snapshot.special);
-  const remote = asObject(special.remoteCommands);
-  const startup = asObject(special.startupText);
-  const fileOps = asObject(special.fileOps);
-  return {
-    fileOps,
-    directions: stringArray(fileOps.directions),
-    advertised: stringArray(remote.advertised),
-    handledElsewhere: asObject(remote.handledElsewhere),
-    unadvertisedAliases: asObject(remote.unadvertisedAliases),
-    dispatchCases: stringArray(remote.dispatchCases),
-    startupRequired: stringArray(startup.required),
-    startupOptional: stringArray(startup.optional),
-  };
-}
-// Diff two string lists as `added` / `removed` parity entries.
-function diffStringArray(area, left, right, changes) {
-  const leftSet = new Set(left);
-  const rightSet = new Set(right);
-  for (const value of sortedUnique([...rightSet].filter((item) => !leftSet.has(item)))) {
-    changes.push({ area, change: "added", key: value });
-  }
-  for (const value of sortedUnique([...leftSet].filter((item) => !rightSet.has(item)))) {
-    changes.push({ area, change: "removed", key: value });
-  }
-}
-// Diff two object maps by key only; values are engine prose, not wire data.
-function diffObjectKeys(area, left, right, changes) {
-  const leftKeys = new Set(Object.keys(left));
-  const rightKeys = new Set(Object.keys(right));
-  for (const key of sortedUnique([...rightKeys].filter((item) => !leftKeys.has(item)))) {
-    changes.push({ area, change: "added", key });
-  }
-  for (const key of sortedUnique([...leftKeys].filter((item) => !rightKeys.has(item)))) {
-    changes.push({ area, change: "removed", key });
-  }
 }
 // Detect a degraded-flag flip; coarse/unparsed lists are not diffed here.
 function degradedFlip(a, b) {
@@ -957,9 +898,6 @@ function asArray(value) {
 }
 function stringArray(value) {
   return asArray(value).filter((item) => typeof item === "string");
-}
-function sortedUnique(values) {
-  return [...new Set(values.filter((value) => typeof value === "string"))].sort(compareText);
 }
 // Locale-free string comparison.
 function compareText(left, right) {

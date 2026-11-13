@@ -39,6 +39,8 @@ import {
   generateMap,
   parseGeneratedNames,
 } from "./contract/map.mjs";
+import { requireCapabilities, requireSnapshot } from "./contract/lib/map-checks.mjs";
+import { defined } from "./lib/test-assert.js";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const PRETTIER_BIN = path.join(REPO_ROOT, "node_modules", "prettier", "bin", "prettier.cjs");
@@ -69,14 +71,41 @@ const MINI_SNAPSHOT = {
 };
 
 /**
+ * One capability entry accepted by the fixture builder.
+ *
+ * Every field is optional except `name` because the red cases each set only
+ * what the rule under test reads.
+ */
+type FixtureCapability = {
+  name: string;
+  wire?: string;
+  since?: string;
+  scope?: string;
+  shape?: string;
+  detail?: boolean;
+  legacy?: boolean;
+  pending?: boolean;
+  proposal?: string;
+  fallback?: string;
+  notes?: string;
+};
+
+/**
  * Minimal capability table: `agent.list` carries the field-level wire, so the
  * coverage closure is satisfied by default and a red case can add exactly one
  * violation.
  *
- * @param {Record<string, unknown>[]} [extra]
- * @returns {any}
+ * Typed in TS, not JSDoc: a JSDoc `@param` is ignored in a `.ts` file, so the
+ * `extra = []` default inferred `never[]` and every capability literal passed
+ * here was rejected as "not assignable to type 'never'".
+ *
+ * @param extra capability entries appended after the base fixture
+ * @returns a capabilities table shaped like `capabilities.json`
  */
-function miniCapabilities(extra = []) {
+function miniCapabilities(extra: FixtureCapability[] = []): {
+  schemaVersion: number;
+  capabilities: FixtureCapability[];
+} {
   return {
     schemaVersion: 1,
     capabilities: [
@@ -97,6 +126,29 @@ function miniCapabilities(extra = []) {
 /** @param {unknown} value */
 function deepClone(value) {
   return structuredClone(value);
+}
+
+/**
+ * Assert `generateMap` produced an artifact and narrow it to the success arm.
+ *
+ * `generateMap` returns `{code: 0, text, violations} | {code: 1, violations}`;
+ * `expect(result.code).toBe(0)` tells the compiler nothing, so every
+ * success-only `text` read below would be "does not exist on type". The
+ * assertion signature narrows without a cast, and the failure message still
+ * names the violations.
+ *
+ * @param result value returned by `generateMap`
+ * @param context what was being generated, echoed in the failure message
+ */
+function expectGeneratedMap(
+  result: ReturnType<typeof generateMap>,
+  context: string,
+): asserts result is Extract<ReturnType<typeof generateMap>, { code: 0 }> {
+  expect(result.code, `${context}: ${JSON.stringify(result.violations)}`).toBe(0);
+
+  if (result.code !== 0) {
+    throw new Error(`${context}: expected code 0, got ${result.code}`);
+  }
 }
 
 /** @param {{violations: {code: string}[]}} result */
@@ -224,7 +276,7 @@ function typecheck(file) {
 let tempDirectory = "";
 let artifactPath = "";
 /** Files this suite creates, removed in `afterAll`. */
-const tempFiles = [];
+const tempFiles: string[] = [];
 
 /** @param {string} name */
 function createTempFile(name) {
@@ -245,7 +297,7 @@ beforeAll(() => {
   artifactPath = createTempFile("command-map.generated.ts");
   const generated = generateMap({ snapshot: SNAPSHOT, capabilities: CAPABILITIES });
 
-  expect(generated.code).toBe(0);
+  expectGeneratedMap(generated, "the committed data");
   generatedText = generated.text;
   writeFileSync(artifactPath, generatedText);
 });
@@ -301,8 +353,8 @@ describe("generated artifact", () => {
     const first = generateMap({ snapshot: SNAPSHOT, capabilities: CAPABILITIES });
     const second = generateMap({ snapshot: SNAPSHOT, capabilities: CAPABILITIES });
 
-    expect(first.code).toBe(0);
-    expect(second.code).toBe(0);
+    expectGeneratedMap(first, "the first run");
+    expectGeneratedMap(second, "the second run");
     expect(second.text).toBe(first.text);
     expect(first.text).toBe(generatedText);
   });
@@ -316,7 +368,7 @@ describe("generated artifact", () => {
     };
     const generated = generateMap({ snapshot: SNAPSHOT, capabilities: reordered });
 
-    expect(generated.code).toBe(0);
+    expectGeneratedMap(generated, "the reordered-key table");
     expect(generated.text).toBe(generatedText);
   });
 
@@ -327,10 +379,10 @@ describe("generated artifact", () => {
   it("escapes quotes and backslashes in notes as JSON string literals", () => {
     const note = 'he said "hello" from C:\\tmp\\note';
     const table = miniCapabilities();
-    table.capabilities[0].notes = note;
+    defined(table.capabilities[0], "capabilities[0]").notes = note;
     const generated = generateMap({ snapshot: MINI_SNAPSHOT, capabilities: table });
 
-    expect(generated.code).toBe(0);
+    expectGeneratedMap(generated, "the escaped-note table");
     expect(generated.text).toContain(JSON.stringify(note));
     expect(generated.text).not.toContain(note);
   });
@@ -391,9 +443,45 @@ describe("contract-map rules", () => {
     expect(codesOf(generated)).toContain("duplicate-name");
   });
 
+  it("reds two capabilities that register the same wire (P6-F2)", () => {
+    const table = miniCapabilities([
+      {
+        name: "agent.listAlias",
+        wire: "agent_list",
+        since: "0.6.0",
+        scope: "none",
+        shape: "request-response",
+      },
+    ]);
+    const generated = generateMap({ snapshot: MINI_SNAPSHOT, capabilities: table });
+
+    expect(generated.code).toBe(1);
+    expect(codesOf(generated)).toEqual(["duplicate-wire"]);
+    expect(generated.violations[0].rule).toBe("contract-map");
+    expect(generated.violations[0].message).toContain('wire "agent_list"');
+    expect(generated.violations[0].message).toContain('"agent.listAlias"');
+  });
+
+  it("does not double-report a repeated name as a duplicate wire", () => {
+    const table = miniCapabilities([
+      {
+        name: "agent.list",
+        wire: "agent_list",
+        since: "0.6.0",
+        scope: "none",
+        shape: "request-response",
+        detail: true,
+      },
+    ]);
+    const generated = generateMap({ snapshot: MINI_SNAPSHOT, capabilities: table });
+
+    expect(generated.code).toBe(1);
+    expect(codesOf(generated)).toEqual(["duplicate-name"]);
+  });
+
   it("reds a fallback that points at an undeclared name", () => {
     const table = miniCapabilities();
-    table.capabilities[0].fallback = "agent.missing";
+    defined(table.capabilities[0], "capabilities[0]").fallback = "agent.missing";
     const generated = generateMap({ snapshot: MINI_SNAPSHOT, capabilities: table });
 
     expect(generated.code).toBe(1);
@@ -412,7 +500,7 @@ describe("contract-map rules", () => {
 
   it("reds a since newer than the pinned engine", () => {
     const table = miniCapabilities();
-    table.capabilities[0].since = "9.9.9";
+    defined(table.capabilities[0], "capabilities[0]").since = "9.9.9";
     const generated = generateMap({ snapshot: MINI_SNAPSHOT, capabilities: table });
 
     expect(generated.code).toBe(1);
@@ -453,7 +541,7 @@ describe("contract-map rules", () => {
     const generated = generateMap({ snapshot: MINI_SNAPSHOT, capabilities: table });
 
     expect(generated.violations).toEqual([]);
-    expect(generated.code).toBe(0);
+    expectGeneratedMap(generated, "the pending-with-proposal table");
     expect(generated.text).toContain("pending: true");
     expect(generated.text).toContain('proposal: "P-02"');
     expect(generated.text).toContain('fallback: "agent.list"');
@@ -525,6 +613,20 @@ describe("contract-health", () => {
     expect(generated.violations).toHaveLength(1);
     expect(generated.violations[0].code).toBe("coarse-fields");
     expect(generated.violations[0].severity).toBe("warning");
+  });
+});
+
+describe("schema version guard (P6-F6)", () => {
+  it("rejects a snapshot written for another schema version", () => {
+    expect(() => requireSnapshot({ ...SNAPSHOT, schemaVersion: 2 })).toThrow(
+      /snapshot\.json schemaVersion 2 is not supported \(expected 1\)/,
+    );
+  });
+
+  it("rejects a capability table written for another schema version", () => {
+    expect(() => requireCapabilities({ ...CAPABILITIES, schemaVersion: 2 })).toThrow(
+      /capabilities\.json schemaVersion 2 is not supported \(expected 1\)/,
+    );
   });
 });
 

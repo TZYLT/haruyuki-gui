@@ -14,14 +14,24 @@
  *
  * Capability reads are guarded against a concurrent capabilities write: the suite builds
  * twice against the same file bytes and falls back to a frozen temp copy only if
- * the file changed mid-build. A missing mirror is a hard failure with an
- * actionable message, never a silent skip.
+ * the file changed mid-build. A missing mirror skips the engine-bound suites
+ * instead of failing: the mirror is not committed and a clean clone must stay
+ * green. The write-time guard rails and the ASCII discipline are
+ * plain `describe` suites because they never read `_research`.
  *
  * The temp directory comes from `fs.mkdtemp(os.tmpdir())`; only the single file
  * this test creates is deleted, never the directory (discipline 03 section 1.1).
  * Nothing here spawns the engine, touches the network or writes into the repo.
  */
-import { existsSync, mkdtempSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  cpSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -31,6 +41,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 
 import {
   SNAPSHOT_KEY_ORDER,
+  SNAPSHOT_SCHEMA_VERSION,
   canonicalizeSnapshot,
   validateSnapshot,
 } from "./contract/lib/schema.mjs";
@@ -40,6 +51,7 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..
 const TEST_FILE = fileURLToPath(import.meta.url);
 const SNAPSHOT_MODULE_FILE = path.join(REPO_ROOT, "scripts", "contract", "snapshot.mjs");
 const ENGINE_ROOT = path.join(REPO_ROOT, "_research", "haruyuki");
+const MINI_ENGINE = path.join(REPO_ROOT, "fixtures", "contract", "mini-engine");
 const CAPABILITIES_PATH = path.join(
   REPO_ROOT,
   "packages",
@@ -48,12 +60,6 @@ const CAPABILITIES_PATH = path.join(
   "contract",
   "capabilities.json",
 );
-
-const MISSING_MIRROR_HINT =
-  `engine mirror is missing at ${ENGINE_ROOT}. ` +
-  "snapshot assembly reads the pinned engine source: create the read-only mirror with " +
-  "`git clone --shared <main checkout>/_research/haruyuki _research/haruyuki` " +
-  "and check out commit 1641a4f (v0.6.0).";
 
 const MISSING_CAPABILITIES_HINT =
   `capabilities table is missing at ${CAPABILITIES_PATH}. ` +
@@ -68,6 +74,70 @@ const RETRY_DELAY_MS = 50;
 /** Code-unit comparison, matching the snapshot validator's ordering rule. */
 function compareStrings(left, right) {
   return left < right ? -1 : left > right ? 1 : 0;
+}
+
+/**
+ * Build one minimal, fully valid v1 snapshot without touching the engine mirror.
+ *
+ * Used by the write-time guard rails, which must run in a clean clone too.
+ *
+ * @returns {any}
+ */
+function makeMinimalSnapshot() {
+  return {
+    schemaVersion: SNAPSHOT_SCHEMA_VERSION,
+    engine: {
+      version: "0.0.1",
+      commit: "unknown",
+      source: "clone",
+      extractedAt: "2026-11-13T12:00:00.000Z",
+      extractor: "contract-snapshot@1",
+    },
+    counts: {
+      unionMembers: 1,
+      wireCommands: 1,
+      messages: 1,
+      inboundAccepted: 1,
+      inboundOnly: 0,
+      advertisedCommands: 0,
+      dispatchCases: 0,
+    },
+    commands: [
+      {
+        wire: "agent_list",
+        type: "AgentListCommand",
+        home: "src/types/protocol_v2.ts:1608",
+        direction: ["c2s"],
+        inbound: true,
+        fields: [],
+        shapeFingerprint: "3f2a1c9d0e42",
+        fieldLevel: false,
+        health: "ok",
+      },
+    ],
+    messages: [
+      {
+        wire: "stream_delta",
+        type: "StreamDeltaMessage",
+        home: "src/types/protocol_v2.ts:596",
+        fields: [],
+        shapeFingerprint: "9b1c2d3e4f50",
+        fieldLevel: false,
+        health: "ok",
+      },
+    ],
+    special: {
+      fileOps: { wire: "file_ops", directions: [] },
+      remoteCommands: {
+        advertised: [],
+        handledElsewhere: {},
+        unadvertisedAliases: {},
+        dispatchCases: [],
+      },
+      startupText: { required: [], optional: [] },
+    },
+    health: { degraded: false, coarse: [], unparsed: [] },
+  };
 }
 
 /**
@@ -208,11 +278,18 @@ describeWithEngine("buildSnapshot: counts on the pinned engine source", () => {
   });
 
   it("keeps counts equal to the arrays they describe", () => {
-    expect(snapshot.counts.wireCommands).toBe(snapshot.commands.length);
-    expect(snapshot.counts.messages).toBe(snapshot.messages.length);
-    expect(snapshot.commands.filter((command) => command.inbound)).toHaveLength(
-      snapshot.counts.inboundAccepted - snapshot.counts.inboundOnly,
+    // Hard-coded truth, not `counts.inboundAccepted - counts.inboundOnly`: the
+    // old assertion compared two values derived from the same build, so it could
+    // never go red (P5-6).
+    expect(snapshot.counts.wireCommands).toBe(
+      snapshot.commands.filter((command) => typeof command.wire === "string").length,
     );
+    expect(snapshot.counts.messages).toBe(snapshot.messages.length);
+    expect(snapshot.counts.inboundAccepted).toBe(124);
+    expect(snapshot.counts.inboundOnly).toBe(0);
+    expect(snapshot.commands.filter((command) => command.inbound)).toHaveLength(124);
+    // wireOnly: a wire command the inbound guard chain does not accept.
+    expect(snapshot.commands.filter((command) => !command.inbound)).toHaveLength(0);
     expect(snapshot.commands.every((command) => typeof command.wire === "string")).toBe(true);
   });
 
@@ -424,26 +501,9 @@ describeWithEngine("buildSnapshot: disk round trip", () => {
 
     expect(existsSync(target)).toBe(false);
   });
-
-  it("refuses to write an invalid snapshot", () => {
-    const directory = mkdtempSync(path.join(os.tmpdir(), "contract-snapshot-invalid-"));
-    const target = path.join(directory, "snapshot.json");
-
-    expect(() => writeSnapshot(target, { schemaVersion: 1 })).toThrow(/invalid snapshot/);
-    expect(existsSync(target)).toBe(false);
-  });
 });
 
 describeWithEngine("buildSnapshot: explicit failures", () => {
-  it("rejects a missing engine mirror instead of returning an empty snapshot", () => {
-    const missing = path.join(REPO_ROOT, "_research", "missing-engine-mirror");
-
-    expect(existsSync(missing)).toBe(false);
-    expect(() =>
-      buildSnapshot({ engineRoot: missing, capabilitiesPath: CAPABILITIES_PATH }),
-    ).toThrow(/engine type directory not found/i);
-  });
-
   it("rejects a missing capabilities file", () => {
     const missing = path.join(path.dirname(CAPABILITIES_PATH), "capabilities.missing.json");
 
@@ -455,6 +515,17 @@ describeWithEngine("buildSnapshot: explicit failures", () => {
 
   it("reads the pinned engine version from the mirror manifest", () => {
     expect(readEngineVersion(ENGINE_ROOT)).toEqual({ version: "0.6.0", degraded: false });
+  });
+});
+
+describe("buildSnapshot: failures that need no engine tree", () => {
+  it("rejects a missing engine mirror instead of returning an empty snapshot", () => {
+    const missing = path.join(os.tmpdir(), "contract-missing-engine-mirror");
+
+    expect(existsSync(missing)).toBe(false);
+    expect(() =>
+      buildSnapshot({ engineRoot: missing, capabilitiesPath: CAPABILITIES_PATH }),
+    ).toThrow(/engine type directory not found/i);
   });
 
   it("falls back to unknown plus degraded when the manifest is unreadable (A2-D14)", () => {
@@ -473,7 +544,94 @@ describeWithEngine("buildSnapshot: explicit failures", () => {
   });
 });
 
-describeWithEngine("contract-snapshot: ASCII discipline", () => {
+/**
+ * Read the `health` block of a `buildSnapshot` result.
+ *
+ * `buildSnapshot` is annotated `@returns {Record<string, unknown>}`, so every
+ * field it returns is `unknown`. Narrowing the one block the tests read keeps
+ * the assertions checked without an `as` cast.
+ *
+ * @param built value returned by `buildSnapshot`
+ * @returns the health block, with `unparsed` coerced to strings
+ */
+function snapshotHealth(built: Record<string, unknown>): {
+  degraded: boolean;
+  unparsed: string[];
+} {
+  const health = built.health;
+
+  if (typeof health !== "object" || health === null) {
+    throw new Error(`buildSnapshot returned no health block: ${JSON.stringify(health)}`);
+  }
+
+  const degraded = "degraded" in health ? health.degraded : undefined;
+  const unparsed = "unparsed" in health ? health.unparsed : undefined;
+
+  if (typeof degraded !== "boolean" || !Array.isArray(unparsed)) {
+    throw new Error(`buildSnapshot returned an unexpected health block: ${JSON.stringify(health)}`);
+  }
+
+  return { degraded, unparsed: unparsed.map((entry: unknown) => String(entry)) };
+}
+
+describe("writeSnapshot: refuses an invalid snapshot (P4-2)", () => {
+  it("rejects a schema-incomplete snapshot", () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "contract-snapshot-invalid-"));
+    const target = path.join(directory, "snapshot.json");
+
+    try {
+      expect(() => writeSnapshot(target, { schemaVersion: 1 })).toThrow(/invalid snapshot/);
+      expect(existsSync(target)).toBe(false);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects an illegal command element instead of silently dropping it", () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "contract-snapshot-elements-"));
+    const target = path.join(directory, "snapshot.json");
+    // An illegal element is the point of this test, so the object is assembled
+    // from scratch: `writeSnapshot` takes `unknown`, and a mutation here would
+    // have to satisfy the command record type it is deliberately violating.
+    const snapshotWithElement = { ...makeMinimalSnapshot(), commands: [42] };
+
+    try {
+      expect(() => writeSnapshot(target, snapshotWithElement)).toThrow(/invalid snapshot/);
+      expect(existsSync(target)).toBe(false);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("buildSnapshot: index parse diagnostics reach the snapshot (P4-6)", () => {
+  it("degrades and records a syntax-broken type file instead of hiding it", () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "contract-snapshot-broken-"));
+
+    try {
+      cpSync(MINI_ENGINE, directory, { recursive: true });
+      writeFileSync(
+        path.join(directory, "src", "types", "broken.ts"),
+        "export interface Broken {\n",
+        "utf8",
+      );
+
+      const built = buildSnapshot({
+        engineRoot: directory,
+        capabilitiesPath: CAPABILITIES_PATH,
+      });
+      const health = snapshotHealth(built);
+
+      expect(health.degraded).toBe(true);
+      expect(health.unparsed.join("\n")).toContain("src/types/broken.ts: parse-error:");
+      expect(validateSnapshot(built).violations).toEqual([]);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("contract-snapshot: ASCII discipline", () => {
   it("keeps the assembler and this test file pure ASCII", () => {
     for (const file of [SNAPSHOT_MODULE_FILE, TEST_FILE]) {
       expect(readFileSync(file, "utf8")).not.toMatch(/[^\x00-\x7f]/);

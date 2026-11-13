@@ -32,12 +32,14 @@
  *   exceed 100 columns by construction; Prettier itself makes the same choice.
  *
  * Failure semantics
- *   Broken input (missing file, unparseable JSON, wrong top-level shape) throws:
- *   that is exit code 2 territory, never a violation. Data disagreements are
- *   returned as violations (exit code 1). A missing or hand-edited artifact is a
- *   `contract-stale` violation, because that is the drift this gate must catch.
- *   `generateMap` refuses to emit code while an error is outstanding, so a red
- *   table can never be frozen into the artifact.
+ *   Broken input (missing file, unparseable JSON, unsupported `schemaVersion`)
+ *   throws: that is exit code 2 territory, never a violation. Data disagreements
+ *   are returned as violations (exit code 1): a snapshot that violates the v1
+ *   schema is `contract-stale`, a malformed capability table is `contract-map`,
+ *   and a failed parity invariant is `contract-cover`. A missing or hand-edited
+ *   artifact is a `contract-stale` violation, because that is the drift this gate
+ *   must catch. `generateMap` refuses to emit code while an error is
+ *   outstanding, so a red table can never be frozen into the artifact.
  *
  * Nothing here writes to disk. `--write` belongs to the CLI layer (Lead) and the
  * gate wrapper (`check-contract.mjs`) is separate; this module only supplies
@@ -55,13 +57,19 @@ import {
   CAPABILITY_SCOPES,
   CAPABILITY_SHAPES,
   MAP_FILE,
+  MAP_RULES,
   SNAPSHOT_FILE,
+  checkParityViolations,
   collectViolations,
   compareStrings,
   requireCapabilities,
+  requireCapabilitiesVersion,
   requireSnapshot,
+  requireSnapshotVersion,
   sortViolations,
 } from "./lib/map-checks.mjs";
+import { validateSnapshot } from "./lib/schema.mjs";
+import { checkParityConsistency } from "./extract-parity.mjs";
 
 export {
   CAPABILITIES_FILE,
@@ -173,24 +181,32 @@ function digest(value) {
 }
 
 /**
- * Read and parse one JSON file, throwing an actionable message on failure.
+ * Read one UTF-8 text file, throwing an actionable message on failure.
  *
  * @param {string} filePath
  * @param {string} label
- * @returns {unknown}
+ * @returns {string}
  */
-function readJsonFile(filePath, label) {
-  let text;
-
+function readTextFile(filePath, label) {
   try {
-    text = readFileSync(filePath, "utf8");
+    return readFileSync(filePath, "utf8");
   } catch (error) {
     const reason =
       isPlainObject(error) && typeof error.code === "string" ? error.code : String(error);
 
     throw new Error(`cannot read ${label} at ${toPosix(filePath)}: ${reason}`);
   }
+}
 
+/**
+ * Parse one JSON text, throwing an actionable message on failure.
+ *
+ * @param {string} text
+ * @param {string} filePath used only in the message
+ * @param {string} label
+ * @returns {unknown}
+ */
+function parseJsonText(text, filePath, label) {
   try {
     return JSON.parse(text);
   } catch (error) {
@@ -198,6 +214,17 @@ function readJsonFile(filePath, label) {
 
     throw new Error(`cannot parse ${label} at ${toPosix(filePath)} as JSON: ${reason}`);
   }
+}
+
+/**
+ * Read and parse one JSON file, throwing an actionable message on failure.
+ *
+ * @param {string} filePath
+ * @param {string} label
+ * @returns {unknown}
+ */
+function readJsonFile(filePath, label) {
+  return parseJsonText(readTextFile(filePath, label), filePath, label);
 }
 
 /**
@@ -506,14 +533,30 @@ export function parseGeneratedNames(text) {
  * `generatedNames` is optional and exists for the stale/consistency path: when
  * the caller passes the names read back from the committed artifact, the
  * missing / orphan checks become meaningful. A plain `contract:generate` call
- * passes nothing.
+ * passes nothing. `capabilitiesText` is optional too and only lets
+ * `collectViolations` attach a source line to `duplicate-wire`.
  *
- * @param {{snapshot: unknown, capabilities: unknown, generatedNames?: string[] | null}} input
+ * @param {{
+ *   snapshot: unknown,
+ *   capabilities: unknown,
+ *   generatedNames?: string[] | null,
+ *   capabilitiesText?: string | null,
+ * }} input
  * @returns {{code: 0, text: string, violations: object[]} | {code: 1, violations: object[]}}
  *   Violations follow the `Violation` shape documented in `lib/map-checks.mjs`.
  */
-export function generateMap({ snapshot, capabilities, generatedNames = null }) {
-  const violations = collectViolations({ snapshot, capabilities, generatedNames });
+export function generateMap({
+  snapshot,
+  capabilities,
+  generatedNames = null,
+  capabilitiesText = null,
+}) {
+  const violations = collectViolations({
+    snapshot,
+    capabilities,
+    generatedNames,
+    capabilitiesText,
+  });
   const errors = violations.filter((entry) => entry.severity === "error");
 
   if (errors.length > 0) {
@@ -546,11 +589,70 @@ function firstDifferentLine(actual, expected) {
 }
 
 /**
+ * Best-effort summary for a run that stopped before generation.
+ *
+ * The gate only reads `errors` / `warnings` in this state; the remaining fields
+ * stay present so `--verbose` never dereferences `undefined`.
+ *
+ * @param {unknown} snapshot
+ * @param {number} errors
+ * @returns {Record<string, unknown>}
+ */
+function earlySummary(snapshot, errors) {
+  const engine = isPlainObject(snapshot) && isPlainObject(snapshot.engine) ? snapshot.engine : {};
+
+  return {
+    engine: {
+      version: typeof engine.version === "string" ? engine.version : null,
+      commit: typeof engine.commit === "string" ? engine.commit : null,
+    },
+    capabilities: 0,
+    detail: 0,
+    pending: 0,
+    fieldLevel: 0,
+    generated: null,
+    errors,
+    warnings: 0,
+  };
+}
+
+/**
+ * Map `validateSnapshot` violations to `contract-stale` gate violations.
+ *
+ * The committed snapshot is the input the map is generated from. A structural,
+ * key-order or count disagreement means the artifact was generated from a
+ * different snapshot than the one on disk, which is exactly what the stale
+ * rule exists to catch; the schema sub-rule and JSON path stay in the message
+ * so the operator can repair the record without re-reading the validator.
+ *
+ * @param {{violations: {path: string, rule: string, message: string}[]}} report
+ * @returns {object[]}
+ */
+function snapshotStructureViolations(report) {
+  return report.violations.map((entry) => ({
+    file: SNAPSHOT_FILE,
+    rule: MAP_RULES.stale,
+    code: "invalid-snapshot",
+    severity: "error",
+    message: `invalid-snapshot: ${entry.rule} at ${entry.path}: ${entry.message}`,
+  }));
+}
+
+/**
  * Read both truth sources and the committed artifact, then produce the verdict.
  *
- * A missing or unreadable snapshot / capability file throws (exit code 2). A
- * missing or hand-edited artifact is a violation (exit code 1), because that is
- * the drift this gate must catch.
+ * Broken input (missing / unreadable / unparseable file, unsupported
+ * `schemaVersion`) throws: that is exit code 2 territory, never a violation.
+ * Data disagreements are returned as violations (exit code 1):
+ *
+ *   - a snapshot that violates the v1 schema (structure, key order, derived
+ *     counts) is `contract-stale` / `invalid-snapshot`;
+ *   - a capability table that is not even shaped like one is `contract-map` /
+ *     `invalid-capabilities`;
+ *   - the three `execute_command` parity invariants are re-evaluated from
+ *     `snapshot.special.remoteCommands` and reported as `contract-cover`
+ *     (P5-8), with an empty input as `contract-health` / `empty-parity`;
+ *   - a missing or hand-edited artifact is `contract-stale`.
  *
  * `violations` includes warnings; gate callers must filter on
  * `severity === "error"` (or read `ok`) before handing the list to `finish()`.
@@ -564,8 +666,42 @@ export function checkMap({
   generatedPath = repoPath(MAP_FILE),
 } = {}) {
   const snapshot = readJsonFile(snapshotPath, "snapshot");
-  const capabilities = readJsonFile(capabilitiesPath, "capabilities");
-  const entries = requireCapabilities(capabilities);
+  const capabilitiesText = readTextFile(capabilitiesPath, "capabilities");
+  const capabilities = parseJsonText(capabilitiesText, capabilitiesPath, "capabilities");
+
+  // An unsupported schema version is broken input: this module does not know
+  // that shape, so guessing a verdict would be worse than stopping (P6-F6).
+  requireSnapshotVersion(snapshot);
+  requireCapabilitiesVersion(capabilities);
+
+  // Structure, frozen key order and derived counts are data disagreements.
+  const structural = validateSnapshot(snapshot);
+
+  if (!structural.ok) {
+    const violations = sortViolations(snapshotStructureViolations(structural));
+
+    return { ok: false, violations, summary: earlySummary(snapshot, violations.length) };
+  }
+
+  let entries;
+
+  try {
+    entries = requireCapabilities(capabilities);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    const violations = sortViolations([
+      {
+        file: CAPABILITIES_FILE,
+        rule: MAP_RULES.map,
+        code: "invalid-capabilities",
+        severity: "error",
+        message: `invalid-capabilities: ${reason}`,
+      },
+    ]);
+
+    return { ok: false, violations, summary: earlySummary(snapshot, violations.length) };
+  }
+
   const requiredSnapshot = requireSnapshot(snapshot);
 
   let generatedText = null;
@@ -577,7 +713,7 @@ export function checkMap({
   }
 
   const generatedNames = generatedText === null ? null : parseGeneratedNames(generatedText);
-  const generated = generateMap({ snapshot, capabilities, generatedNames });
+  const generated = generateMap({ snapshot, capabilities, generatedNames, capabilitiesText });
   const violations = generated.violations.slice();
 
   if (generatedText === null) {
@@ -599,6 +735,14 @@ export function checkMap({
         `${firstDifferentLine(generatedText, generated.text)}; run contract:generate`,
     });
   }
+
+  // The parity surface lives in the snapshot, so it is re-computed here rather
+  // than trusted from the extractor's own `consistency` copy (P5-8). This is a
+  // gate-only check: `cli update` must not reject an otherwise usable
+  // extraction, because the extractor self-tests drive a mini engine.
+  violations.push(
+    ...checkParityViolations(checkParityConsistency(requiredSnapshot.special.remoteCommands)),
+  );
 
   const sorted = sortViolations(violations);
   const errors = sorted.filter((entry) => entry.severity === "error");

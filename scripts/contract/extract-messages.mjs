@@ -611,6 +611,12 @@ export function extractMessages({ engineRoot, index = null } = {}) {
         );
       }
 
+      // A base class that could not be merged hides fields; the scan index holds
+      // the reason, and repeating it here ties the line to a real record.
+      for (const problem of Array.isArray(entry.heritageProblems) ? entry.heritageProblems : []) {
+        health.coarse.push(problem);
+      }
+
       messages.push({
         wire: wire.wire,
         type: entry.name,

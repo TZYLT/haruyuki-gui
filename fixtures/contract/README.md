@@ -49,7 +49,7 @@ succeeds instead of degrading the snapshot (a degraded snapshot makes
 
 ## `repos/`
 
-Ten miniature repository trees, each with only
+Twelve miniature repository trees, each with only
 `packages/protocol/src/contract/{snapshot.json,capabilities.json,command-map.generated.ts}`.
 `green` is a byte-for-byte copy of the three committed artifacts. Every other
 tree changes exactly one thing, so the gate must report exactly one violation.
@@ -59,6 +59,7 @@ tree changes exactly one thing, so the gate must report exactly one violation.
 | `green` | none (real data) | - | 0 |
 | `red-map-missing` | capability declared, absent from the artifact | `contract-map` / `missing-capability` | 1 |
 | `red-map-duplicate` | same capability name twice | `contract-map` / `duplicate-name` | 1 |
+| `red-map-duplicate-wire` | two capabilities register the same wire | `contract-map` / `duplicate-wire` | 1 |
 | `red-map-fallback` | `fallback` points at an undeclared name | `contract-map` / `dangling-fallback` | 1 |
 | `red-map-wire` | `wire` is not a snapshot command | `contract-map` / `unknown-wire` | 1 |
 | `red-map-since` | `since` newer than the pinned engine | `contract-map` / `since-ahead` | 1 |
@@ -68,9 +69,15 @@ tree changes exactly one thing, so the gate must report exactly one violation.
 | `red-degraded` | `health.degraded = true` | `contract-health` / `degraded-snapshot` | 1 |
 | `red-missing-truth` | no `snapshot.json` | - | 2 |
 
-The red trees use a minimal snapshot (engine version + command set + health);
-`checkMap` consumes only those keys. The artifact in each red-map tree is
-generated from a valid sibling table, so the expected rule is the only
-violation and the stale check stays out of the way (generation errors skip it).
-`green` carries the real snapshot's one `coarse` health entry on purpose: it
-must stay a warning, never a failure.
+The red trees carry a complete, schema-valid v1 snapshot (engine, counts,
+commands, messages, empty `special` records and health) because the gate runs
+`validateSnapshot` over it before mapping; a minimal "engine + command set +
+health" object would make every red tree fail its own structure rule first.
+Each snapshot's `special.remoteCommands` is non-empty and parity-consistent for
+the same reason: the gate re-evaluates the three `execute_command` invariants,
+and empty input is red by design (`contract-health` / `empty-parity`).
+
+The artifact in each red-map tree is generated from a valid sibling table, so
+the expected rule is the only violation and the stale check stays out of the
+way (generation errors skip it). `green` carries the real snapshot's one
+`coarse` health entry on purpose: it must stay a warning, never a failure.

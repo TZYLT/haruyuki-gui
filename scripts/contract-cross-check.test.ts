@@ -42,7 +42,7 @@ const SNAPSHOT_PATH = path.join(
 const SNAPSHOT = JSON.parse(readFileSync(SNAPSHOT_PATH, "utf8"));
 
 /** Every temp file this suite creates, deleted individually in `afterAll`. */
-const createdFiles = [];
+const createdFiles: string[] = [];
 
 /**
  * Create a fresh temp directory for one fixture.
@@ -126,10 +126,10 @@ function renderCommand(command, transform = (fields) => fields) {
  *   - FileOpsCommand omitted
  *   - unrelated helper declarations that the command rule must ignore
  *
- * @param {{gitHead?: string | null}} [options]
- * @returns {string} temp directory
+ * @param options `gitHead` is written into the fixture package.json when set
+ * @returns temp directory
  */
-function makeMainFixture(options = {}) {
+function makeMainFixture(options: { gitHead?: string | null } = {}): string {
   const dir = makeTempDir();
   const agentList = commandByWire("agent_list");
   const input = commandByWire("input");
@@ -287,6 +287,47 @@ describe("cross-check type layer", () => {
     expect(result.ok).toBe(true);
     expect(result.gitHead).toBe(null);
     expect(result.warnings).toEqual([]);
+    expect(exitCodeFor(result)).toBe(0);
+  });
+
+  it("accepts a full gitHead that starts with the snapshot's short commit (P6-F3)", () => {
+    const dir = makeTempDir();
+    const shortCommit = SNAPSHOT.engine.commit;
+    const fullCommit = `${shortCommit}${"0123456789abcdef".repeat(3).slice(0, 40 - shortCommit.length)}`;
+
+    expect(fullCommit).toHaveLength(40);
+    expect(fullCommit.startsWith(shortCommit)).toBe(true);
+
+    writeFixture(dir, "protocol.d.ts", `${renderCommand(commandByWire("agent_list"))}\n`);
+    writeFixture(
+      dir,
+      "package.json",
+      `${JSON.stringify({ name: "fixture-types", gitHead: fullCommit }, null, 2)}\n`,
+    );
+
+    const result = crossCheck({ dtsDir: dir, snapshot: SNAPSHOT });
+
+    expect(result.gitHead).toBe(fullCommit);
+    expect(result.warnings).toEqual([]);
+    expect(exitCodeFor(result)).toBe(0);
+  });
+
+  it("still warns when two commits differ beyond the abbreviation", () => {
+    const dir = makeTempDir();
+    const shortCommit = SNAPSHOT.engine.commit;
+    const otherCommit = `deadbee${shortCommit.slice(7)}`;
+
+    writeFixture(dir, "protocol.d.ts", `${renderCommand(commandByWire("agent_list"))}\n`);
+    writeFixture(
+      dir,
+      "package.json",
+      `${JSON.stringify({ name: "fixture-types", gitHead: otherCommit }, null, 2)}\n`,
+    );
+
+    const result = crossCheck({ dtsDir: dir, snapshot: SNAPSHOT });
+
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]).toContain("gitHead mismatch");
     expect(exitCodeFor(result)).toBe(0);
   });
 

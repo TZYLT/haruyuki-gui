@@ -31,6 +31,8 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import { collectContractViolations } from "./check-contract.mjs";
+import { first } from "./lib/test-assert.js";
+import { generateMap } from "./contract/map.mjs";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const GATE = path.join(REPO_ROOT, "scripts", "check-contract.mjs");
@@ -202,6 +204,55 @@ function updateCopy(engineRoot: string, outName: string): CommandRun {
   });
 }
 
+/**
+ * Copy the byte-identical `green` tree to a fresh temp root (never mutate the
+ * repository fixture).
+ *
+ * @param label short name used in the temp directory name
+ * @returns absolute copied root
+ */
+function copyGreen(label: string): string {
+  const root = path.join(mkdtempSync(path.join(os.tmpdir(), `contract-gate-${label}-`)), "repo");
+
+  cpSync(fixture("green"), root, { recursive: true });
+
+  return root;
+}
+
+/** @param {string} root @param {string} relative */
+function readContractJson(root: string, relative: string): any {
+  return readJson(contractFile(root, relative));
+}
+
+/** @param {string} root @param {string} relative @param {unknown} value */
+function writeContractJson(root: string, relative: string, value: unknown): void {
+  writeFileSync(contractFile(root, relative), `${JSON.stringify(value, null, 2)}\n`, "utf8");
+}
+
+/**
+ * Regenerate the artifact of a temp copy so the stale check cannot add a second
+ * violation to the case under test.
+ *
+ * @param {string} root absolute temp root
+ */
+function regenerateArtifact(root: string): void {
+  const generated = generateMap({
+    snapshot: readContractJson(root, SNAPSHOT_FILE),
+    capabilities: readContractJson(root, CAPABILITIES_FILE),
+  });
+
+  expect(generated.code).toBe(0);
+
+  // `generateMap` returns `{code: 0, text} | {code: 1, violations}`; the
+  // `expect` above does not narrow, so the success arm is entered explicitly
+  // instead of reading `text` off the union.
+  if (generated.code !== 0) {
+    throw new Error(`${root}: generateMap failed: ${JSON.stringify(generated.violations)}`);
+  }
+
+  writeFileSync(contractFile(root, MAP_FILE), generated.text, "utf8");
+}
+
 /** Line where the hand-edited byte sits in the stale fixture artifact. */
 const STALE_LINE =
   readFileSync(contractFile(fixture("red-stale"), MAP_FILE), "utf8")
@@ -220,6 +271,12 @@ const RED_CASES = [
     name: "red-map-duplicate",
     rule: "contract-map",
     code: "duplicate-name",
+    file: CAPABILITIES_FILE,
+  },
+  {
+    name: "red-map-duplicate-wire",
+    rule: "contract-map",
+    code: "duplicate-wire",
     file: CAPABILITIES_FILE,
   },
   {
@@ -313,6 +370,22 @@ describe("check-contract.mjs: red fixtures", () => {
     });
   }
 
+  it("points the duplicate wire at the second entry's line", () => {
+    const capsText = readFileSync(
+      contractFile(fixture("red-map-duplicate-wire"), CAPABILITIES_FILE),
+      "utf8",
+    );
+    const line =
+      capsText.split("\n").findIndex((text) => text.includes('"name": "agent.listAlias"')) + 1;
+
+    expect(line).toBeGreaterThan(0);
+
+    const run = runGate(fixture("red-map-duplicate-wire"));
+
+    expect(run.status).toBe(1);
+    expect(run.stdout).toContain(`${CAPABILITIES_FILE}:${line} contract-map duplicate-wire:`);
+  });
+
   it("points the stale artifact at the hand-edited line", () => {
     const run = runGate(fixture("red-stale"));
 
@@ -355,6 +428,209 @@ describe("check-contract.mjs: red fixtures", () => {
 
   it("passes on this repository with no arguments", () => {
     const run = runNode(GATE, []);
+
+    expect(run.status).toBe(0);
+    expect(run.stdout).toBe("PASS\n");
+  });
+});
+
+describe("checkMap: snapshot schema", () => {
+  it("rejects an unsupported snapshot schemaVersion with exit 2 (P6-F6)", () => {
+    const root = copyGreen("schema-snapshot");
+    const snapshot = readContractJson(root, SNAPSHOT_FILE);
+
+    snapshot.schemaVersion = 2;
+    writeContractJson(root, SNAPSHOT_FILE, snapshot);
+
+    const run = runGate(root);
+
+    expect(run.status).toBe(2);
+    expect(run.stdout).toBe("");
+    expect(run.stderr).toContain("ERROR:");
+    expect(run.stderr).toContain(SNAPSHOT_FILE);
+    expect(run.stderr).toContain("expected 1");
+  });
+
+  it("rejects an unsupported capabilities schemaVersion with exit 2 (P6-F6)", () => {
+    const root = copyGreen("schema-capabilities");
+    const capabilities = readContractJson(root, CAPABILITIES_FILE);
+
+    capabilities.schemaVersion = 2;
+    writeContractJson(root, CAPABILITIES_FILE, capabilities);
+
+    const run = runGate(root);
+
+    expect(run.status).toBe(2);
+    expect(run.stdout).toBe("");
+    expect(run.stderr).toContain("ERROR:");
+    expect(run.stderr).toContain(CAPABILITIES_FILE);
+    expect(run.stderr).toContain("expected 1");
+  });
+
+  it("maps a structurally broken capability table to contract-map (P5-3)", () => {
+    const root = copyGreen("bad-capabilities");
+    const capabilities = readContractJson(root, CAPABILITIES_FILE);
+
+    capabilities.capabilities[0] = 5;
+    writeContractJson(root, CAPABILITIES_FILE, capabilities);
+
+    const run = runGate(root);
+
+    expect(run.status).toBe(1);
+    expect(run.output).toContain("contract-map invalid-capabilities:");
+    expect(run.output).toContain(CAPABILITIES_FILE);
+    expect(run.output).toContain("FAIL: 1 violation(s)");
+  });
+
+  it("reds a snapshot whose derived counts disagree (P5-3)", () => {
+    const root = copyGreen("count-mismatch");
+    const snapshot = readContractJson(root, SNAPSHOT_FILE);
+
+    snapshot.counts.wireCommands -= 1;
+    writeContractJson(root, SNAPSHOT_FILE, snapshot);
+    regenerateArtifact(root);
+
+    const run = runGate(root);
+
+    expect(run.status).toBe(1);
+    expect(run.output).toContain("contract-stale invalid-snapshot:");
+    expect(run.output).toContain("count-mismatch");
+    expect(run.output).toContain(SNAPSHOT_FILE);
+    expect(run.output).toContain("FAIL: 1 violation(s)");
+  });
+
+  it("reds a snapshot whose key order breaks the frozen schema (P5-3)", () => {
+    const root = copyGreen("key-order");
+    const snapshot = readContractJson(root, SNAPSHOT_FILE);
+    const reordered = Object.fromEntries(Object.entries(snapshot).reverse());
+
+    writeContractJson(root, SNAPSHOT_FILE, reordered);
+
+    const run = runGate(root);
+
+    expect(run.status).toBe(1);
+    expect(run.output).toContain("contract-stale invalid-snapshot:");
+    expect(run.output).toContain("key-order");
+    expect(run.output).toContain(SNAPSHOT_FILE);
+    expect(run.output).toContain("FAIL: 1 violation(s)");
+  });
+});
+
+describe("checkMap: execute_command parity invariants (P6-F1)", () => {
+  it("reds an advertised id without a handler", () => {
+    const root = copyGreen("parity-advertised");
+    const snapshot = readContractJson(root, SNAPSHOT_FILE);
+    const remote = snapshot.special.remoteCommands;
+
+    remote.advertised.push("ghost_advertised");
+    remote.advertised.sort();
+    snapshot.counts.advertisedCommands = remote.advertised.length;
+    writeContractJson(root, SNAPSHOT_FILE, snapshot);
+    regenerateArtifact(root);
+
+    const run = runGate(root);
+
+    expect(run.status).toBe(1);
+    expect(run.output).toContain("contract-cover advertised-without-handler:");
+    expect(run.output).toContain('"ghost_advertised"');
+    expect(run.output).toContain(SNAPSHOT_FILE);
+    expect(run.output).toContain("FAIL: 1 violation(s)");
+  });
+
+  it("reds an unadvertised dispatch case without an alias", () => {
+    const root = copyGreen("parity-case");
+    const snapshot = readContractJson(root, SNAPSHOT_FILE);
+    const remote = snapshot.special.remoteCommands;
+
+    remote.dispatchCases.push("ghost_case");
+    remote.dispatchCases.sort();
+    snapshot.counts.dispatchCases = remote.dispatchCases.length;
+    writeContractJson(root, SNAPSHOT_FILE, snapshot);
+    regenerateArtifact(root);
+
+    const run = runGate(root);
+
+    expect(run.status).toBe(1);
+    expect(run.output).toContain("contract-cover unadvertised-case-without-alias:");
+    expect(run.output).toContain('"ghost_case"');
+    expect(run.output).toContain("FAIL: 1 violation(s)");
+  });
+
+  it("reds an unadvertised alias without a dispatch case", () => {
+    const root = copyGreen("parity-alias");
+    const snapshot = readContractJson(root, SNAPSHOT_FILE);
+
+    snapshot.special.remoteCommands.unadvertisedAliases.ghost_alias = "fixture alias";
+    writeContractJson(root, SNAPSHOT_FILE, snapshot);
+    regenerateArtifact(root);
+
+    const run = runGate(root);
+
+    expect(run.status).toBe(1);
+    expect(run.output).toContain("contract-cover alias-without-case:");
+    expect(run.output).toContain('"ghost_alias"');
+    expect(run.output).toContain("FAIL: 1 violation(s)");
+  });
+
+  it("reds an empty parity input as untrustworthy instead of passing", () => {
+    const root = copyGreen("parity-vacuous");
+    const snapshot = readContractJson(root, SNAPSHOT_FILE);
+    const remote = snapshot.special.remoteCommands;
+
+    remote.advertised = [];
+    remote.handledElsewhere = {};
+    remote.unadvertisedAliases = {};
+    remote.dispatchCases = [];
+    snapshot.counts.advertisedCommands = 0;
+    snapshot.counts.dispatchCases = 0;
+    writeContractJson(root, SNAPSHOT_FILE, snapshot);
+    regenerateArtifact(root);
+
+    const run = runGate(root);
+
+    expect(run.status).toBe(1);
+    expect(run.output).toContain("contract-health empty-parity:");
+    expect(run.output).toContain("empty parity input, untrustworthy");
+    expect(run.output).toContain("FAIL: 1 violation(s)");
+  });
+});
+
+describe("contract/cli.mjs: usage and output contract", () => {
+  it("prints usage and exits 0 for --help in any position (P6-F4)", () => {
+    for (const args of [["--help"], ["check", "--help"], ["diff", "--help"], ["update", "-h"]]) {
+      const run = runNode(CLI, args);
+
+      expect(run.status, args.join(" ")).toBe(0);
+      expect(run.stdout).toContain("Usage:");
+      expect(run.stderr).toBe("");
+    }
+  });
+
+  it("consumes a repeated flag's value instead of reporting it as positional (P6-F4)", () => {
+    const run = runNode(CLI, ["check", "--engine", "a", "--engine", "b"]);
+
+    expect(run.status).toBe(2);
+    expect(run.stderr).toContain("option --engine was given more than once");
+    expect(run.stderr).not.toContain("unexpected positional argument");
+  });
+
+  it("never prints a fake :0 line for a line-less violation (P6-F5)", () => {
+    const run = spawnSync(process.execPath, [CLI, "check"], {
+      cwd: fixture("red-map-duplicate"),
+      encoding: "utf8",
+    });
+    const output = `${run.stdout ?? ""}${run.stderr ?? ""}`;
+
+    expect(run.status).toBe(1);
+    expect(output).toContain(`${CAPABILITIES_FILE} contract-map duplicate-name:`);
+    expect(output).not.toContain(":0 ");
+  });
+
+  it("matches the gate's PASS output on the green fixture", () => {
+    const run = spawnSync(process.execPath, [CLI, "check"], {
+      cwd: fixture("green"),
+      encoding: "utf8",
+    });
 
     expect(run.status).toBe(0);
     expect(run.stdout).toBe("PASS\n");
@@ -480,14 +756,14 @@ describe("check-contract.mjs: reusable collector", () => {
       rule: "contract-map",
       message: expect.stringContaining("duplicate-name"),
     });
-    expect(violations[0].line).toBeUndefined();
+    expect(first(violations, "violations").line).toBeUndefined();
   });
 
   it("lifts the stale artifact line into the violation", () => {
     const violations = collectContractViolations({ root: fixture("red-stale") });
 
     expect(violations).toHaveLength(1);
-    expect(violations[0].file).toBe(MAP_FILE);
-    expect(violations[0].line).toBe(STALE_LINE);
+    expect(first(violations, "violations").file).toBe(MAP_FILE);
+    expect(first(violations, "violations").line).toBe(STALE_LINE);
   });
 });

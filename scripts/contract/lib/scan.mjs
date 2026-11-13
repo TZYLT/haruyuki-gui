@@ -3,11 +3,22 @@
  *
  * Scope (frozen by A2-D03 / A2-D04):
  *   - Only TypeScript files below `src/types` are indexed, recursively.
+ *   - `*.d.ts` and `*.test.ts` / `*.spec.ts` are excluded on purpose. Ambient
+ *     declaration shims (`md.d.ts`, `txt.d.ts`, `letta-client-augmentations.d.ts`)
+ *     describe modules this index never reads, and test files declare local
+ *     fixtures; either one can only add a same-name declaration that turns a
+ *     real protocol symbol into `ambiguous-symbol` -> `degraded`. A2-D03 indexes
+ *     production declarations.
+ *   - The indexed extension set is `SOURCE_EXTENSIONS`; `resolveModuleFile` uses
+ *     the same set, so a file the walker skips is never resolvable as a module.
  *   - Every file is parsed with
  *       ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
  *     and walked with `forEachChild`. There is no Program, no type checker and
  *     no resolution into `node_modules`; `@letta-ai/*` field types stay opaque
- *     text on purpose.
+ *     text on purpose. A file with parser diagnostics is still indexed (a
+ *     recoverable error can keep later declarations) but is recorded in
+ *     `health.unparsed` and marks the index `degraded`, so a syntax-broken file
+ *     never disappears without a trace.
  *
  * Entry shape (one entry per interface / type alias declaration):
  *   {
@@ -18,10 +29,33 @@
  *     line,          // 1-based line of the declaration, for "<file>:<line>" homes
  *     typeLiteral,   // the `type: "..."` literal of an interface, else null
  *     fields,        // top-level properties: {name, type, optional, readonly, nested}
- *     bodyText,      // interface body (inside the braces) or the alias type text
+ *                    // after heritage merge, see below
+ *     bodyText,      // fingerprint input: own body plus every merged base body
+ *     ownBodyText,   // the raw `{ ... }` slice of the declaration itself
+ *     heritageRefs,  // raw `extends A, B` expressions of an interface, else []
+ *     heritageProblems, // single-line English reasons a base could not merge
  *     unionMembers,  // raw member texts of `type X = A | B`, else null
  *   }
  *
+ * Interface heritage (extends)
+ *   A syntax-only index sees `interface StreamDeltaMessage extends RuntimeEnvelope`
+ *   as two declarations. Reading only the own members reported 3 fields for a
+ *   message that has 7 on the wire and made a base-class edit invisible to the
+ *   fingerprint. After every file is parsed, `mergeHeritage` (`lib/heritage.mjs`)
+ *   resolves each `extends` expression through this index and folds the base in
+ *   recursively:
+ *     - base members are merged first, own members win on a name collision;
+ *     - the fingerprint input `bodyText` becomes
+ *       `extends Base { <base bodyText> } { <own body> }`, recursively, so a
+ *       field added to a base changes every descendant fingerprint;
+ *     - an unresolvable or non-interface base is a `coarse` line (an external
+ *       SDK base is unmergeable by design) and a cycle is `unparsed` plus
+ *       `degraded`; neither is silent.
+ *
+ *   The same merge runs for declarations the protocol unions never emit; snapshot assembly
+ *   decides which of those lines reach the snapshot (only the records it emits).
+ *
+
  * Seam for command extraction and message / inbound extraction:
  *
  *   import { createTypeIndex } from "./lib/scan.mjs";
@@ -72,8 +106,22 @@ import path from "node:path";
 
 import ts from "typescript";
 
+import { mergeHeritage } from "./heritage.mjs";
+import { compareStrings } from "./json.mjs";
+
 /** Directory below the engine root that is the only indexed input. */
 const TYPE_DIR = "src/types";
+
+/**
+ * TypeScript source extensions this index reads. `walkDirectory` and
+ * `resolveModuleFile` share this list so "indexed" and "resolvable" cannot drift
+ * apart; a file outside it is neither walked nor a valid module target.
+ */
+export const SOURCE_EXTENSIONS = Object.freeze([".ts", ".mts", ".cts"]);
+
+/** `*.d.ts`, `*.test.ts` and `*.spec.ts` are not protocol declarations. */
+const EXCLUDED_FILE_PATTERN =
+  /\.(d\.ts|d\.mts|d\.cts|test\.ts|spec\.ts|test\.mts|spec\.mts|test\.cts|spec\.cts)$/;
 
 /** Failure codes returned instead of throwing. */
 export const FAILURE_CODES = Object.freeze({
@@ -85,6 +133,33 @@ export const FAILURE_CODES = Object.freeze({
   UNION_NOT_FOUND: "union-not-found",
   NOT_A_UNION: "not-a-union",
 });
+
+/**
+ * Record a file whose parse produced diagnostics.
+ *
+ * The declarations that did parse stay in the index (a recoverable error keeps
+ * later statements), but the file is never silent: the index becomes `degraded`
+ * and `health.unparsed` carries one line per broken file.
+ *
+ * @param {import("typescript").SourceFile} sourceFile
+ * @param {string} file engine-root relative posix path
+ * @param {{degraded: boolean, coarse: string[], unparsed: string[]}} health
+ */
+function collectParseDiagnostics(sourceFile, file, health) {
+  const diagnostics = Array.isArray(sourceFile.parseDiagnostics) ? sourceFile.parseDiagnostics : [];
+
+  if (diagnostics.length === 0) {
+    return;
+  }
+
+  const first = diagnostics[0];
+  const message = typeof first?.messageText === "string" ? first.messageText : "descriptive error";
+
+  health.degraded = true;
+  health.unparsed.push(
+    `${file}: parse-error: ${collapseWhitespace(message)} (${diagnostics.length} diagnostics)`,
+  );
+}
 
 /** `import("./module").Qualifier` (also single quotes; whitespace is collapsed first). */
 const IMPORT_TYPE_REF = /^import\("([^"]+)"\)\.([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)$/;
@@ -115,13 +190,13 @@ function collapseWhitespace(value) {
 }
 
 /**
- * List `src/types/**\/*.ts` below an engine root as sorted posix paths.
+ * List the indexed `src/types` files of an engine root as sorted posix paths.
  *
  * @param {string} engineRoot engine checkout root
  * @returns {string[]} engine-root relative posix paths, lexicographic
  */
 export function listTypeFiles(engineRoot) {
-  const typesRoot = path.join(path.resolve(engineRoot), "src", "types");
+  const typesRoot = path.join(path.resolve(engineRoot), ...TYPE_DIR.split("/"));
 
   if (!existsSync(typesRoot) || !statSync(typesRoot).isDirectory()) {
     throw new Error(`scan: engine type directory not found: ${toPosix(typesRoot)}`);
@@ -139,6 +214,21 @@ export function listTypeFiles(engineRoot) {
 }
 
 /**
+ * True for a file the index reads: an indexed source extension that is not a
+ * declaration shim and not a test file.
+ *
+ * @param {string} name base file name
+ * @returns {boolean}
+ */
+function isIndexedFileName(name) {
+  if (EXCLUDED_FILE_PATTERN.test(name)) {
+    return false;
+  }
+
+  return SOURCE_EXTENSIONS.some((extension) => name.endsWith(extension));
+}
+
+/**
  * @param {string} dir absolute directory
  * @param {string[]} out accumulator of absolute file paths
  */
@@ -148,22 +238,10 @@ function walkDirectory(dir, out) {
 
     if (entry.isDirectory()) {
       walkDirectory(absolute, out);
-    } else if (entry.isFile() && entry.name.endsWith(".ts")) {
+    } else if (entry.isFile() && isIndexedFileName(entry.name)) {
       out.push(absolute);
     }
   }
-}
-
-/**
- * True for a test file. Test declarations lose every name collision, because
- * they never describe the protocol contract (A2-D03 indexes the directory, the
- * preference just keeps a local fixture from shadowing a real interface).
- *
- * @param {string} file posix path
- * @returns {boolean}
- */
-function isTestFile(file) {
-  return /\.(test|spec)\.ts$/.test(file);
 }
 
 /**
@@ -174,6 +252,7 @@ function isTestFile(file) {
  *   engineRoot: string,
  *   files: string[],
  *   stats: { files: number, entries: number, interfaces: number, aliases: number },
+ *   health: { degraded: boolean, coarse: string[], unparsed: string[] },
  *   resolveTypeRef: (ref: string, fromFile: string) => object,
  *   resolveUnion: (unionName: string, fromFile: string) => object,
  * }}
@@ -189,6 +268,10 @@ export function createTypeIndex(engineRoot) {
   const byName = new Map();
   /** @type {Map<string, object[]>} */
   const byQualifiedName = new Map();
+  /** @type {object[]} declaration-order list, for the heritage post-pass */
+  const allEntries = [];
+  /** @type {{degraded: boolean, coarse: string[], unparsed: string[]}} */
+  const health = { degraded: false, coarse: [], unparsed: [] };
 
   let interfaceCount = 0;
   let aliasCount = 0;
@@ -202,6 +285,8 @@ export function createTypeIndex(engineRoot) {
       true,
       ts.ScriptKind.TS,
     );
+
+    collectParseDiagnostics(sourceFile, file, health);
 
     const info = { namespaces: new Map(), namedImports: new Map(), entries: new Map() };
     collectDeclarations(sourceFile, sourceFile, file, info);
@@ -230,6 +315,8 @@ export function createTypeIndex(engineRoot) {
       } else {
         aliasCount += 1;
       }
+
+      allEntries.push(entry);
     }
 
     perFile.set(file, info);
@@ -278,17 +365,24 @@ export function createTypeIndex(engineRoot) {
     }
 
     const base = path.posix.normalize(path.posix.join(path.posix.dirname(fromFile), specifier));
+    /** @type {string[]} */
     const candidates = [];
 
-    if (/\.(ts|mts|cts|js|mjs|cjs)$/.test(base)) {
-      candidates.push(
-        base,
-        base.replace(/\.js$/, ".ts"),
-        base.replace(/\.mjs$/, ".mts"),
-        base.replace(/\.cjs$/, ".cts"),
-      );
+    if (SOURCE_EXTENSIONS.some((extension) => base.endsWith(extension))) {
+      candidates.push(base);
+    } else if (/\.(js|mjs|cjs)$/.test(base)) {
+      // A relative `./x.js` specifier (NodeNext style) points at the emitted file;
+      // the indexed source is the same path with an indexed extension.
+      const stem = base.replace(/\.(js|mjs|cjs)$/, "");
+      const emitted = /\.(mjs|cjs)$/.exec(base);
+
+      candidates.push(`${stem}.ts`);
+
+      if (emitted) {
+        candidates.push(`${stem}${emitted[1] === "mjs" ? ".mts" : ".cts"}`);
+      }
     } else {
-      for (const extension of [".ts", ".mts", ".cts"]) {
+      for (const extension of SOURCE_EXTENSIONS) {
         candidates.push(`${base}${extension}`, `${base}/index${extension}`);
       }
     }
@@ -320,7 +414,9 @@ export function createTypeIndex(engineRoot) {
   }
 
   /**
-   * Pick one entry out of several same-named candidates.
+   * Pick one entry out of several same-named candidates. Test files and
+   * declaration shims are not indexed, so a same-file declaration followed by an
+   * honestly reported ambiguity covers every remaining case.
    *
    * @param {object[]} candidates
    * @param {string} fromFile
@@ -339,12 +435,6 @@ export function createTypeIndex(engineRoot) {
 
     if (sameFile.length === 1) {
       return { entry: sameFile[0] };
-    }
-
-    const production = candidates.filter((candidate) => !isTestFile(candidate.file));
-
-    if (production.length === 1) {
-      return { entry: production[0] };
     }
 
     return {
@@ -578,6 +668,15 @@ export function createTypeIndex(engineRoot) {
     };
   }
 
+  // Fold every `extends` chain now that the whole file set is indexed.
+  const heritageHealth = mergeHeritage(allEntries, resolveTypeRef);
+
+  health.degraded = health.degraded || heritageHealth.degraded;
+  health.coarse.push(...heritageHealth.coarse);
+  health.unparsed.push(...heritageHealth.unparsed);
+  health.coarse.sort(compareStrings);
+  health.unparsed.sort(compareStrings);
+
   return {
     engineRoot: toPosix(root),
     files,
@@ -587,6 +686,7 @@ export function createTypeIndex(engineRoot) {
       interfaces: interfaceCount,
       aliases: aliasCount,
     },
+    health,
     resolveTypeRef,
     resolveUnion,
   };
@@ -661,16 +761,23 @@ function makeEntry(node, sourceFile, file, namespace) {
   const line = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1;
 
   let bodyText;
+  let ownBodyText;
   let fields = [];
+  let ownFields = [];
+  let heritageRefs = [];
   let typeLiteral = null;
   let unionMembers = null;
 
   if (ts.isInterfaceDeclaration(node)) {
-    bodyText = sourceFile.text.slice(node.members.pos, node.members.end);
-    fields = extractFields(node, sourceFile);
+    ownBodyText = sourceFile.text.slice(node.members.pos, node.members.end);
+    bodyText = ownBodyText;
+    ownFields = extractFields(node, sourceFile);
+    fields = ownFields;
+    heritageRefs = extractHeritageRefs(node, sourceFile);
     typeLiteral = extractTypeLiteral(node);
   } else {
     bodyText = node.type.getText(sourceFile);
+    ownBodyText = bodyText;
 
     if (ts.isUnionTypeNode(node.type)) {
       unionMembers = node.type.types.map((member) =>
@@ -681,7 +788,46 @@ function makeEntry(node, sourceFile, file, namespace) {
     }
   }
 
-  return { name, qualifiedName, kind, file, line, typeLiteral, fields, bodyText, unionMembers };
+  return {
+    name,
+    qualifiedName,
+    kind,
+    file,
+    line,
+    typeLiteral,
+    fields,
+    ownFields,
+    bodyText,
+    ownBodyText,
+    heritageRefs,
+    heritageProblems: [],
+    unionMembers,
+  };
+}
+
+/**
+ * Read the `extends` operand texts of an interface, in declaration order.
+ *
+ * @param {import("typescript").InterfaceDeclaration} node
+ * @param {import("typescript").SourceFile} sourceFile
+ * @returns {string[]} collapsed operand texts, e.g. ["RuntimeEnvelope"]
+ */
+function extractHeritageRefs(node, sourceFile) {
+  const clauses = node.heritageClauses ?? [];
+  /** @type {string[]} */
+  const refs = [];
+
+  for (const clause of clauses) {
+    if (clause.token !== ts.SyntaxKind.ExtendsKeyword) {
+      continue;
+    }
+
+    for (const type of clause.types) {
+      refs.push(collapseWhitespace(type.getText(sourceFile)));
+    }
+  }
+
+  return refs;
 }
 
 /**

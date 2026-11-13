@@ -44,6 +44,13 @@
  * The pure parsers (`parseRemoteConstants`, `parseDispatchCases`,
  * `parseStartupLines`) take source text, so the contract replay fixture strings
  * without copying the engine tree.
+ *
+ * `consistency` is `checkParityConsistency(remoteCommands)` re-exported from
+ * `lib/parity-rules.mjs`: `{ ok, vacuous, advertisedWithoutHandler,
+ * unadvertisedCaseWithoutAlias, aliasWithoutCase }`. It is a reusable export
+ * (P5-8) - the gate compares `snapshot.special.remoteCommands` with it directly,
+ * without re-reading the engine - and `ok` is false on empty input (`vacuous`),
+ * so a vanished extraction never reads as a clean parity surface.
  */
 
 import { existsSync, readFileSync } from "node:fs";

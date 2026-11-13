@@ -12,7 +12,7 @@
     },
     {
       "name": "agent.future",
-      "wire": "agent_list",
+      "wire": "file_ops",
       "since": "0.7.0",
       "scope": "none",
       "shape": "request-response"

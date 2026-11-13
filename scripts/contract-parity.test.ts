@@ -5,12 +5,17 @@
  * `_research/haruyuki` (v0.6.0 @ 1641a4f): the four locked counts
  * (14 advertised / 3 handled elsewhere / 1 alias / 12 dispatch cases), the
  * three parity invariants and the two-required-one-optional startup shapes are
- * facts about that checkout, not fixture choices. A missing mirror is a hard
- * failure with an actionable message, never a silent skip.
+ * facts about that checkout, not fixture choices. A missing mirror skips those
+ * engine-bound suites (`describeWithEngine`) instead of failing: a clean clone
+ * has no `_research/` and the default `verify` must stay green, and a
+ * skip is not a silent pass because the synthetic parser cases below
+ * still run and the fixture-driven gate test covers the same pipeline.
  *
  * The red cases feed synthetic source through the pure parsers, which is the
  * seam the contract gate needs for its fixtures: no engine tree, no writes, no process
- * spawn.
+ * spawn. The final suite is engine-free on purpose: it pins the reusable
+ * `checkParityConsistency` contract the gate consumes (empty input is not a
+ * pass, duplicate ids are reported once, a dangling alias is reported alone).
  */
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
@@ -27,15 +32,10 @@ import {
   parseRemoteConstants,
   parseStartupLines,
 } from "./contract/extract-parity.mjs";
+import { assertFailure, assertSuccess, defined } from "./lib/test-assert.js";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const ENGINE_ROOT = path.join(REPO_ROOT, "_research", "haruyuki");
-
-const MISSING_MIRROR_HINT =
-  `engine mirror is missing at ${ENGINE_ROOT}. ` +
-  "`transport.ts` reads the pinned engine source: create the read-only mirror with " +
-  "`git clone --shared <main checkout>/_research/haruyuki _research/haruyuki` " +
-  "and check out commit 1641a4f (v0.6.0).";
 
 /** Real stdout lines the startup shapes must accept. */
 const STARTUP_OUTPUT = {
@@ -104,8 +104,65 @@ const SYNTHETIC_STARTUP = [
   "}",
 ].join("\n");
 
-/** @type {ReturnType<typeof extractParity>} */
-let parity;
+/**
+ * The extraction shape the engine-bound suites below read.
+ *
+ * Spelled out here because `extractParity`'s own JSDoc says
+ * `@returns {object}`, which TypeScript resolves to `any` - every assertion on
+ * `parity.*` would be unchecked, which is exactly the hole this type check
+ * exists to close. With the shape declared, a renamed or misspelled field in
+ * these assertions is a compile error instead of a silently passing
+ * `expect(undefined)`. The extractor's field names are pinned by the fixture
+ * gate test as well; keep both in step if the snapshot shape changes.
+ */
+type ParityExtraction =
+  | {
+      ok: true;
+      engineRoot: string;
+      remoteCommands: {
+        advertised: string[];
+        handledElsewhere: Record<string, string>;
+        unadvertisedAliases: Record<string, string>;
+        dispatchCases: string[];
+      };
+      counts: {
+        advertisedCommands: number;
+        handledElsewhere: number;
+        unadvertisedAliases: number;
+        dispatchCases: number;
+      };
+      startupText: { required: string[]; optional: string[] };
+      consistency: {
+        ok: boolean;
+        vacuous: boolean;
+        advertisedWithoutHandler: string[];
+        unadvertisedCaseWithoutAlias: string[];
+        aliasWithoutCase: string[];
+      };
+      health: {
+        degraded: boolean;
+        coarse: { reason?: string; text?: string; line?: number }[];
+        unparsed: { file: string; symbol: string }[];
+      };
+    }
+  | {
+      ok: false;
+      code: string;
+      file: string;
+      symbol: string;
+      message: string;
+      health: {
+        degraded: true;
+        coarse: { reason?: string; text?: string; line?: number }[];
+        unparsed: { file: string; symbol: string }[];
+      };
+    };
+
+/** The success arm: the engine-bound assertions below all read this shape. */
+type ParitySuccess = Extract<ParityExtraction, { ok: true }>;
+
+/** Parity extraction over the pinned engine source, filled in by `beforeAll`. */
+let parity: ParitySuccess;
 const ENGINE_AVAILABLE = existsSync(path.join(ENGINE_ROOT, "src", "websocket"));
 
 /**
@@ -120,12 +177,14 @@ beforeAll(() => {
   if (!ENGINE_AVAILABLE) {
     return;
   }
-  parity = extractParity({ engineRoot: ENGINE_ROOT });
+
+  const extraction = extractParity({ engineRoot: ENGINE_ROOT });
+  assertSuccess(extraction, "parity extraction on the pinned engine source");
+  parity = extraction;
 });
 
 describeWithEngine("parity extraction on the pinned engine source", () => {
   it("extracts 14 advertised ids in declaration order", () => {
-    expect(parity.ok, JSON.stringify(parity)).toBe(true);
     expect(parity.remoteCommands.advertised).toHaveLength(14);
     expect(parity.remoteCommands.advertised).toEqual([
       "clear",
@@ -197,6 +256,7 @@ describeWithEngine("parity extraction on the pinned engine source", () => {
   it("keeps the three consistency invariants green", () => {
     expect(parity.consistency).toEqual({
       ok: true,
+      vacuous: false,
       advertisedWithoutHandler: [],
       unadvertisedCaseWithoutAlias: [],
       aliasWithoutCase: [],
@@ -214,8 +274,9 @@ describeWithEngine("parity extraction on the pinned engine source", () => {
   });
 
   it("matches the real startup output and rejects a wrong label", () => {
-    const [listening, webSocket] = parity.startupText.required;
-    const [openAi] = parity.startupText.optional;
+    const listening = defined(parity.startupText.required[0], "startupText.required[0]");
+    const webSocket = defined(parity.startupText.required[1], "startupText.required[1]");
+    const openAi = defined(parity.startupText.optional[0], "startupText.optional[0]");
 
     expect(new RegExp(listening).test(STARTUP_OUTPUT.listening)).toBe(true);
     expect(new RegExp(webSocket).test(STARTUP_OUTPUT.webSocket)).toBe(true);
@@ -246,11 +307,11 @@ describeWithEngine("parity extraction on the pinned engine source", () => {
     const dispatch = parseDispatchCases(commandsText);
     const startup = parseStartupLines(startupText);
 
-    expect(constants.ok, JSON.stringify(constants)).toBe(true);
+    assertSuccess(constants, "parseRemoteConstants on the real source");
     expect(constants.advertised).toHaveLength(14);
-    expect(dispatch.ok, JSON.stringify(dispatch)).toBe(true);
+    assertSuccess(dispatch, "parseDispatchCases on the real source");
     expect(dispatch.dispatchCases).toHaveLength(12);
-    expect(startup.ok, JSON.stringify(startup)).toBe(true);
+    assertSuccess(startup, "parseStartupLines on the real source");
     expect(startup.required).toHaveLength(2);
     expect(startup.optional).toHaveLength(1);
   });
@@ -260,7 +321,7 @@ describeWithEngine("parity extraction on the pinned engine source", () => {
       engineRoot: path.join(REPO_ROOT, "_research", "haruyuki-does-not-exist"),
     });
 
-    expect(missing.ok).toBe(false);
+    assertFailure(missing, "extractParity with a missing engine mirror");
     expect(missing.code).toBe(PARITY_FAILURE_CODES.ENGINE_SOURCE_MISSING);
     expect(missing.health.degraded).toBe(true);
     expect(missing.file).toBe(PARITY_SOURCES.constants);
@@ -269,13 +330,32 @@ describeWithEngine("parity extraction on the pinned engine source", () => {
 });
 
 describeWithEngine("parity invariants on synthetic source", () => {
-  /** @returns {{constants: object, dispatch: object, remote: object}} */
-  function syntheticParity() {
+  /**
+   * Parse both synthetic sources and assemble the block
+   * `checkParityConsistency` consumes.
+   *
+   * The return type is spelled out (not the JSDoc `object` it used to be) so
+   * the callers can read the four fields without a cast; the parsers are
+   * asserted here, which is what narrows `constants`/`dispatch` to their
+   * success arm.
+   *
+   * @returns the two parser results plus the assembled remote-command block
+   */
+  function syntheticParity(): {
+    constants: ReturnType<typeof parseRemoteConstants>;
+    dispatch: ReturnType<typeof parseDispatchCases>;
+    remote: {
+      advertised: string[];
+      handledElsewhere: Record<string, string>;
+      unadvertisedAliases: Record<string, string>;
+      dispatchCases: string[];
+    };
+  } {
     const constants = parseRemoteConstants(SYNTHETIC_CONSTANTS);
     const dispatch = parseDispatchCases(SYNTHETIC_COMMANDS);
 
-    expect(constants.ok, JSON.stringify(constants)).toBe(true);
-    expect(dispatch.ok, JSON.stringify(dispatch)).toBe(true);
+    assertSuccess(constants, "parseRemoteConstants on the synthetic source");
+    assertSuccess(dispatch, "parseDispatchCases on the synthetic source");
 
     const remote = {
       advertised: constants.advertised,
@@ -294,6 +374,7 @@ describeWithEngine("parity invariants on synthetic source", () => {
     expect(remote.dispatchCases).toEqual(["clear", "doctor", "set-max-context"]);
     expect(checkParityConsistency(remote)).toEqual({
       ok: true,
+      vacuous: false,
       advertisedWithoutHandler: [],
       unadvertisedCaseWithoutAlias: [],
       aliasWithoutCase: [],
@@ -306,9 +387,12 @@ describeWithEngine("parity invariants on synthetic source", () => {
 
     expect(withoutDoctor).not.toContain('case "doctor"');
 
+    const withoutDoctorDispatch = parseDispatchCases(withoutDoctor);
+    assertSuccess(withoutDoctorDispatch, 'parseDispatchCases after deleting case "doctor"');
+
     const consistency = checkParityConsistency({
       ...remote,
-      dispatchCases: parseDispatchCases(withoutDoctor).dispatchCases,
+      dispatchCases: withoutDoctorDispatch.dispatchCases,
     });
 
     expect(consistency.ok).toBe(false);
@@ -322,9 +406,12 @@ describeWithEngine("parity invariants on synthetic source", () => {
 
     expect(renamed).toContain('case "medicine"');
 
+    const renamedDispatch = parseDispatchCases(renamed);
+    assertSuccess(renamedDispatch, 'parseDispatchCases after renaming case "doctor"');
+
     const consistency = checkParityConsistency({
       ...remote,
-      dispatchCases: parseDispatchCases(renamed).dispatchCases,
+      dispatchCases: renamedDispatch.dispatchCases,
     });
 
     expect(consistency.ok).toBe(false);
@@ -341,18 +428,21 @@ describeWithEngine("parity invariants on synthetic source", () => {
     const startup = parseStartupLines(renamed);
 
     expect(renamed).toContain("WS:");
-    expect(startup.ok, JSON.stringify(startup)).toBe(true);
+    assertSuccess(startup, "parseStartupLines after renaming the WebSocket label");
     expect(startup.required).toHaveLength(2);
-    expect(startup.required[1]).toBe("^WS:\\s+(ws://\\S+)$");
-    expect(new RegExp(startup.required[1]).test(STARTUP_OUTPUT.webSocket)).toBe(false);
-    expect(new RegExp(startup.required[1]).test("WS: ws://127.0.0.1:4500/ws")).toBe(true);
+
+    const wsShape = defined(startup.required[1], "startupText.required[1]");
+
+    expect(wsShape).toBe("^WS:\\s+(ws://\\S+)$");
+    expect(new RegExp(wsShape).test(STARTUP_OUTPUT.webSocket)).toBe(false);
+    expect(new RegExp(wsShape).test("WS: ws://127.0.0.1:4500/ws")).toBe(true);
   });
 
   it("records a non-literal case label as coarse instead of stringifying it", () => {
     const nonLiteral = SYNTHETIC_COMMANDS.replace('case "doctor"', "case SOME_COMMAND_ID");
     const dispatch = parseDispatchCases(nonLiteral);
 
-    expect(dispatch.ok, JSON.stringify(dispatch)).toBe(true);
+    assertSuccess(dispatch, "parseDispatchCases on a non-literal case label");
     expect(dispatch.dispatchCases).toEqual(["clear", "set-max-context"]);
     expect(dispatch.coarse).toHaveLength(1);
     expect(dispatch.coarse[0]).toMatchObject({
@@ -367,7 +457,7 @@ describeWithEngine("parity invariants on synthetic source", () => {
     const constants = parseRemoteConstants(nonLiteral);
 
     expect(nonLiteral).toContain("SOME_COMMAND_ID,");
-    expect(constants.ok).toBe(false);
+    assertFailure(constants, "parseRemoteConstants on a non-literal element");
     expect(constants.code).toBe(PARITY_FAILURE_CODES.CONSTANT_ELEMENT_NOT_LITERAL);
     expect(constants.symbol).toBe("SUPPORTED_REMOTE_COMMANDS");
   });
@@ -379,7 +469,7 @@ describeWithEngine("parity invariants on synthetic source", () => {
     );
     const constants = parseRemoteConstants(withoutAliases);
 
-    expect(constants.ok).toBe(false);
+    assertFailure(constants, "parseRemoteConstants with a missing constant");
     expect(constants.code).toBe(PARITY_FAILURE_CODES.CONSTANT_NOT_FOUND);
     expect(constants.symbol).toBe("UNADVERTISED_REMOTE_COMMAND_ALIASES");
   });
@@ -388,15 +478,104 @@ describeWithEngine("parity invariants on synthetic source", () => {
     const noSwitch = SYNTHETIC_COMMANDS.replace("switch (command.command_id)", "switch (other)");
     const dispatch = parseDispatchCases(noSwitch);
 
-    expect(dispatch.ok).toBe(false);
+    assertFailure(dispatch, "parseDispatchCases with the switch missing");
     expect(dispatch.code).toBe(PARITY_FAILURE_CODES.DISPATCH_SWITCH_NOT_FOUND);
   });
 
   it("fails structurally when the startup handler is missing", () => {
     const startup = parseStartupLines("export function run(): void { console.log('x'); }");
 
-    expect(startup.ok).toBe(false);
+    assertFailure(startup, "parseStartupLines with the handler missing");
     expect(startup.code).toBe(PARITY_FAILURE_CODES.STARTUP_HANDLER_NOT_FOUND);
     expect(startup.symbol).toBe("onListening");
+  });
+});
+
+/**
+ * Engine-free pins on the reusable consistency export (P5-9, P5-7, P5-8).
+ *
+ * The input is the `snapshot.special.remoteCommands` block, which is exactly
+ * what the gate can read without touching the engine mirror. `ok` is false on
+ * empty input and every output list is deduplicated, so a vanished extraction
+ * or a duplicated id cannot read as clean.
+ */
+describe("parity consistency contract (pure)", () => {
+  it("treats empty input as inconsistent instead of a vacuous pass", () => {
+    const consistency = checkParityConsistency({
+      advertised: [],
+      handledElsewhere: {},
+      unadvertisedAliases: {},
+      dispatchCases: [],
+    });
+
+    expect(consistency.vacuous).toBe(true);
+    expect(consistency.ok).toBe(false);
+    expect(consistency.advertisedWithoutHandler).toEqual([]);
+    expect(consistency.unadvertisedCaseWithoutAlias).toEqual([]);
+    expect(consistency.aliasWithoutCase).toEqual([]);
+  });
+
+  it("does not throw on a partial or missing remote command block", () => {
+    // The evaluator deliberately coerces a missing/non-object block to `{}` and
+    // reports `vacuous: true` (its own header: "Never throws"), which is what this
+    // test pins, but its JSDoc `@param` still declares a required object. The
+    // annotation is narrower than the behaviour, so the two calls that exercise
+    // the tolerated input are suppressed; a directive that stops matching fails
+    // loudly (TS2578), so tightening the JSDoc later cannot leave a dead one.
+    // @ts-expect-error - missing block is tolerated at run time (see above).
+    expect(() => checkParityConsistency(undefined)).not.toThrow();
+    // @ts-expect-error - missing block is tolerated at run time (see above).
+    expect(checkParityConsistency(undefined).vacuous).toBe(true);
+
+    const partial = checkParityConsistency({ advertised: ["clear"] });
+
+    expect(partial.vacuous).toBe(false);
+    expect(partial.ok).toBe(false);
+    expect(partial.advertisedWithoutHandler).toEqual(["clear"]);
+  });
+
+  it("reports a duplicated id once instead of once per copy", () => {
+    const consistency = checkParityConsistency({
+      advertised: ["clear", "doctor", "doctor"],
+      handledElsewhere: {},
+      unadvertisedAliases: {},
+      dispatchCases: ["clear", "clear"],
+    });
+
+    expect(consistency.ok).toBe(false);
+    expect(consistency.advertisedWithoutHandler).toEqual(["doctor"]);
+    expect(consistency.unadvertisedCaseWithoutAlias).toEqual([]);
+    expect(consistency.aliasWithoutCase).toEqual([]);
+  });
+
+  it("reports only the dangling alias when no other invariant is violated (P5-7)", () => {
+    const consistency = checkParityConsistency({
+      advertised: ["clear"],
+      handledElsewhere: {},
+      unadvertisedAliases: { "set-max-context": "Pre-rename wire id for context-limit." },
+      dispatchCases: ["clear"],
+    });
+
+    expect(consistency.ok).toBe(false);
+    expect(consistency.advertisedWithoutHandler).toEqual([]);
+    expect(consistency.unadvertisedCaseWithoutAlias).toEqual([]);
+    expect(consistency.aliasWithoutCase).toEqual(["set-max-context"]);
+  });
+
+  it("accepts the snapshot block shape the gate consumes unchanged (P5-8)", () => {
+    const fromSnapshotBlock = {
+      advertised: ["clear"],
+      handledElsewhere: {},
+      unadvertisedAliases: {},
+      dispatchCases: ["clear"],
+    };
+
+    expect(checkParityConsistency(fromSnapshotBlock)).toEqual({
+      ok: true,
+      vacuous: false,
+      advertisedWithoutHandler: [],
+      unadvertisedCaseWithoutAlias: [],
+      aliasWithoutCase: [],
+    });
   });
 });

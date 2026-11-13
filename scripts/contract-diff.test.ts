@@ -15,13 +15,29 @@
  * through `main()` and through a real `node scripts/contract/diff.mjs` spawn.
  * Determinism renders the same pair twice and compares bytes.
  *
+ * Two suites cover review findings P5-1 and P5-2. P5-1: an `inbound` flag that
+ * leaves the accepted set while the wire stays in the union, and a counts-only
+ * drift, must both reach section 5 and `summary.total` (the value
+ * `check --engine` gates on), while the `diff` CLI stays in report mode. P5-2:
+ * the inbound extractor degrades when the OR chain no longer holds a
+ * `is<Name>(argument)` call, and records a non-identifier guard argument as
+ * `health.coarse` instead of dropping it.
+ *
  * Temp files use `fs.mkdtemp(os.tmpdir())`; each created file is unlinked
  * individually and the directory is left to the OS (discipline 03 section 1.1).
+ * The P5-2 fixtures are single-file engine trees in that same temp directory.
  * Nothing here writes into the repository, touches the network or runs an
- * extractor.
+ * extractor against the real engine.
  */
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -29,7 +45,9 @@ import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { DiffInputError, diffSnapshots, main, runDiff } from "./contract/diff.mjs";
+import { extractInboundSet } from "./contract/lib/inbound.mjs";
 import { SECTION_TITLES, renderReport } from "./contract/report.mjs";
+import { defined, first } from "./lib/test-assert.js";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const SNAPSHOT_PATH = path.join(
@@ -198,9 +216,7 @@ function sectionOf(lines: string[], title: string): string[] {
 
   const entries: string[] = [];
 
-  for (let index = start + 1; index < lines.length; index += 1) {
-    const line = lines[index];
-
+  for (const line of lines.slice(start + 1)) {
     if (SECTION_TITLES.includes(line)) {
       break;
     }
@@ -211,6 +227,21 @@ function sectionOf(lines: string[], title: string): string[] {
   }
 
   return entries;
+}
+
+/**
+ * Read one of the seven report section titles.
+ *
+ * `SECTION_TITLES` comes from the gate as a plain `readonly string[]`, so
+ * `noUncheckedIndexedAccess` types `sectionTitle(2)` as `string | undefined`
+ * and `sectionOf(lines, sectionTitle(2))` would not compile - even though the
+ * report always emits all seven sections.
+ *
+ * @param position zero-based section position, 0-6
+ * @returns the title at that position
+ */
+function sectionTitle(position: number): string {
+  return defined(SECTION_TITLES[position], `SECTION_TITLES[${position}]`);
 }
 
 /** Find the baseline command record with this wire. */
@@ -307,13 +338,13 @@ describe("change classes on small synthetic snapshots", () => {
 
   it("words the rename as a suspicion and keeps the wire facts in sections 1 and 2", () => {
     const lines = report(left, right);
-    const renameEntries = sectionOf(lines, SECTION_TITLES[2]);
+    const renameEntries = sectionOf(lines, sectionTitle(2));
 
     expect(renameEntries).toHaveLength(1);
     expect(renameEntries[0]).toContain("suspected rename");
     expect(renameEntries[0]).toContain("not a confirmed rename");
-    expect(sectionOf(lines, SECTION_TITLES[0]).join("\n")).toContain("delta");
-    expect(sectionOf(lines, SECTION_TITLES[1]).join("\n")).toContain("gamma");
+    expect(sectionOf(lines, sectionTitle(0)).join("\n")).toContain("delta");
+    expect(sectionOf(lines, sectionTitle(1)).join("\n")).toContain("gamma");
   });
 
   it("does not pair an ambiguous fingerprint", () => {
@@ -351,7 +382,7 @@ describe("field changes against the committed baseline", () => {
       fromOptional: false,
       toOptional: true,
     });
-    expect(sectionOf(lines, SECTION_TITLES[3])[0]).toContain("optionality-changed");
+    expect(sectionOf(lines, sectionTitle(3))[0]).toContain("optionality-changed");
   });
 
   it("reports a type change", () => {
@@ -381,8 +412,8 @@ describe("field changes against the committed baseline", () => {
     const lines = report(baseline, changed);
 
     expect(result.fieldChanges).toHaveLength(1);
-    expect(result.fieldChanges[0].change).toBe("field-text-changed");
-    expect(sectionOf(lines, SECTION_TITLES[3])[0]).toContain("field-text-changed");
+    expect(first(result.fieldChanges, "diff.fieldChanges").change).toBe("field-text-changed");
+    expect(sectionOf(lines, sectionTitle(3))[0]).toContain("field-text-changed");
   });
 
   it("ignores wires that are not field-level", () => {
@@ -433,7 +464,7 @@ describe("parity changes", () => {
       change: "added",
       key: "new-broadcast",
     });
-    expect(sectionOf(lines, SECTION_TITLES[4]).join("\n")).toContain(
+    expect(sectionOf(lines, sectionTitle(4)).join("\n")).toContain(
       "remoteCommands.advertised added new-broadcast",
     );
   });
@@ -458,6 +489,182 @@ describe("parity changes", () => {
       change: "added",
       key: "^Listening on (ws://\\S+)$ ",
     });
+  });
+});
+
+describe("inbound flag and counts drift (P5-1)", () => {
+  const base = snapshot({
+    commands: [
+      command("alpha", "AlphaCommand", { shapeFingerprint: "aaaaaaaaaaaa" }),
+      command("beta", "BetaCommand", { shapeFingerprint: "bbbbbbbbbbbb" }),
+    ],
+  });
+
+  it("reports a wire that leaves the accepted set but stays in the union", () => {
+    const drifted = clone(base);
+    const beta = drifted.commands.find((entry: Snapshot) => entry.wire === "beta");
+
+    beta.inbound = false;
+    drifted.counts.inboundAccepted = 1;
+
+    const result = diff(base, drifted);
+    const parity = sectionOf(report(base, drifted), sectionTitle(4)).join("\n");
+
+    expect(result.added.commands).toEqual([]);
+    expect(result.removed.commands).toEqual([]);
+    expect(result.parityChanges).toContainEqual({
+      area: "inbound.accepted",
+      change: "lost",
+      key: "beta",
+    });
+    expect(result.parityChanges).toContainEqual({
+      area: "counts.inbound",
+      change: "changed",
+      from: 2,
+      to: 1,
+    });
+    expect(result.summary.total).toBeGreaterThan(0);
+    expect(parity).toContain("inbound.accepted lost beta");
+    expect(parity).toContain("counts.inbound changed from=2 to=1");
+  });
+
+  it("restores to a zero summary when the guard is put back", () => {
+    expect(diff(base, clone(base)).summary).toEqual(ZERO_SUMMARY);
+  });
+
+  it("reports a counts-only drift that no record section can see", () => {
+    const drifted = clone(base);
+
+    drifted.counts.inboundAccepted = 1;
+
+    const result = diff(base, drifted);
+
+    expect(result.added.commands).toEqual([]);
+    expect(result.removed.commands).toEqual([]);
+    expect(result.parityChanges).toEqual([
+      { area: "counts.inbound", change: "changed", from: 2, to: 1 },
+    ]);
+    expect(result.summary.total).toBeGreaterThan(0);
+  });
+
+  it("makes an inboundOnly difference readable", () => {
+    const drifted = clone(base);
+
+    drifted.counts.inboundOnly = 1;
+
+    const result = diff(base, drifted);
+    const parity = sectionOf(report(base, drifted), sectionTitle(4)).join("\n");
+
+    expect(result.parityChanges).toContainEqual({
+      area: "counts.inboundOnly",
+      change: "changed",
+      from: 0,
+      to: 1,
+    });
+    expect(parity).toContain("counts.inboundOnly changed from=0 to=1");
+    expect(result.summary.total).toBeGreaterThan(0);
+  });
+
+  it("keeps the independent diff CLI in report mode for counts drift", () => {
+    const drifted = clone(base);
+
+    drifted.counts.inboundAccepted = 1;
+
+    const leftPath = writeTemp("p5-1-left.json", base);
+    const rightPath = writeTemp("p5-1-right.json", drifted);
+    const outPath = path.join(tempDirectory, "p5-1-report.txt");
+
+    createdFiles.push(outPath);
+    expect(main([leftPath, rightPath, "--out", outPath])).toBe(0);
+    expect(readFileSync(outPath, "utf8")).toContain("counts.inbound changed from=2 to=1");
+  });
+});
+
+describe("inbound extraction degradation (P5-2)", () => {
+  const INDEX = {
+    resolveTypeRef(ref: string) {
+      const wires: Record<string, string> = { AlphaCommand: "alpha", BetaCommand: "beta" };
+      const wire = wires[ref];
+
+      return wire === undefined
+        ? { ok: false, code: "type-not-found", message: `no type ${ref}` }
+        : {
+            ok: true,
+            entry: { name: ref, typeLiteral: wire, file: "src/types/protocol.ts", line: 1 },
+          };
+    },
+  };
+
+  /** Materialize one single-file engine tree for the inbound extractor seam. */
+  function inboundTree(name: string, body: string): string {
+    const root = path.join(tempDirectory, name);
+    const directory = path.join(root, "src", "websocket", "listener");
+    const filePath = path.join(directory, "protocol-inbound.ts");
+
+    mkdirSync(directory, { recursive: true });
+    writeFileSync(filePath, body, "utf8");
+    createdFiles.push(filePath);
+
+    return root;
+  }
+
+  const REWRITTEN_CHAIN = `export function parseServerMessage(parsed: unknown): unknown {
+  const guards = [isAlphaCommand, isBetaCommand];
+  return guards.some((guard) => guard(parsed)) ? parsed : null;
+}`;
+
+  const PROPERTY_ARGUMENT_CHAIN = `export function parseServerMessage(parsed: any): unknown {
+  if (isAlphaCommand(parsed.value)) {
+    return parsed;
+  }
+  if (isBetaCommand(parsed.value)) {
+    return parsed;
+  }
+  return null;
+}`;
+
+  const MIXED_CHAIN = `export function parseServerMessage(parsed: any): unknown {
+  if (isAlphaCommand(parsed)) {
+    return parsed;
+  }
+  if (isBetaCommand(parsed.value)) {
+    return parsed;
+  }
+  return null;
+}`;
+
+  it("degrades when the OR chain holds no guard call any more", () => {
+    const root = inboundTree("p5-2-rewritten", REWRITTEN_CHAIN);
+    const { inbound, health } = extractInboundSet(INDEX, root, "src/types/protocol.ts");
+
+    expect(inbound.guardCount).toBe(0);
+    expect(inbound.accepted).toEqual([]);
+    expect(health.degraded).toBe(true);
+    expect(health.unparsed.join(" ")).toContain("inbound-chain-empty");
+  });
+
+  it("records a non-identifier guard argument as coarse instead of dropping it", () => {
+    const root = inboundTree("p5-2-property", PROPERTY_ARGUMENT_CHAIN);
+    const { inbound, health } = extractInboundSet(INDEX, root, "src/types/protocol.ts");
+
+    expect(inbound.accepted).toEqual([]);
+    expect(health.degraded).toBe(true);
+    expect(health.coarse).toHaveLength(2);
+    expect(health.coarse[0]).toMatchObject({
+      file: "src/websocket/listener/protocol-inbound.ts",
+      symbol: "isAlphaCommand",
+      reason: "guard-argument-is-not-a-bare-identifier",
+    });
+  });
+
+  it("keeps a partially coarse chain usable and visible", () => {
+    const root = inboundTree("p5-2-mixed", MIXED_CHAIN);
+    const { inbound, health } = extractInboundSet(INDEX, root, "src/types/protocol.ts");
+
+    expect(inbound.guardCount).toBe(1);
+    expect(inbound.accepted).toEqual(["alpha"]);
+    expect(health.degraded).toBe(false);
+    expect(health.coarse).toHaveLength(1);
   });
 });
 
@@ -492,10 +699,10 @@ describe("capability impact", () => {
         status: "breaking",
       }),
     );
-    expect(sectionOf(lines, SECTION_TITLES[5]).join("\n")).toContain(
+    expect(sectionOf(lines, sectionTitle(5)).join("\n")).toContain(
       "capability agent.list detail=yes status=breaking",
     );
-    expect(sectionOf(lines, SECTION_TITLES[5]).join("\n")).toContain(
+    expect(sectionOf(lines, sectionTitle(5)).join("\n")).toContain(
       "capability file.ops detail=no status=breaking",
     );
   });
@@ -522,7 +729,9 @@ describe("report layout", () => {
     }
 
     for (let index = 1; index < positions.length; index += 1) {
-      expect(positions[index]).toBeGreaterThan(positions[index - 1]);
+      const previous = defined(positions[index - 1], `positions[${index - 1}]`);
+
+      expect(positions[index]).toBeGreaterThan(previous);
     }
   });
 

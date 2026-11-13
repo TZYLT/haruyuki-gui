@@ -4,13 +4,14 @@
  * The locked facts are asserted against the real read-only engine mirror at
  * `_research/haruyuki` (v0.6.0 @ 1641a4f): `WsProtocolCommand` has 115 members,
  * recursive union expansion yields 124 wire commands, `cron_*` accounts for ten
- * of them and `file_ops` is bidirectional. A missing mirror is a hard failure
- * with an actionable message; silently skipping would let the seam rot.
+ * of them and `file_ops` is bidirectional. A missing mirror skips those suites
+ * instead of failing: the mirror is not committed and a clean clone must stay
+ * green.
  *
  * The string-backed stub tests at the bottom cover the parts the real source
- * cannot exercise: nested alias expansion, ambiguity, a missing type literal
- * and a missing engine. They exist so the contract reuse the same pure functions
- * with its fixture slices without building an engine tree.
+ * cannot exercise: nested alias expansion, ambiguity, a missing type literal,
+ * a missing engine and the wire-count rule. They are plain `describe` suites
+ * because they never read `_research`, so they keep running in a clean clone.
  *
  * Nothing here spawns the engine, touches the network or writes to the repo.
  */
@@ -33,18 +34,13 @@ import {
 } from "./contract/extract-commands.mjs";
 import { shapeFingerprint } from "./contract/lib/fingerprint.mjs";
 import { createTypeIndex } from "./contract/lib/scan.mjs";
+import { defined } from "./lib/test-assert.js";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const TEST_FILE = fileURLToPath(import.meta.url);
 const EXTRACTOR_FILE = path.join(REPO_ROOT, "scripts", "contract", "extract-commands.mjs");
 const ENGINE_ROOT = path.join(REPO_ROOT, "_research", "haruyuki");
 const PROTOCOL_V2 = COMMAND_UNION_FILE;
-
-const MISSING_MIRROR_HINT =
-  `engine mirror is missing at ${ENGINE_ROOT}. ` +
-  "the capability table reads the pinned engine source: create the read-only mirror with " +
-  "`git clone --shared <main checkout>/_research/haruyuki _research/haruyuki` " +
-  "and check out commit 1641a4f (v0.6.0).";
 
 /** @type {ReturnType<typeof createTypeIndex>} */
 let index;
@@ -56,8 +52,8 @@ const ENGINE_AVAILABLE = existsSync(path.join(ENGINE_ROOT, "src", "types"));
 /**
  * Engine-bound suites skip themselves in a clean clone: the pinned mirror is
  * not committed, and a clean-clone `verify` must stay green.
- * Run them where `_research/haruyuki` exists; the fixture-driven gate test
- * covers the pipeline without the mirror.
+ * Run them where `_research/haruyuki` exists; the stub suites below cover the
+ * pure behaviour without the mirror.
  */
 const describeWithEngine = ENGINE_AVAILABLE ? describe : describe.skip;
 
@@ -244,7 +240,12 @@ describeWithEngine("extract-commands.mjs: field extraction", () => {
       optional: true,
       readonly: true,
     });
-    expect(Object.keys(normalized[1])).toEqual(["name", "type", "optional", "readonly"]);
+    expect(Object.keys(defined(normalized[1], "normalized[1]"))).toEqual([
+      "name",
+      "type",
+      "optional",
+      "readonly",
+    ]);
 
     const record = buildCommandRecord({
       name: "ReadonlyFixture",
@@ -389,6 +390,27 @@ function stubResolveUnion(unionName) {
     };
   }
 
+  if (unionName === "HeritageAlias") {
+    // `heritageProblems` is only present on the failure path, so it is added
+    // by spread: mutating the object would need the property in `fakeEntry`'s
+    // shape and would then appear on every green fixture too.
+    const entry = {
+      ...fakeEntry("OpaqueBaseCommand", "opaque_base", 40),
+      heritageProblems: [
+        "OpaqueBaseCommand@src/types/fixture.ts:40: heritage-unresolved: " +
+          "LibBase (unresolved-module: external module is not indexed: lib)",
+      ],
+    };
+
+    return {
+      ok: true,
+      name: unionName,
+      fromFile: "src/types/fixture.ts",
+      line: 3,
+      members: [{ ref: "OpaqueBaseCommand", ok: true, entry }],
+    };
+  }
+
   if (unionName === "WsProtocolMessage") {
     return {
       ok: true,
@@ -405,7 +427,7 @@ function stubResolveUnion(unionName) {
 /** @type {{resolveUnion: (name: string, fromFile: string) => Record<string, unknown>}} */
 const stubIndex = { resolveUnion: stubResolveUnion };
 
-describeWithEngine("extract-commands.mjs: string-backed stub for the contract gate", () => {
+describe("extract-commands.mjs: string-backed stub for the contract gate", () => {
   it("expands nested aliases and separates coarse from unparsed members", () => {
     const expansion = expandUnionEntries(stubIndex, "RootAlias", "src/types/fixture.ts");
 
@@ -432,20 +454,25 @@ describeWithEngine("extract-commands.mjs: string-backed stub for the contract ga
     });
 
     expect(result.counts.unionMembers).toBe(5);
-    expect(result.counts.wireCommands).toBe(4);
+    // Two records carry a wire (LeafA, LeafC); NoType and Ambiguous keep
+    // `wire: null` and must not be counted as wire commands (P4-8 / 07 6.6).
+    expect(result.counts.wireCommands).toBe(2);
+    expect(result.commands).toHaveLength(4);
     expect(result.health.degraded).toBe(true);
     expect(result.health.coarse).toHaveLength(2);
 
-    const ambiguous = result.commands.find(
-      (/** @type {object} */ command) => command.type === "Ambiguous",
+    const ambiguous = defined(
+      result.commands.find((/** @type {object} */ command) => command.type === "Ambiguous"),
+      'result.commands entry whose type is "Ambiguous"',
     );
 
     expect(ambiguous.wire).toBeNull();
     expect(ambiguous.home).toBe("src/types/fixture.ts:30");
     expect(ambiguous.health).toBe("coarse");
 
-    const noType = result.commands.find(
-      (/** @type {object} */ command) => command.type === "NoType",
+    const noType = defined(
+      result.commands.find((/** @type {object} */ command) => command.type === "NoType"),
+      'result.commands entry whose type is "NoType"',
     );
 
     expect(noType.wire).toBeNull();
@@ -456,6 +483,18 @@ describeWithEngine("extract-commands.mjs: string-backed stub for the contract ga
     );
   });
 
+  it("reports an unmerged base on the record that reaches the snapshot (P4-1)", () => {
+    const result = extractCommands({
+      index: stubIndex,
+      unionName: "HeritageAlias",
+      fromFile: "src/types/fixture.ts",
+    });
+
+    expect(result.commands).toHaveLength(1);
+    expect(result.health.coarse.join("\n")).toContain("heritage-unresolved");
+    expect(result.counts.wireCommands).toBe(1);
+  });
+
   it("rejects a missing engine root instead of returning an empty success", () => {
     expect(() =>
       extractCommands({ engineRoot: path.join(REPO_ROOT, "_research", "__missing_w02__") }),
@@ -463,7 +502,7 @@ describeWithEngine("extract-commands.mjs: string-backed stub for the contract ga
   });
 });
 
-describeWithEngine("extract-commands.mjs: helpers and ASCII discipline", () => {
+describe("extract-commands.mjs: helpers and ASCII discipline", () => {
   it("shortens raw member refs for coarse records", () => {
     expect(refShortName("AgentListCommand")).toBe("AgentListCommand");
     expect(refShortName("CwdProtocol.SetBootWorkingDirectoryCommand")).toBe(

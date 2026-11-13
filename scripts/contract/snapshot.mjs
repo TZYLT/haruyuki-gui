@@ -25,7 +25,9 @@
  *   Every one of the seven keys is derived from extraction data, never written
  *   down here:
  *     unionMembers        command-union member count (115)
- *     wireCommands        expanded command records (124)
+ *     wireCommands        command records with a wire (124; a coarse `wire: null`
+ *                         record stays in `commands[]` but is not a wire command,
+ *                         matching 07 section 6.6)
  *     messages            expanded message records (136, not the 127 union)
  *     inboundAccepted     accepted inbound set size (124)
  *     inboundOnly         accepted set minus the wire command set (0)
@@ -33,13 +35,13 @@
  *     dispatchCases       dispatch switch case count (12)
  *
  * Health
- *   `degraded` is true when any extractor degraded, when the engine
- *   `package.json` version cannot be read (A2-D14) or when the git commit cannot
- *   be read. `coarse` and `unparsed` are deduplicated and sorted: the capability table and 
- *   can report the same message-side item, so raw concatenation is not allowed.
- *   A coarse command with a null wire stays in `commands[]` and makes
- *   `validateSnapshot` fail loudly, which is the intended "no plausible-looking
- *   empty result" behaviour .
+ *   `degraded` is true when any extractor degraded, when the type index hit a
+ *   parse diagnostic, when the engine `package.json` version cannot be read
+ *   (A2-D14) or when the git commit cannot be read. `coarse` and `unparsed` are
+ *   deduplicated and sorted: the capability table and  can report the same message-side item,
+ *   so raw concatenation is not allowed. A coarse command with a null wire stays
+ *   in `commands[]` and makes `validateSnapshot` fail loudly, which is the
+ *   intended "no plausible-looking empty result" behaviour.
  *
  * Determinism
  *   The same inputs always yield the same object except `engine.extractedAt`,
@@ -221,6 +223,27 @@ function loadDetailWires(capabilitiesPath) {
   }
 
   return detailWires;
+}
+
+/**
+ * Project index-level health onto the snapshot health shape.
+ *
+ * Only file-level problems belong here: a parse diagnostic and the `degraded`
+ * flag it sets. Entry-level heritage problems are reported by the extractors on the
+ * record that actually reaches the snapshot, so an interface outside the two
+ * protocol unions cannot add a coarse line to the snapshot.
+ *
+ * @param {{health?: unknown}} index type index
+ * @returns {{degraded: boolean, coarse: string[], unparsed: string[]}}
+ */
+function indexHealthForSnapshot(index) {
+  const source = isPlainObject(index?.health) ? index.health : {};
+
+  return {
+    degraded: source.degraded === true,
+    coarse: [],
+    unparsed: Array.isArray(source.unparsed) ? source.unparsed : [],
+  };
 }
 
 /**
@@ -434,7 +457,7 @@ export function buildSnapshot({ engineRoot, capabilitiesPath } = {}) {
     },
     counts: {
       unionMembers: commandExtraction.counts.unionMembers,
-      wireCommands: commands.length,
+      wireCommands: commands.filter((command) => typeof command.wire === "string").length,
       messages: messages.length,
       inboundAccepted: accepted.length,
       inboundOnly: accepted.filter((wire) => !commandWires.has(wire)).length,
@@ -455,7 +478,12 @@ export function buildSnapshot({ engineRoot, capabilitiesPath } = {}) {
       },
     },
     health: mergeHealth(
-      [commandExtraction.health, messageExtraction.health, parityExtraction.health],
+      [
+        commandExtraction.health,
+        messageExtraction.health,
+        parityExtraction.health,
+        indexHealthForSnapshot(index),
+      ],
       version.degraded || commit.degraded,
     ),
   };

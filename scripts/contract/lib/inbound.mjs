@@ -31,13 +31,26 @@
  * Failure semantics: I/O problems throw. A missing parser file or a missing
  * `parseServerMessage` body never throws; the slice goes empty, `health.degraded`
  * turns true and `health.unparsed` carries a single-line English reason, so a
- * degraded extraction cannot look like a normal one.
+ * degraded extraction cannot look like a normal one. The same holds when the
+ * chain yields no guard call at all (`guards.some(...)` or any other rewritten
+ * layout): a command union with an empty accepted set is never a normal
+ * extraction (P5-2). Because a resolved guard always contributes one wire, an
+ * empty accepted set can only mean "no guard call" or "every guard unresolved",
+ * and both now degrade. A guard call whose argument is not a bare identifier is
+ * recorded in `health.coarse` instead of being dropped silently, so a partial
+ * chain is visible without by itself turning the slice degraded.
  */
 
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 
 import ts from "typescript";
+
+/** Failure codes reported for an inbound slice that cannot be trusted. */
+export const INBOUND_CODES = Object.freeze({
+  CHAIN_EMPTY: "inbound-chain-empty",
+  GUARD_ARGUMENT_NOT_IDENTIFIER: "guard-argument-is-not-a-bare-identifier",
+});
 
 /** File that declares `parseServerMessage`. */
 export const INBOUND_FILE = "src/websocket/listener/protocol-inbound.ts";
@@ -164,39 +177,70 @@ function isTypeAccess(node) {
 }
 
 /**
- * Collect `is<Name>(parsed)` calls from an OR chain text.
+ * Collect guard calls from an OR chain text, keeping unreadable calls visible.
  *
  * Accepts a chain fragment (`isA(parsed) || isB(parsed)`), a block or a whole
  * file, because the fragment is parsed as ordinary statements. Comments and
  * string literals cannot contribute a match: only a real call expression whose
- * callee is an `is<UpperCamel>` identifier and whose single argument is an
- * identifier is collected. Source order is preserved so the caller can report
- * the chain as written.
+ * callee is an `is<UpperCamel>` identifier is collected. Bare-identifier
+ * arguments become `names` in source order; a guard call written with any other
+ * argument (`isA(parsed.value)`) is returned as a `coarse` entry
+ * (`{reason, text, line}`) rather than dropped, because a silently shortened
+ * OR chain is exactly the drift this extractor must not hide (P5-2).
+ *
+ * @param {string} sourceText OR chain text, function body or whole file
+ * @returns {{names: string[], coarse: {reason: string, text: string, line: number}[]}}
+ */
+export function collectGuardCalls(sourceText) {
+  /** @type {string[]} */
+  const names = [];
+  /** @type {{reason: string, text: string, line: number}[]} */
+  const coarse = [];
+
+  if (typeof sourceText !== "string" || sourceText.trim().length === 0) {
+    return { names, coarse };
+  }
+
+  const sourceFile = parseText(FRAGMENT_FILE, sourceText);
+
+  walk(sourceFile, (node) => {
+    if (!ts.isCallExpression(node) || !ts.isIdentifier(node.expression)) {
+      return;
+    }
+
+    const guard = node.expression.text;
+
+    if (!GUARD_NAME.test(guard)) {
+      return;
+    }
+
+    if (node.arguments.length === 1 && ts.isIdentifier(node.arguments[0])) {
+      names.push(guard);
+
+      return;
+    }
+
+    coarse.push({
+      reason: INBOUND_CODES.GUARD_ARGUMENT_NOT_IDENTIFIER,
+      text: guard,
+      line: sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1,
+    });
+  });
+
+  return { names, coarse };
+}
+
+/**
+ * Collect only the guard names of an OR chain text, in source order.
+ *
+ * Kept as the narrow reader `extract-messages` tests and callers use; the
+ * coarse entries of rewritten calls are available through `collectGuardCalls`.
  *
  * @param {string} sourceText OR chain text, function body or whole file
  * @returns {string[]} guard names in source order, duplicates included
  */
 export function collectGuardNames(sourceText) {
-  if (typeof sourceText !== "string" || sourceText.trim().length === 0) {
-    return [];
-  }
-
-  /** @type {string[]} */
-  const names = [];
-
-  walk(parseText(FRAGMENT_FILE, sourceText), (node) => {
-    if (
-      ts.isCallExpression(node) &&
-      ts.isIdentifier(node.expression) &&
-      GUARD_NAME.test(node.expression.text) &&
-      node.arguments.length === 1 &&
-      ts.isIdentifier(node.arguments[0])
-    ) {
-      names.push(node.expression.text);
-    }
-  });
-
-  return names;
+  return collectGuardCalls(sourceText).names;
 }
 
 /**
@@ -492,7 +536,30 @@ export function extractInboundSet(index, engineRoot, fromFile) {
     return { inbound: empty, health };
   }
 
-  const guards = collectGuardNames(body);
+  const calls = collectGuardCalls(body);
+  const guards = calls.names;
+
+  for (const entry of calls.coarse) {
+    health.coarse.push({
+      file: INBOUND_FILE,
+      line: entry.line,
+      symbol: entry.text,
+      reason: entry.reason,
+    });
+  }
+
+  if (guards.length === 0) {
+    health.degraded = true;
+    health.unparsed.push(
+      unparsedLine(
+        INBOUND_FUNCTION,
+        INBOUND_FILE,
+        INBOUND_CODES.CHAIN_EMPTY,
+        "the OR chain holds no is<Name>(argument) guard call; the accepted set would be empty",
+      ),
+    );
+  }
+
   const guardSources = loadGuardSources(root);
   /** @type {object[]} */
   const items = [];

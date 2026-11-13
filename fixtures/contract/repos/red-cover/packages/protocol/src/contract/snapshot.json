@@ -2,22 +2,98 @@
   "schemaVersion": 1,
   "engine": {
     "version": "0.6.0",
-    "commit": "1641a4f"
+    "commit": "1641a4f",
+    "source": "clone",
+    "extractedAt": "2026-11-13T13:37:37.273Z",
+    "extractor": "contract-snapshot@1"
+  },
+  "counts": {
+    "unionMembers": 3,
+    "wireCommands": 3,
+    "messages": 0,
+    "inboundAccepted": 2,
+    "inboundOnly": 0,
+    "advertisedCommands": 1,
+    "dispatchCases": 1
   },
   "commands": [
     {
       "wire": "agent_list",
-      "fieldLevel": true
+      "type": "AgentListCommand",
+      "home": "fixtures/contract/mini-engine/src/types/agent-protocol.ts:5",
+      "direction": [
+        "s2c"
+      ],
+      "inbound": true,
+      "fields": [
+        {
+          "name": "limit",
+          "type": "number",
+          "optional": true
+        }
+      ],
+      "shapeFingerprint": "0123456789ab",
+      "fieldLevel": true,
+      "health": "ok"
     },
     {
       "wire": "file_ops",
-      "fieldLevel": false
+      "type": "FileOpsCommand",
+      "home": "fixtures/contract/mini-engine/src/types/file-ops-protocol.ts:5",
+      "direction": [
+        "c2s",
+        "s2c"
+      ],
+      "inbound": false,
+      "fields": [],
+      "shapeFingerprint": "0123456789ab",
+      "fieldLevel": false,
+      "health": "ok"
     },
     {
       "wire": "queue_resume",
-      "fieldLevel": true
+      "type": "ResumeQueueCommand",
+      "home": "fixtures/contract/mini-engine/src/types/queue-protocol.ts:6",
+      "direction": [
+        "s2c"
+      ],
+      "inbound": true,
+      "fields": [
+        {
+          "name": "queue_id",
+          "type": "string",
+          "optional": false
+        }
+      ],
+      "shapeFingerprint": "0123456789ab",
+      "fieldLevel": true,
+      "health": "ok"
     }
   ],
+  "messages": [],
+  "special": {
+    "fileOps": {
+      "wire": "file_ops",
+      "directions": [
+        "c2s",
+        "s2c"
+      ]
+    },
+    "remoteCommands": {
+      "advertised": [
+        "agent_list"
+      ],
+      "handledElsewhere": {},
+      "unadvertisedAliases": {},
+      "dispatchCases": [
+        "agent_list"
+      ]
+    },
+    "startupText": {
+      "required": [],
+      "optional": []
+    }
+  },
   "health": {
     "degraded": false,
     "coarse": [],

@@ -18,11 +18,15 @@
  *   2 = broken input, bad argument or I/O error
  *
  * Usage details:
- *   - `--help` / `-h` prints usage on stdout and exits 0.
+ *   - `--help` / `-h` prints usage on stdout and exits 0, from any position
+ *     (`cli.mjs check --help` and `cli.mjs diff --help` are both help, never
+ *     unknown flags).
  *   - No subcommand, or an unknown one, prints usage on stderr and exits 2.
  *   - Flags accept `--name value` and `--name=value`.
- *   - A missing required flag, an unknown flag or a wrong positional count is a
- *     usage error (exit 2).
+ *   - A missing required flag, an unknown flag, a repeated flag or a wrong
+ *     positional count is a usage error (exit 2). A repeated flag still
+ *     consumes its value so the value is not reported as an unexpected
+ *     positional argument.
  *   - `diff` accepts one or two snapshots. One means "compare with the snapshot
  *     committed in this repo", which is why it is not a required positional.
  */
@@ -38,6 +42,7 @@ Exit codes: 0 pass, 1 violation, 2 broken input.`;
 import { readFileSync, writeFileSync } from "node:fs";
 
 import { collectContractViolations } from "../check-contract.mjs";
+import { finish } from "../lib/gate-cli.mjs";
 import { crossCheck, formatCrossCheck } from "./cross-check.mjs";
 import {
   diffSnapshots,
@@ -116,6 +121,16 @@ function parseArguments(args, allowed) {
     if (options.has(name)) {
       errors.push(`option ${name} was given more than once`);
 
+      // Consume the repeated flag's value so it is not reported as an
+      // unexpected positional argument (P6-F4).
+      if (inline === undefined && index + 1 < args.length) {
+        const candidate = args[index + 1];
+
+        if (typeof candidate === "string" && !candidate.startsWith("--")) {
+          index += 1;
+        }
+      }
+
       continue;
     }
 
@@ -156,6 +171,21 @@ function usageError(subcommand, messages) {
   }
 
   usage(process.stderr, 2);
+}
+
+/**
+ * Format one violation the way the gate-cli contract does: append `:<line>`
+ * only when the violation actually carries one (P6-F5).
+ *
+ * @param {{file?: string, line?: number, rule: string, message: string}} entry
+ * @param {string} fallbackFile
+ * @returns {string}
+ */
+function formatViolationLine(entry, fallbackFile) {
+  const file = entry.file ?? fallbackFile;
+  const where = Number.isInteger(entry.line) ? `${file}:${entry.line}` : file;
+
+  return `${where} ${entry.rule} ${entry.message}`;
 }
 
 /**
@@ -283,24 +313,14 @@ function checkAgainstEngine(engineRoot) {
   }
 }
 
-/** In-repo check: artifact consistency, six map rules and coverage closure. */
+/** In-repo check: artifact consistency, map rules, parity and coverage closure. */
 function checkInRepo() {
   const violations = collectContractViolations({ root: process.cwd() });
 
-  for (const violation of violations) {
-    const line = typeof violation.line === "number" ? violation.line : 0;
-
-    process.stdout.write(`${violation.file}:${line} ${violation.rule} ${violation.message}\n`);
-  }
-
-  if (violations.length === 0) {
-    process.stdout.write("PASS\n");
-
-    return;
-  }
-
-  process.stdout.write(`FAIL: ${violations.length} violation(s)\n`);
-  process.exitCode = 1;
+  // Reuse the shared gate-cli formatter (`<file>[:<line>] <rule> <message>`)
+  // so a violation without a source line never prints a misleading `:0` and the
+  // PASS/FAIL summary matches `check-contract.mjs` byte for byte (P6-F5).
+  finish(violations);
 }
 
 /**
@@ -395,10 +415,7 @@ function runGenerate(args) {
     for (const violation of result.violations) {
       if (violation.severity !== "error") continue;
 
-      process.stderr.write(
-        `${violation.file ?? DEFAULT_GENERATED}:${violation.line ?? 0} ` +
-          `${violation.rule} ${violation.message}\n`,
-      );
+      process.stderr.write(`${formatViolationLine(violation, DEFAULT_GENERATED)}\n`);
     }
 
     process.stderr.write("contract generate: capability table is invalid; nothing written\n");
@@ -421,14 +438,16 @@ function runGenerate(args) {
 function main(args) {
   const [subcommand, ...rest] = args;
 
-  if (subcommand === undefined) {
-    usage(process.stderr, 2);
+  // Help is accepted anywhere, matching the standalone `diff.mjs` and
+  // `cross-check.mjs` entry points (P6-F4).
+  if (args.includes("--help") || args.includes("-h") || subcommand === "help") {
+    usage(process.stdout, 0);
 
     return;
   }
 
-  if (subcommand === "--help" || subcommand === "-h" || subcommand === "help") {
-    usage(process.stdout, 0);
+  if (subcommand === undefined) {
+    usage(process.stderr, 2);
 
     return;
   }

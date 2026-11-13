@@ -12,6 +12,10 @@
  *
  *   { wire, type, home, direction, fields, shapeFingerprint, health }
  *
+ * `counts.wireCommands` counts the records with a non-null wire only: a coarse
+ * record (`wire: null`) stays in `commands[]` for the validator to reject, but it
+ * is not a wire command (07 section 6.6).
+ *
  * `inbound` and `fieldLevel` are deliberately absent. snapshot assembly owns the capability
  * join (`inbound` comes from ) and the `detail` filter (`fieldLevel` comes
  * from `capabilities.json`). Emitting either here would be a second source of
@@ -507,6 +511,14 @@ export function extractCommands({
       health.coarse.push(coarseLine(record.type, home, "type literal is missing"));
     }
 
+    // A base class that could not be merged hides fields. The scan index already
+    // recorded the reason; repeating it here puts the line on the record that is
+    // actually in the snapshot, and stays silent for declarations the contract
+    // never emits.
+    for (const problem of Array.isArray(entry.heritageProblems) ? entry.heritageProblems : []) {
+      health.coarse.push(problem);
+    }
+
     commands.push(record);
   }
 
@@ -531,7 +543,13 @@ export function extractCommands({
 
   return {
     commands,
-    counts: { unionMembers: expansion.unionMembers, wireCommands: commands.length },
+    // A coarse record keeps `wire: null` and stays in `commands[]` so the
+    // validator rejects it; it is not a wire command and must not be counted as
+    // one (07 section 6.6).
+    counts: {
+      unionMembers: expansion.unionMembers,
+      wireCommands: commands.filter((record) => record.wire !== null).length,
+    },
     union: expansion.union,
     health,
   };

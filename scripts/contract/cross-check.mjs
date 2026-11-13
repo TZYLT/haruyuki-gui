@@ -46,8 +46,13 @@
  * gitHead
  *   `dtsDir/package.json` may carry `gitHead`. It is compared with
  *   `snapshot.engine.commit`; a mismatch adds one warning line and never fails
- *   the run (the warning contract). A missing or unreadable `package.json`, or a file without a
- *   usable `gitHead`, is not broken input: the result is simply `gitHead: null`.
+ *   the run. The comparison tolerates an abbreviated form on either side: the
+ *   (P6-F3): the snapshot stores the short commit from `git rev-parse --short
+ *   HEAD` while a published package pins the full 40-character SHA, so the two
+ *   only warn when neither value is a prefix of the other. Both sides must be at
+ *   least 7 hex characters for the prefix rule to apply. A missing or unreadable
+ *   `package.json`, or a file without a usable `gitHead`, is not broken input:
+ *   the result is simply `gitHead: null`.
  *
  * Result and exit codes
  *   crossCheck({ dtsDir, snapshot }) -> { ok, differences, gitHead, warnings }
@@ -533,6 +538,39 @@ function readGitHead(dtsDir) {
 }
 
 /**
+ * Whether two commit strings denote the same revision.
+ *
+ * `snapshot.engine.commit` is the short SHA printed by `git rev-parse --short
+ * HEAD` (7 characters); `gitHead` in a published package is the full 40
+ * character SHA. Comparing them with `!==` therefore warned on every real
+ * package (P6-F3). Equal strings match; otherwise both sides must be hex and at
+ * least 7 characters long and the shorter one must be a prefix of the longer
+ * one. Anything else (a branch name, a tag, a dirty marker) stays a mismatch.
+ *
+ * @param {string} left
+ * @param {string} right
+ * @returns {boolean}
+ */
+function sameCommit(left, right) {
+  if (left === right) {
+    return true;
+  }
+
+  const first = left.toLowerCase();
+  const second = right.toLowerCase();
+
+  if (first.length < 7 || second.length < 7) {
+    return false;
+  }
+
+  if (!/^[0-9a-f]+$/.test(first) || !/^[0-9a-f]+$/.test(second)) {
+    return false;
+  }
+
+  return first.length <= second.length ? second.startsWith(first) : first.startsWith(second);
+}
+
+/**
  * Cross-check a snapshot against a tree of TypeScript declarations.
  *
  * @param {{dtsDir: string, snapshot: object}} options
@@ -619,7 +657,7 @@ export function crossCheck(options) {
   /** @type {string[]} */
   const warnings = [];
 
-  if (gitHead !== null && snapshotHead !== "" && gitHead !== snapshotHead) {
+  if (gitHead !== null && snapshotHead !== "" && !sameCommit(gitHead, snapshotHead)) {
     warnings.push(`gitHead mismatch: dts=${gitHead} snapshot=${snapshotHead}`);
   }
 

@@ -14,17 +14,25 @@
  * Rules (ids frozen by route doc 08 section 3.4c)
  *
  *   contract-map     one entry missing from the generated map, an orphan map
- *                    entry, a duplicate name, a `fallback` pointing at a name
- *                    that does not exist, a `wire` that is not a snapshot
- *                    command (pending entries are exempt), a `since` newer than
- *                    the pinned engine (pending only), a pending entry without a
- *                    proposal, plus structural checks that would otherwise emit
- *                    invalid TypeScript (name grammar, closed domain, field
- *                    types, non-semver `since`).
+ *                    entry, a duplicate name, two capabilities sharing one
+ *                    `wire` (07 section 4.1.5: one capability per wire), a
+ *                    `fallback` pointing at a name that does not exist, a
+ *                    `wire` that is not a snapshot command (pending entries are
+ *                    exempt), a `since` newer than the pinned engine (pending
+ *                    only), a pending entry without a proposal, plus structural
+ *                    checks that would otherwise emit invalid TypeScript (name
+ *                    grammar, closed domain, field types, non-semver `since`).
  *   contract-cover   `detail: true` wires must equal the field-level snapshot
  *                    commands; both differences are reported separately.
+ *                    The three `execute_command` parity invariants are also
+ *                    re-evaluated here by the gate (P5-8): an advertised id
+ *                    without a handler, an unadvertised dispatch case without
+ *                    an alias, and an alias without a dispatch case.
  *   contract-health  `health.degraded === true` is red; `coarse` entries are a
- *                    warning, because a name-level map is still usable (G-6).
+ *                    warning, because a name-level map is still usable (G-6). An
+ *                    empty parity input (`advertised` and `dispatchCases` both
+ *                    empty) is also red, because a vanished extraction must not
+ *                    read as a clean parity surface (P5-9).
  *
  * Severity
  *   `severity: "error"` fails the gate, `severity: "warning"` is reported but
@@ -40,6 +48,8 @@
  *   single line, so a repeated run over the same data prints the same bytes.
  */
 
+import { SNAPSHOT_SCHEMA_VERSION } from "./schema.mjs";
+
 /** Generated artifact, repo-relative posix path. */
 export const MAP_FILE = "packages/protocol/src/contract/command-map.generated.ts";
 
@@ -48,6 +58,15 @@ export const CAPABILITIES_FILE = "packages/protocol/src/contract/capabilities.js
 
 /** Contract snapshot (generated, committed), repo-relative posix path. */
 export const SNAPSHOT_FILE = "packages/protocol/src/contract/snapshot.json";
+
+/**
+ * The only accepted `capabilities.json` schema version (A2-D01).
+ *
+ * Mirrors `SNAPSHOT_SCHEMA_VERSION` from `schema.mjs`: a table written for a
+ * different major shape must fail loudly (exit 2) instead of being coerced into
+ * the current one.
+ */
+export const CAPABILITY_SCHEMA_VERSION = 1;
 
 /** Rule ids frozen by route doc 08 section 3.4(c). */
 export const MAP_RULES = Object.freeze({
@@ -102,6 +121,7 @@ export const MAP_CHECK_CODES = Object.freeze([
   "missing-capability",
   "orphan-capability",
   "duplicate-name",
+  "duplicate-wire",
   "dangling-fallback",
   "unknown-wire",
   "since-ahead",
@@ -109,10 +129,16 @@ export const MAP_CHECK_CODES = Object.freeze([
   "invalid-name",
   "invalid-field",
   "invalid-since",
+  "invalid-capabilities",
   "detail-without-fields",
   "fields-without-detail",
+  "advertised-without-handler",
+  "unadvertised-case-without-alias",
+  "alias-without-case",
   "degraded-snapshot",
+  "empty-parity",
   "coarse-fields",
+  "invalid-snapshot",
   "stale-artifact",
   "missing-artifact",
 ]);
@@ -228,17 +254,62 @@ function compareSemver(left, right) {
 }
 
 /**
+ * Require the snapshot `schemaVersion` supported by this module.
+ *
+ * A different version is broken input, not a data disagreement: the reader does
+ * not know that shape, so returning a verdict would be a guess (A2-D01, P6-F6).
+ *
+ * @param {unknown} snapshot
+ * @param {string} [label] file name used in the message
+ * @returns {void}
+ */
+export function requireSnapshotVersion(snapshot, label = SNAPSHOT_FILE) {
+  if (!isPlainObject(snapshot)) {
+    throw new TypeError(`${label} must be a JSON object`);
+  }
+
+  if (snapshot.schemaVersion !== SNAPSHOT_SCHEMA_VERSION) {
+    throw new TypeError(
+      `${label} schemaVersion ${String(snapshot.schemaVersion)} is not supported` +
+        ` (expected ${SNAPSHOT_SCHEMA_VERSION})`,
+    );
+  }
+}
+
+/**
+ * Require the capability-table `schemaVersion` supported by this module.
+ *
+ * @param {unknown} capabilities
+ * @param {string} [label] file name used in the message
+ * @returns {void}
+ */
+export function requireCapabilitiesVersion(capabilities, label = CAPABILITIES_FILE) {
+  if (!isPlainObject(capabilities)) {
+    throw new TypeError(`${label} must be a JSON object`);
+  }
+
+  if (capabilities.schemaVersion !== CAPABILITY_SCHEMA_VERSION) {
+    throw new TypeError(
+      `${label} schemaVersion ${String(capabilities.schemaVersion)} is not supported` +
+        ` (expected ${CAPABILITY_SCHEMA_VERSION})`,
+    );
+  }
+}
+
+/**
  * Require the snapshot keys the rules consume.
  *
  * @param {unknown} snapshot
- * @returns {{engine: Record<string, unknown>, commands: Record<string, unknown>[], health: Record<string, unknown>}}
+ * @returns {{
+ *   engine: Record<string, unknown>,
+ *   commands: Record<string, unknown>[],
+ *   health: Record<string, unknown>,
+ *   special: Record<string, unknown>,
+ * }}
  */
 export function requireSnapshot(snapshot) {
-  if (!isPlainObject(snapshot)) {
-    throw new TypeError("snapshot must be an object");
-  }
-
-  const { engine, commands, health } = snapshot;
+  requireSnapshotVersion(snapshot);
+  const { engine, commands, health, special } = /** @type {Record<string, unknown>} */ (snapshot);
 
   if (!isPlainObject(engine) || typeof engine.version !== "string") {
     throw new TypeError("snapshot.engine.version must be a string");
@@ -260,6 +331,7 @@ export function requireSnapshot(snapshot) {
     engine,
     commands: commands.filter((entry) => isPlainObject(entry)),
     health,
+    special: isPlainObject(special) ? special : {},
   };
 }
 
@@ -270,11 +342,8 @@ export function requireSnapshot(snapshot) {
  * @returns {Record<string, unknown>[]}
  */
 export function requireCapabilities(capabilities) {
-  if (!isPlainObject(capabilities)) {
-    throw new TypeError("capabilities must be an object");
-  }
-
-  const entries = capabilities.capabilities;
+  requireCapabilitiesVersion(capabilities);
+  const entries = /** @type {Record<string, unknown>} */ (capabilities).capabilities;
 
   if (!Array.isArray(entries)) {
     throw new TypeError("capabilities.capabilities must be an array");
@@ -585,16 +654,191 @@ function checkHealth(health, violations) {
 }
 
 /**
+ * 1-based line of each capability entry's `"name"` key, or null when the text
+ * and the parsed table disagree (a caller passed no text, or the file is
+ * minified/annotated in a way this scanner cannot follow).
+ *
+ * The scanner is intentionally narrow: `capabilities.json` is a generated-by-
+ * hand file whose entries all carry exactly one `"name"` key, so counting those
+ * keys in order maps entry index to source line without a JSON parser.
+ *
+ * @param {string | null | undefined} text capabilities.json text
+ * @param {number} count parsed entry count
+ * @returns {number[] | null}
+ */
+function capabilityEntryLines(text, count) {
+  if (typeof text !== "string" || count <= 0) {
+    return null;
+  }
+
+  const lines = [];
+  const pattern = /"name"\s*:/g;
+  let match = pattern.exec(text);
+
+  while (match !== null) {
+    lines.push(text.slice(0, match.index).split("\n").length);
+    match = pattern.exec(text);
+  }
+
+  return lines.length === count ? lines : null;
+}
+
+/**
+ * Report one capability that re-uses a `wire` already claimed by an earlier
+ * entry (07 section 4.1.5: one capability per wire, so `CAPABILITY_TO_WIRE`
+ * stays injective).
+ *
+ * @param {Record<string, unknown>[]} entries
+ * @param {string | null | undefined} capabilitiesText
+ * @param {Violation[]} violations
+ */
+function checkDuplicateWires(entries, capabilitiesText, violations) {
+  const lines = capabilityEntryLines(capabilitiesText, entries.length);
+  /** @type {Map<string, {name: string, index: number}>} */
+  const firstByWire = new Map();
+
+  entries.forEach((entry, index) => {
+    if (typeof entry.wire !== "string" || entry.wire === "") {
+      return;
+    }
+
+    const first = firstByWire.get(entry.wire);
+
+    if (first === undefined) {
+      firstByWire.set(entry.wire, {
+        name: typeof entry.name === "string" ? entry.name : entry.wire,
+        index,
+      });
+
+      return;
+    }
+
+    const currentName = typeof entry.name === "string" ? entry.name : entry.wire;
+
+    // A repeated name is the same capability declared twice, which
+    // `duplicate-name` already reports; the injective-wire rule only speaks
+    // about two *different* capabilities sharing one wire.
+    if (currentName === first.name) {
+      return;
+    }
+
+    const record = violation(
+      MAP_RULES.map,
+      "duplicate-wire",
+      `wire ${quote(entry.wire)} is registered by both ${quote(first.name)} (entry ${first.index})` +
+        ` and ${quote(currentName)} (entry ${index}); one capability may back only one wire`,
+    );
+    const line = lines === null ? undefined : lines[index];
+
+    if (line !== undefined) {
+      record.line = line;
+    }
+
+    violations.push(record);
+  });
+}
+
+/**
+ * Map the three `execute_command` parity invariants (P5-8, F5a's
+ * `checkParityConsistency`) to gate violations.
+ *
+ * `contract-cover` carries the three real disagreements; `contract-health`
+ * carries the empty-input case, because a vanished extraction must never read
+ * as a clean parity surface (P5-9).
+ *
+ * @param {{
+ *   ok: boolean,
+ *   vacuous: boolean,
+ *   advertisedWithoutHandler: string[],
+ *   unadvertisedCaseWithoutAlias: string[],
+ *   aliasWithoutCase: string[],
+ * }} consistency result of `checkParityConsistency(snapshot.special.remoteCommands)`
+ * @returns {Violation[]}
+ */
+export function checkParityViolations(consistency) {
+  /** @type {Violation[]} */
+  const violations = [];
+  const advertisedWithoutHandler = Array.isArray(consistency.advertisedWithoutHandler)
+    ? consistency.advertisedWithoutHandler
+    : [];
+  const unadvertisedCaseWithoutAlias = Array.isArray(consistency.unadvertisedCaseWithoutAlias)
+    ? consistency.unadvertisedCaseWithoutAlias
+    : [];
+  const aliasWithoutCase = Array.isArray(consistency.aliasWithoutCase)
+    ? consistency.aliasWithoutCase
+    : [];
+
+  for (const id of advertisedWithoutHandler) {
+    violations.push(
+      violation(
+        MAP_RULES.cover,
+        "advertised-without-handler",
+        `advertised id ${quote(String(id))} has neither a dispatch case nor a handledElsewhere entry`,
+        { file: SNAPSHOT_FILE },
+      ),
+    );
+  }
+
+  for (const id of unadvertisedCaseWithoutAlias) {
+    violations.push(
+      violation(
+        MAP_RULES.cover,
+        "unadvertised-case-without-alias",
+        `dispatch case ${quote(String(id))} is not advertised and has no unadvertisedAliases entry`,
+        { file: SNAPSHOT_FILE },
+      ),
+    );
+  }
+
+  for (const id of aliasWithoutCase) {
+    violations.push(
+      violation(
+        MAP_RULES.cover,
+        "alias-without-case",
+        `unadvertised alias ${quote(String(id))} has no dispatch case`,
+        { file: SNAPSHOT_FILE },
+      ),
+    );
+  }
+
+  if (consistency.vacuous === true) {
+    violations.push(
+      violation(
+        MAP_RULES.health,
+        "empty-parity",
+        "empty parity input, untrustworthy: snapshot.special.remoteCommands has neither advertised ids nor dispatch cases",
+        { file: SNAPSHOT_FILE },
+      ),
+    );
+  }
+
+  return violations;
+}
+
+/**
  * Run every capability-table check and return the sorted violations.
  *
  * `generatedNames` is optional: when the caller passes the names read back from
  * the committed artifact, the missing / orphan checks become meaningful. A plain
  * generation call passes nothing, because there is no artifact to compare with.
  *
- * @param {{snapshot: unknown, capabilities: unknown, generatedNames?: string[] | null}} input
+ * `capabilitiesText` is optional and only supplies line numbers for the
+ * `duplicate-wire` violation; the judgement never depends on it.
+ *
+ * @param {{
+ *   snapshot: unknown,
+ *   capabilities: unknown,
+ *   generatedNames?: string[] | null,
+ *   capabilitiesText?: string | null,
+ * }} input
  * @returns {Violation[]}
  */
-export function collectViolations({ snapshot, capabilities, generatedNames = null }) {
+export function collectViolations({
+  snapshot,
+  capabilities,
+  generatedNames = null,
+  capabilitiesText = null,
+}) {
   const requiredSnapshot = requireSnapshot(snapshot);
   const entries = requireCapabilities(capabilities);
 
@@ -664,6 +908,7 @@ export function collectViolations({ snapshot, capabilities, generatedNames = nul
   }
 
   checkCoverage(entries, requiredSnapshot.commands, violations);
+  checkDuplicateWires(entries, capabilitiesText, violations);
   checkHealth(requiredSnapshot.health, violations);
 
   return sortViolations(violations);
