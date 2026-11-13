@@ -39,6 +39,12 @@ const USAGE = `Usage:
 Exit codes: 0 pass, 1 violation, 2 broken input / not implemented.
 This skeleton only parses arguments; every subcommand is not implemented yet.`;
 
+import { buildSnapshot, writeSnapshot } from "./snapshot.mjs";
+
+/** Default artifacts, relative to the process working directory (the repo root). */
+const DEFAULT_CAPABILITIES = "packages/protocol/src/contract/capabilities.json";
+const DEFAULT_SNAPSHOT = "packages/protocol/src/contract/snapshot.json";
+
 /** Subcommand owner map, used by the TODO notice. */
 const OWNERS = Object.freeze({
   update: "snapshot assembly",
@@ -198,7 +204,37 @@ function runUpdate(args) {
     return;
   }
 
-  notImplemented("update");
+  const engineRoot = parsed.options.get("--engine");
+  const outPath = parsed.options.get("--out") ?? DEFAULT_SNAPSHOT;
+
+  const snapshot = buildSnapshot({
+    engineRoot,
+    capabilitiesPath: DEFAULT_CAPABILITIES,
+  });
+
+  const counts = snapshot.counts;
+  const lines = [
+    `snapshot  ${outPath}`,
+    `engine    ${snapshot.engine.version} @ ${snapshot.engine.commit}`,
+    `counts    union=${counts.unionMembers} wire=${counts.wireCommands} messages=${counts.messages}` +
+      ` inbound=${counts.inboundAccepted} inboundOnly=${counts.inboundOnly}` +
+      ` advertised=${counts.advertisedCommands} dispatch=${counts.dispatchCases}`,
+    `health    degraded=${snapshot.health.degraded} coarse=${snapshot.health.coarse.length}` +
+      ` unparsed=${snapshot.health.unparsed.length}`,
+  ];
+
+  process.stdout.write(lines.join("\n") + "\n");
+
+  if (snapshot.health.degraded) {
+    process.stderr.write(
+      "contract update: snapshot is degraded (symbols missing); nothing written\n",
+    );
+    process.exitCode = 2;
+
+    return;
+  }
+
+  writeSnapshot(outPath, snapshot);
 }
 
 /**

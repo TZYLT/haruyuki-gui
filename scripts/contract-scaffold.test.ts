@@ -373,14 +373,12 @@ describe("contract/cli.mjs: dispatcher skeleton", () => {
     expect(run.stderr).toContain("generate");
   });
 
-  it("exits 2 with a not-implemented notice for a parsed subcommand", () => {
-    const run = spawnSync(process.execPath, [CLI, "update", "--engine", ENGINE_ROOT], {
-      encoding: "utf8",
-    });
+  it("exits 2 with a not-implemented notice for a stubbed subcommand", () => {
+    const run = spawnSync(process.execPath, [CLI, "check"], { encoding: "utf8" });
 
     expect(run.status).toBe(2);
     expect(run.stderr).toContain("not implemented yet");
-    expect(run.stderr).toContain("snapshot assembly");
+    expect(run.stderr).toContain("contract");
   });
 
   it("rejects an unknown option before dispatching", () => {
