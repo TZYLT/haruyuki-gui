@@ -1,5 +1,9 @@
 #!/bin/sh
-# .githooks/pre-commit - fast local commit gate (budget: under 3 seconds).
+# .githooks/pre-commit - fast local commit gate.
+#
+# Budget (A-7): a routine commit - at most 20 staged source files - finishes in
+# under 3 seconds. A larger commit still runs every check below; it may exceed
+# the budget, and that is only reported as a note, never as a failure.
 #
 # Install: pnpm hooks:install   (sets `git config core.hooksPath .githooks`)
 # Bypass:  git commit --no-verify
@@ -44,10 +48,13 @@ newline='
 IFS=$newline
 set -f
 
-# Added, copied or modified files only: a deletion has nothing to lint. The
-# pathspecs are not needed for correctness (the loop below filters again) but
-# they keep the index read cheap on a large commit.
-staged=$(git diff --cached --name-only --diff-filter=ACM -- \
+# Added, copied, modified or renamed files. The rename filter matters: a
+# `git mv` followed by an edit stages status `R`, and `--name-only` then prints
+# only the new path (the deletion half is filtered out), which is exactly the
+# path the tools must lint. `D` stays excluded: a deletion has nothing to lint.
+# The pathspecs are not needed for correctness (the loop below filters again)
+# but they keep the index read cheap on a large commit.
+staged=$(git diff --cached --name-only --diff-filter=ACMR -- \
   '*.ts' '*.mts' '*.cts' '*.js' '*.mjs' '*.cjs') ||
   die "cannot read the staged file list (git diff --cached failed)"
 
@@ -55,18 +62,32 @@ staged=$(git diff --cached --name-only --diff-filter=ACM -- \
 # the list, only existing files with a script extension are handed to the tools.
 # A stray non-source path (README.md, .gitignore, ...) would otherwise make
 # prettier fail on "no parser could be inferred" and block an innocent commit.
+# The existence fallback also covers a staged path that is gone from the work
+# tree (for example `git add x.ts` followed by `rm x.ts`).
 files=""
 count=0
+skipped=0
 for file in $staged; do
   [ -n "$file" ] || continue
-  [ -f "$file" ] || continue
   case $file in
     *.ts|*.mts|*.cts|*.js|*.mjs|*.cjs) ;;
     *) continue ;;
   esac
+  if [ ! -f "$file" ]; then
+    skipped=$((skipped + 1))
+    continue
+  fi
   files="${files}${file}${newline}"
   count=$((count + 1))
 done
+
+budget_files=20
+if [ "$skipped" -gt 0 ]; then
+  say "note: skipped $skipped staged path(s) that are not present on disk"
+fi
+if [ "$count" -gt "$budget_files" ]; then
+  say "note: $count staged source files is over the $budget_files-file budget; runtime may exceed 3 s"
+fi
 
 if [ "$count" -eq 0 ]; then
   say "1/3 eslint: skipped, no staged source file"

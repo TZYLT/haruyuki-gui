@@ -3,9 +3,10 @@
  * verify.mjs - the one command behind the repository promise
  * ("a single local command runs every gate").
  *
- * Default mode (`pnpm verify`) runs six segments, in this order:
+ * Default mode (`pnpm verify`) runs seven segments, in this order:
  *
- *   [1] typecheck       pnpm -r typecheck
+ *   [1] typecheck       pnpm typecheck (the five workspace packages, then
+ *                       `tsc -p scripts` for the gate self-tests)
  *   [2] lint            pnpm exec eslint . - the fast first pass, matching the
  *                       raw import string
  *   [3] boundaries      node scripts/check-boundaries.mjs - the authoritative
@@ -15,8 +16,10 @@
  *   [4] gate self-test  vitest over the gates' red/green fixture pairs. A
  *                       failure here means the GATE is broken, not the code
  *                       under test, so the segment says so out loud
- *   [5] test            vitest over every other test file
- *   [6] coverage        vitest --coverage - numbers only, no thresholds,
+ *   [5] contract        node scripts/check-contract.mjs - the committed
+ *                       contract artifacts must still match their truth sources
+ *   [6] test            vitest over every other test file
+ *   [7] coverage        vitest --coverage - numbers only, no thresholds,
  *                       uncovered code never fails verify
  *
  * `--full` (`pnpm verify:full`) appends the three O(file count) repository
@@ -31,7 +34,9 @@
  *   - a failing segment replays its full captured output (that is the
  *     debugging payload); a passing one leaves only the conclusion line, so a
  *     green run stays readable. `--verbose` replays everything;
- *   - English only, ASCII only, posix paths;
+ *   - English only, ASCII only, posix paths; the aggregator's own lines are
+ *     folded through the same mapping as child output, so a non-ASCII working
+ *     directory can never leak raw bytes into the log;
  *   - exit 0 = every segment passed, 1 = at least one segment failed,
  *     2 = this aggregator itself is broken (bad argument, missing script),
  *     matching the three-value contract in scripts/lib/gate-cli.mjs.
@@ -52,6 +57,13 @@ import { hooksInstalled } from "./lib/verify-hooks.mjs";
 
 /** Indentation of every replayed child line and hint line. */
 const OUTPUT_INDENT = "    ";
+
+/**
+ * Placeholder for one segment number inside a note, for example
+ * `{segment:test}`. Segment numbers are derived from the assembled list, never
+ * hand-copied: inserting a segment can no longer leave a stale number behind.
+ */
+const SEGMENT_REFERENCE_PATTERN = /\{segment:([a-z][a-z -]*)\}/g;
 
 /** A gate can print a lot (tsc, eslint); capture all of it, never truncate. */
 const MAX_BUFFER_BYTES = 32 * 1024 * 1024;
@@ -87,10 +99,11 @@ const COVERAGE_REPORT_PATTERN = /% Coverage report/;
 /**
  * Gate self-tests: each file drives a real gate script against red and green
  * fixtures, so a failure means the rule matrix (not the product code) is
- * broken. Every other test file below scripts/ is segment 5.
+ * broken. Every other test file below scripts/ belongs to the test segment.
  */
 const GATE_SELF_TEST_FILES = [
   "scripts/boundaries-matrix.test.ts",
+  "scripts/eslint-boundaries.test.ts",
   "scripts/cycles.test.ts",
   "scripts/file-size-ratchet.test.ts",
   "scripts/module-ownership.test.ts",
@@ -153,11 +166,16 @@ function start() {
     const flags = parseArguments(process.argv.slice(2));
     const options = { root: toPosix(process.cwd()), full: flags.full, verbose: flags.verbose };
 
-    assertPrerequisites(options);
+    assertEnvironment(options);
 
+    // Assemble first, then fail closed on exactly the files the assembled
+    // segments will run: the requirement list is derived, never a second copy
+    // of the script list that can drift (P3-01).
     const segments = buildSegments(options);
 
-    console.log(
+    assertSegmentFiles(options, segments);
+
+    printLine(
       `verify: ${segments.length} segments, mode ${options.full ? "full" : "default"}, ` +
         `root ${options.root}`,
     );
@@ -165,7 +183,7 @@ function start() {
     const started = performance.now();
     const results = segments.map((segment, index) => {
       if (index > 0) {
-        console.log("");
+        printLine();
       }
 
       return runSegment(segment, index, segments.length, options);
@@ -178,8 +196,10 @@ function start() {
     process.exitCode = results.every((result) => result.passed) ? 0 : 1;
   } catch (error) {
     // Exit code 2: the aggregator could not even judge the tree. A gate that
-    // reports violations exits 1 instead, and never reaches this path.
-    fail(error);
+    // reports violations exits 1 instead, and never reaches this path. The
+    // message can embed the (possibly non-ASCII) working directory, so fold it
+    // before printing: the aggregator must honour its own ASCII contract.
+    fail(asciiSafe(error instanceof Error ? error.message : String(error)));
   }
 }
 
@@ -204,13 +224,14 @@ function parseArguments(argv) {
 }
 
 /**
- * Fail closed before the first segment: a missing script or dependency must be
- * a loud exit 2, never a segment that quietly inspects nothing.
+ * Fail closed before the first segment: a missing dependency or a checkout that
+ * is not a repository must be a loud exit 2, never a segment that quietly
+ * inspects nothing.
  *
  * @param {VerifyOptions} options
  * @returns {void}
  */
-function assertPrerequisites(options) {
+function assertEnvironment(options) {
   if (!existsSync(path.join(options.root, "package.json"))) {
     throw new Error(`not a haruyuki-gui checkout (no package.json in ${options.root})`);
   }
@@ -222,26 +243,70 @@ function assertPrerequisites(options) {
   if (findExecutable("pnpm") === null) {
     throw new Error("pnpm is not on PATH; install pnpm or run this through pnpm");
   }
+}
 
-  const gateScripts = ["scripts/check-boundaries.mjs"];
+/**
+ * Fail closed on every file the assembled segments will actually run.
+ *
+ * The list is derived from the segment commands themselves (the Node script a
+ * gate segment spawns, the test files a vitest segment gets), so adding a
+ * segment extends the prerequisite check for free. Hand-maintaining a second
+ * list is exactly how the contract gate slipped past this check (P3-01).
+ *
+ * @param {VerifyOptions} options
+ * @param {Segment[]} segments
+ * @returns {void}
+ */
+function assertSegmentFiles(options, segments) {
+  /** @type {Map<string, string>} repo-relative file to the segment needing it */
+  const required = new Map();
 
-  if (options.full) {
-    gateScripts.push(
-      "scripts/check-file-size.mjs",
-      "scripts/check-cycles.mjs",
-      "scripts/check-module-ownership.mjs",
-    );
+  for (const segment of segments) {
+    for (const relative of segmentInputs(segment)) {
+      if (!required.has(relative)) {
+        required.set(relative, segment.label);
+      }
+    }
   }
 
-  for (const relative of [...gateScripts, ...GATE_SELF_TEST_FILES]) {
+  for (const [relative, label] of required) {
     if (!existsSync(path.join(options.root, relative))) {
-      throw new Error(`required file not found: ${relative}`);
+      throw new Error(`required file not found: ${relative} (needed by segment "${label}")`);
     }
   }
 }
 
 /**
- * Describe the six base segments (plus three under --full).
+ * Every repository file one segment will read, as repo-relative posix paths.
+ *
+ * Two shapes exist today: a gate segment runs `process.execPath <script>`, and
+ * a vitest segment passes test files after `exec vitest`. Anything else (a pnpm
+ * workspace-wide command, a flag) contributes nothing.
+ *
+ * @param {Segment} segment
+ * @returns {string[]}
+ */
+function segmentInputs(segment) {
+  const { command, args } = segment.command();
+  const inputs = [];
+
+  if (command === process.execPath && args.length > 0 && !args[0].startsWith("-")) {
+    inputs.push(args[0]);
+  }
+
+  if (args[0] === "exec" && args[1] === "vitest") {
+    for (const arg of args) {
+      if (TEST_FILE_PATTERN.test(arg)) {
+        inputs.push(arg);
+      }
+    }
+  }
+
+  return inputs;
+}
+
+/**
+ * Describe the seven base segments (plus three under --full).
  *
  * @param {VerifyOptions} options
  * @returns {Segment[]}
@@ -254,7 +319,7 @@ function buildSegments(options) {
   const segments = [
     {
       label: "typecheck",
-      command: () => ({ command: "pnpm", args: ["-r", "typecheck"] }),
+      command: () => ({ command: "pnpm", args: ["typecheck"] }),
     },
     {
       label: "lint",
@@ -289,13 +354,14 @@ function buildSegments(options) {
         args: ["exec", "vitest", "run", "--coverage", "--coverage.reporter=text"],
       }),
       // A number report is the whole contract of this segment: uncovered code
-      // never fails here, and a red test verdict belongs to segment 5, so a
-      // non-zero exit that still produced the table is not a coverage failure.
+      // never fails here, and a red test verdict belongs to the test segment,
+      // so a non-zero exit that still produced the table is not a coverage
+      // failure.
       evaluate: (run) => run.status === 0 || COVERAGE_REPORT_PATTERN.test(run.output),
       notes: [
         "advisory only: no threshold, uncovered code never fails verify",
         "in-process coverage of scripts/ stays low because gates run as child processes",
-        "test verdicts belong to segment 5, not here",
+        "test verdicts belong to segment {segment:test}, not here",
       ],
     },
   ];
@@ -311,7 +377,40 @@ function buildSegments(options) {
     );
   }
 
+  resolveSegmentReferences(segments);
+
   return segments;
+}
+
+/**
+ * Replace every `{segment:<label>}` note placeholder with that segment's real
+ * one-based position in the assembled list (P3-03). Deriving the number here is
+ * what keeps the coverage note correct when a segment is inserted; an unknown
+ * label is a programming error in the aggregator itself, so it throws (exit 2).
+ *
+ * @param {Segment[]} segments
+ * @returns {void}
+ */
+function resolveSegmentReferences(segments) {
+  const numbers = new Map(segments.map((segment, index) => [segment.label, index + 1]));
+
+  for (const segment of segments) {
+    if (segment.notes === undefined) {
+      continue;
+    }
+
+    segment.notes = segment.notes.map((note) =>
+      note.replace(SEGMENT_REFERENCE_PATTERN, (match, label) => {
+        const number = numbers.get(label);
+
+        if (number === undefined) {
+          throw new Error(`note of segment "${segment.label}" refers to unknown ${match}`);
+        }
+
+        return String(number);
+      }),
+    );
+  }
 }
 
 /**
@@ -371,11 +470,11 @@ function discoverTestFiles(root) {
 function runSegment(segment, index, total, options) {
   const position = index + 1;
 
-  console.log(`[${position}/${total}] ${segment.header ?? segment.label}`);
+  printLine(`[${position}/${total}] ${segment.header ?? segment.label}`);
 
   if (segment.skipReason !== undefined) {
-    console.log(`${OUTPUT_INDENT}${segment.skipReason}`);
-    console.log(`[${position}/${total}] ${segment.label}  PASS  0.00s`);
+    printLine(`${OUTPUT_INDENT}${segment.skipReason}`);
+    printLine(`[${position}/${total}] ${segment.label}  PASS  0.00s`);
 
     return { label: segment.label, passed: true };
   }
@@ -391,20 +490,20 @@ function runSegment(segment, index, total, options) {
 
   const verdict = passed ? "PASS" : "FAIL";
 
-  console.log(`[${position}/${total}] ${segment.label}  ${verdict}  ${formatSeconds(seconds)}`);
+  printLine(`[${position}/${total}] ${segment.label}  ${verdict}  ${formatSeconds(seconds)}`);
 
   if (!passed) {
     if (run.spawnFailed) {
-      console.log(`${OUTPUT_INDENT}the command could not be started at all`);
+      printLine(`${OUTPUT_INDENT}the command could not be started at all`);
     }
 
     if (segment.warning !== undefined) {
-      console.log(`${OUTPUT_INDENT}${segment.warning}`);
+      printLine(`${OUTPUT_INDENT}${segment.warning}`);
     }
   }
 
   for (const note of segment.notes ?? []) {
-    console.log(`${OUTPUT_INDENT}note: ${note}`);
+    printLine(`${OUTPUT_INDENT}note: ${note}`);
   }
 
   return { label: segment.label, passed };
@@ -460,6 +559,36 @@ function quoteArgument(argument) {
 }
 
 /**
+ * Fold any text this aggregator itself prints to the ASCII-only contract
+ * (P3-07). Child output already goes through `normalizeOutput`; this helper
+ * covers the aggregator's own lines, which can embed a non-ASCII working
+ * directory (the `root <dir>` header and every error message).
+ *
+ * The glyph mapping is the same one `normalizeOutput` uses, so an unmapped
+ * character becomes "?" instead of leaking a raw byte.
+ *
+ * @param {string} text
+ * @returns {string}
+ */
+function asciiSafe(text) {
+  return text
+    .replaceAll("\r\n", "\n")
+    .replace(ANSI_PATTERN, "")
+    .replace(NON_ASCII_PATTERN, (character) => GLYPH_FOLDS.get(character) ?? "?");
+}
+
+/**
+ * Print one aggregator-owned line, ASCII-folded. An empty call prints the blank
+ * separator line between segments.
+ *
+ * @param {string} [text]
+ * @returns {void}
+ */
+function printLine(text = "") {
+  console.log(text === "" ? "" : asciiSafe(text));
+}
+
+/**
  * Strip ANSI colors so a piped log stays ASCII-clean, normalize line endings,
  * and drop trailing blank space.
  *
@@ -468,10 +597,7 @@ function quoteArgument(argument) {
  */
 function normalizeOutput(output) {
   return (
-    output
-      .replaceAll("\r\n", "\n")
-      .replace(ANSI_PATTERN, "")
-      .replace(NON_ASCII_PATTERN, (character) => GLYPH_FOLDS.get(character) ?? "?")
+    asciiSafe(output)
       // Some tools open their report with a blank line; the replay already
       // leaves a gap under the segment heading.
       .replace(/^(?:[ \t]*\n)+/, "")
@@ -492,7 +618,7 @@ function replay(output) {
   }
 
   for (const line of output.split("\n")) {
-    console.log(line === "" ? "" : `${OUTPUT_INDENT}${line}`);
+    printLine(line === "" ? "" : `${OUTPUT_INDENT}${line}`);
   }
 }
 
@@ -513,16 +639,16 @@ function printSummary(results, seconds) {
   const failed = results.filter((result) => !result.passed);
   const duration = `${seconds.toFixed(1)}s`;
 
-  console.log("");
+  printLine();
 
   if (failed.length === 0) {
-    console.log(`verify: ${results.length}/${results.length} segments passed in ${duration}`);
+    printLine(`verify: ${results.length}/${results.length} segments passed in ${duration}`);
 
     return;
   }
 
-  console.log(`verify: ${failed.length} of ${results.length} segments FAILED in ${duration}`);
-  console.log(`  FAILED: ${failed.map((result) => result.label).join(", ")}`);
+  printLine(`verify: ${failed.length} of ${results.length} segments FAILED in ${duration}`);
+  printLine(`  FAILED: ${failed.map((result) => result.label).join(", ")}`);
 }
 
 /**
@@ -537,7 +663,7 @@ function printHooksHint(root) {
     return;
   }
 
-  console.log("hint: git hooks are not installed; run: pnpm hooks:install");
+  printLine("hint: git hooks are not installed; run: pnpm hooks:install");
 }
 
 /**

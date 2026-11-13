@@ -1,0 +1,49 @@
+// Type checking for the gate self-tests (`scripts/**/*.test.ts`).
+//
+// These 16 test files were outside every tsconfig, so type errors in the tests
+// themselves were invisible: a renamed field on a gate result, a misspelled
+// option key, a wrong argument count or a nullable value used unguarded only
+// surfaced at run time (or never, for branches a green run does not reach).
+// This config closes that hole.
+//
+// Deliberate relaxations, and why they do not gut the check:
+//
+// * `allowJs` + `checkJs: false` - the gates themselves are untyped `.mjs`
+//   (`scripts/*.mjs`, `scripts/contract/**`). Turning on `checkJs` would mean
+//   retro-typing the whole gate implementation (thousands of lines), which is
+//   out of scope for this task. `allowJs` still lets the compiler *read* those
+//   modules so the tests get real shapes for what they import; checkJs:false
+//   just keeps the compiler from reporting on the implementation itself.
+//
+// * `noImplicitAny: false` - destructuring / calling anything from those
+//   untyped `.mjs` modules yields implicit `any`, so keeping the flag on would
+//   bury the real errors under ~290 "implicitly has an 'any' type" reports
+//   (measured: TS7005 x151, TS7006 x125, TS7034 x11).
+//
+// What is still enforced (inherited from ../tsconfig.base.json): `strict`
+// (incl. `strictNullChecks`), `noUncheckedIndexedAccess`,
+// `exactOptionalPropertyTypes`, `isolatedModules`, `verbatimModuleSyntax`.
+// So `tsc -p scripts` still fails on: misspelled / renamed fields on typed
+// objects (TS2339/TS2353/TS2551), wrong argument count or type at a call site
+// (TS2554/TS2345/TS2769), possible-undefined access (TS18048/TS2532), a
+// nullable value passed where non-null is required (TS2345), incompatible
+// assignments (TS2322), missing or unresolved imports (TS2304/TS2305/TS2307),
+// and `unknown` used as if it were typed (TS18046). It will *not* catch a wrong
+// member name on a value that came out of an untyped `.mjs` export, because
+// that value is `any`; that is what the typed helpers in `scripts/lib/`
+// (`test-assert.ts`) and the per-file shape types are for.
+//
+// `types: ["node"]` is enough: every test imports `vitest` explicitly, so no
+// `vitest/globals` entry is needed. No `composite` / project references
+// (route doc 05, R-08).
+{
+  "extends": "../tsconfig.base.json",
+  "include": ["./**/*.ts"],
+  "compilerOptions": {
+    "noEmit": true,
+    "allowJs": true,
+    "checkJs": false,
+    "noImplicitAny": false,
+    "types": ["node"]
+  }
+}

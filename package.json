@@ -16,7 +16,7 @@
     "node": ">=24"
   },
   "scripts": {
-    "typecheck": "pnpm -r typecheck",
+    "typecheck": "pnpm -r typecheck && pnpm exec tsc -p scripts",
     "lint": "eslint .",
     "verify": "node scripts/verify.mjs",
     "verify:full": "node scripts/verify.mjs --full",
