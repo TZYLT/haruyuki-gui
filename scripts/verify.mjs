@@ -71,8 +71,31 @@ const MAX_BUFFER_BYTES = 32 * 1024 * 1024;
 /** CSI escape sequences: colors, cursor moves, line clears. */
 const ANSI_PATTERN = /\u001B\[[0-9;?]*[A-Za-z]/g;
 
-/** The test-file convention of this repository. */
-const TEST_FILE_PATTERN = /\.test\.ts$/;
+/**
+ * The test-file convention of this repository.
+ *
+ * `.test.tsx` is included because component tests are TSX. This pattern is used
+ * for two jobs that must agree: discovering files to run, and recognising which
+ * vitest arguments are test files when checking that every segment input exists.
+ * A `.test.tsx` the runner never discovers is a test that silently never fails.
+ */
+const TEST_FILE_PATTERN = /\.test\.tsx?$/;
+
+/**
+ * Directories the test discovery never descends into. Same set every other gate
+ * skips: `fixtures` holds deliberately broken trees, `_research` and `docs` are
+ * not part of the workspace, and the rest are build or install output.
+ */
+const SKIPPED_TEST_DIRS = new Set([
+  "node_modules",
+  "dist",
+  "out",
+  "build",
+  "coverage",
+  "fixtures",
+  "_research",
+  "docs",
+]);
 
 /** Any byte that would break the ASCII-only output contract. */
 const NON_ASCII_PATTERN = /[^\u0000-\u007F]/g;
@@ -446,16 +469,47 @@ function vitest(files) {
 }
 
 /**
- * Every test file below scripts/, sorted, as repo-relative posix paths.
+ * Every test file inside `root` below the given top-level directories, sorted,
+ * as repo-relative posix paths.
+ *
+ * Recursive on purpose: tests live next to what they test, so both `scripts/**`
+ * and `packages/**` are walked to full depth. Skipped directories mirror every
+ * other gate (`node_modules`, `dist`, `coverage`, `fixtures`, `_research`,
+ * `docs`): the fixture trees are deliberately broken and must never be collected
+ * as tests, and a nested worktree or published copy is not this repository's
+ * source.
  *
  * @param {string} root Absolute posix repository root.
  * @returns {string[]}
  */
 function discoverTestFiles(root) {
-  return readdirSync(path.join(root, "scripts"))
-    .filter((name) => TEST_FILE_PATTERN.test(name))
-    .sort()
-    .map((name) => `scripts/${name}`);
+  const roots = ["scripts", "packages"];
+
+  /**
+   * @param {string} relative Repo-relative posix directory.
+   * @returns {string[]}
+   */
+  function walk(relative) {
+    const absolute = path.join(root, relative);
+
+    if (!existsSync(absolute)) return [];
+
+    const found = [];
+
+    for (const entry of readdirSync(absolute, { withFileTypes: true })) {
+      const child = `${relative}/${entry.name}`;
+
+      if (entry.isDirectory()) {
+        if (!SKIPPED_TEST_DIRS.has(entry.name)) found.push(...walk(child));
+      } else if (TEST_FILE_PATTERN.test(entry.name)) {
+        found.push(child);
+      }
+    }
+
+    return found;
+  }
+
+  return roots.flatMap(walk).sort();
 }
 
 /**

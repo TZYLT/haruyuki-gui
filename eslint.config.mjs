@@ -19,7 +19,12 @@
 
 import tseslint from "typescript-eslint";
 
-const MODULE_EXTENSIONS = "js,mjs,cjs,ts,mts,cts";
+// `tsx` is part of the module surface, not an exception: the renderer package
+// is where JSX lives, and a file extension that eslint silently skips is a file
+// where every rule in this config stops applying. The parser needs
+// `ecmaFeatures.jsx` as well (`TSX` cannot be parsed in plain TS mode), which is
+// set once in the shared block below.
+const MODULE_EXTENSIONS = "js,mjs,cjs,ts,mts,cts,tsx";
 
 /**
  * Build the `files` glob for one workspace package.
@@ -118,6 +123,22 @@ export default [
       parser: tseslint.parser,
       ecmaVersion: 2023,
       sourceType: "module",
+    },
+    rules: {},
+  },
+  // JSX/TSX block. JSX is syntax, not module resolution, so it is opted into
+  // here rather than by widening the extension glob: enabling `jsx` for every
+  // TS file would let `.ts` files contain JSX, which the TypeScript compiler
+  // rejects (`TS17004`).
+  {
+    files: ["**/*.tsx"],
+    languageOptions: {
+      parser: tseslint.parser,
+      ecmaVersion: 2023,
+      sourceType: "module",
+      parserOptions: {
+        ecmaFeatures: { jsx: true },
+      },
     },
     rules: {},
   },

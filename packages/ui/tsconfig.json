@@ -4,7 +4,9 @@
     "strict": true,
     "verbatimModuleSyntax": true,
     "noUncheckedIndexedAccess": true,
-    "exactOptionalPropertyTypes": false
+    "exactOptionalPropertyTypes": false,
+    "jsx": "react-jsx",
+    "types": []
   },
   "include": ["src/**/*"]
 }

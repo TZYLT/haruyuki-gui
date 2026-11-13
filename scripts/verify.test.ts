@@ -126,10 +126,12 @@ interface StubTree {
 /**
  * Materialize a disposable checkout the aggregator accepts as a repository.
  *
- * @param options missing repo-relative posix paths, plus the root directory name
+ * @param options missing repo-relative posix paths, extra files to create, root directory name
  * @returns the temp base, the checkout root, the fake-pnpm bin dir and the log
  */
-function makeStubTree(options: { missing?: string[]; rootName?: string } = {}): StubTree {
+function makeStubTree(
+  options: { missing?: string[]; extraFiles?: string[]; rootName?: string } = {},
+): StubTree {
   const base = mkdtempSync(path.join(os.tmpdir(), "haruyuki-verify-"));
   const root = path.join(base, options.rootName ?? "checkout");
   const bin = path.join(base, "bin");
@@ -151,6 +153,13 @@ function makeStubTree(options: { missing?: string[]; rootName?: string } = {}): 
 
   for (const name of GATE_SELF_TEST_FILES) {
     writeFileSync(path.join(root, "scripts", name), "");
+  }
+
+  for (const relative of options.extraFiles ?? []) {
+    const absolute = path.join(root, relative);
+
+    mkdirSync(path.dirname(absolute), { recursive: true });
+    writeFileSync(absolute, "");
   }
 
   writeFakePnpm(bin);
@@ -358,6 +367,80 @@ describe("verify aggregator: segment assembly", () => {
     expect(run?.output).toContain("test verdicts belong to segment 6, not here");
     expect(run?.output).not.toContain("test verdicts belong to segment 5");
     expect(run?.output).toContain("[6/7] test  PASS");
+  });
+});
+
+describe("verify aggregator: test discovery", () => {
+  /**
+   * Collect the test files the aggregator passed to vitest, in order.
+   *
+   * @param tree stub checkout
+   * @param run aggregator run
+   * @returns repo-relative test file paths handed to `vitest run`
+   */
+  function collectedTests(tree: StubTree, run: VerifyRun): string[] {
+    expect(existsSync(tree.logFile), run.output).toBe(true);
+
+    // Split on `\r?\n`: the Windows `.cmd` shim echoes its line ending as CRLF,
+    // which would otherwise leave a trailing `\r` on the last token of every
+    // line and silently drop exactly that one file from the assertion.
+    return readFileSync(tree.logFile, "utf8")
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith("pnpm exec vitest run "))
+      .flatMap((line) => line.slice("pnpm exec vitest run ".length).trim().split(" "))
+      .filter((token) => token.endsWith(".test.ts") || token.endsWith(".test.tsx"));
+  }
+
+  it("collects package tests as well as script tests (G2)", () => {
+    // Green side of the pair: both files exist, both must reach vitest. Before
+    // Previously the discovery only read `scripts/`, so a renderer test was written,
+    // passed locally when run by path, and never ran in `verify`.
+    const tree = makeStubTree({
+      extraFiles: [
+        "packages/ui/src/tokens/tokens.test.ts",
+        "packages/ui/src/Button.test.tsx",
+        // The stub tree only materializes the gate self-test set, so the two
+        // pre-existing script tests have to be written explicitly for the
+        // "nothing fell out of the set" half of the assertion.
+        "scripts/verify.test.ts",
+        "scripts/contract-diff.test.ts",
+      ],
+    });
+    const run = runVerify(tree);
+    const collected = collectedTests(tree, run);
+
+    expect(run.status, run.output).toBe(0);
+    expect(collected).toContain("packages/ui/src/tokens/tokens.test.ts");
+    expect(collected).toContain("packages/ui/src/Button.test.tsx");
+    // The pre-existing script tests must not fall out of the set while widening it.
+    expect(collected).toContain("scripts/verify.test.ts");
+    expect(collected).toContain("scripts/contract-diff.test.ts");
+  });
+
+  it("never collects a test file under fixtures, node_modules or docs", () => {
+    // Red side of the pair: these paths look like tests but must stay out. The
+    // fixture trees are deliberately broken, so collecting them would make
+    // `verify` fail for reasons that have nothing to do with the product.
+    const tree = makeStubTree({
+      extraFiles: [
+        "fixtures/i18n/red-bad-icu/Broken.test.ts",
+        "node_modules/some-package/test/thing.test.ts",
+        "docs/examples/sample.test.ts",
+      ],
+    });
+    const run = runVerify(tree);
+    const collected = collectedTests(tree, run);
+
+    expect(run.status, run.output).toBe(0);
+    expect(collected.some((file) => file.startsWith("fixtures/"))).toBe(false);
+    expect(collected.some((file) => file.startsWith("node_modules/"))).toBe(false);
+    expect(collected.some((file) => file.startsWith("docs/"))).toBe(false);
+  });
+
+  it("does not collect a .test.tsx that is not under a discovered root", () => {
+    const tree = makeStubTree({ extraFiles: ["apps/desktop/src/shell.test.tsx"] });
+
+    expect(collectedTests(tree, runVerify(tree))).not.toContain("apps/desktop/src/shell.test.tsx");
   });
 });
 
