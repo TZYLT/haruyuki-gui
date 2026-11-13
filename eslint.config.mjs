@@ -63,6 +63,7 @@ const NODE_BUILTIN_MODULES = [
   "repl",
   "stream",
   "string_decoder",
+  "sys",
   "timers",
   "tls",
   "trace_events",
@@ -98,8 +99,18 @@ const ELECTRON_HOST_API_PATTERNS = ["/electron", "/electron/*"];
 export default [
   {
     // `_research/` is exploration residue outside the workspace (and owns its
-    // own nested configs), so workspace gates must not scan it.
-    ignores: ["**/node_modules/**", "**/dist/**", "**/fixtures/**", "_research/**"],
+    // own nested configs), so workspace gates must not scan it. `docs/` is a
+    // separate, unpublished git repository that only exists in the primary
+    // checkout: linting it would make `pnpm verify` depend on where it runs.
+    // `coverage/` is a report directory, never source.
+    ignores: [
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/fixtures/**",
+      "_research/**",
+      "docs/**",
+      "coverage/**",
+    ],
   },
   {
     files: ["**/*.js", "**/*.mjs", "**/*.cjs", "**/*.ts", "**/*.mts", "**/*.cts"],

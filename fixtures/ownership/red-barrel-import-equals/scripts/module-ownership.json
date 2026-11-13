@@ -1,0 +1,7 @@
+{
+  "modules": [],
+  "barrels": {
+    "forbid": true,
+    "allow": []
+  }
+}

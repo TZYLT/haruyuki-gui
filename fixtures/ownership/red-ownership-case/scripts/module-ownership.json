@@ -1,0 +1,15 @@
+{
+  "modules": [
+    {
+      "path": "packages/core/src/engine/**",
+      "allowedImporters": [
+        "packages/core/src/entry.ts"
+      ],
+      "reason": "Engine internals are private."
+    }
+  ],
+  "barrels": {
+    "forbid": true,
+    "allow": []
+  }
+}

@@ -23,6 +23,15 @@
  *     cannot disguise an internal package as a local file (or the reverse).
  *   - tsconfig `paths` aliases are not consulted. An alias that does not
  *     resolve ends up `missing` and therefore visible, never silently external.
+ *   - Path comparison and package attribution follow the file system's own
+ *     case rules. Windows is case-insensitive: `../../Core/src/index.ts`
+ *     resolves against the real `packages/core`, so the segment `Core` must
+ *     still be attributed to package `core`. Every resolved path is
+ *     canonicalized with `realpathSync.native` (which restores the on-disk
+ *     case) and, on Windows only, compared case-insensitively, while the
+ *     returned package name is always the normalized lower-case one. On POSIX
+ *     the comparison stays case-sensitive, so `packages/Core` is a different
+ *     directory from `packages/core` and is attributed to neither.
  */
 
 import { readdirSync, realpathSync, statSync } from "node:fs";
@@ -75,6 +84,15 @@ const JS_TO_TS_REWRITES = new Map([
 /** Host APIs, matched as a bare name or as a `<name>/...` deep import. */
 const HOST_APIS = ["electron", "vscode"];
 
+/**
+ * Whether path segments compare case-insensitively. Windows is
+ * case-insensitive by default, so `path.resolve()` and `statSync()` accept a
+ * specifier such as `../../Core/src/index.ts` for the real `packages/core`
+ * directory. POSIX stays case-sensitive: `Core` and `core` are two different
+ * directories there.
+ */
+const CASE_INSENSITIVE_PATHS = process.platform === "win32";
+
 /** Every Node builtin name, without the `node:` protocol prefix. */
 const NODE_BUILTINS = new Set(builtinModules);
 
@@ -87,7 +105,7 @@ const NODE_BUILTINS = new Set(builtinModules);
  */
 export function canonicalRoot(root) {
   try {
-    return stripTrailingSlash(toPosix(realpathSync(root)));
+    return stripTrailingSlash(toPosix(realpathSync.native(root)));
   } catch (error) {
     throw new Error(`cannot resolve the repository root ${root}: ${errorMessage(error)}`);
   }
@@ -97,7 +115,10 @@ export function canonicalRoot(root) {
  * List repo-relative posix paths of every in-scope source file.
  *
  * Throws when nothing was found, or when no workspace package directory exists:
- * a gate that inspected nothing must never report PASS.
+ * a gate that inspected nothing must never report PASS. The directory check
+ * counts only `packages/<name>` / `apps/<name>` entries whose name is one of
+ * the five matrix packages, so a tree that merely holds an unrelated directory
+ * (for example `packages/tooling`) is still an empty shell and exits 2.
  *
  * @param {string} root Absolute posix scan root.
  * @returns {string[]}
@@ -105,7 +126,7 @@ export function canonicalRoot(root) {
 export function scanSourceFiles(root) {
   /** @type {string[]} */
   const files = [];
-  let packageDirs = 0;
+  let matrixPackageDirs = 0;
 
   for (const dirName of SCAN_DIRS) {
     const directory = path.posix.join(root, dirName);
@@ -115,8 +136,11 @@ export function scanSourceFiles(root) {
     }
 
     if (WORKSPACE_ROOTS.has(dirName)) {
-      packageDirs += readdirSync(directory, { withFileTypes: true }).filter(
-        (entry) => entry.isDirectory() && !entry.isSymbolicLink(),
+      matrixPackageDirs += readdirSync(directory, { withFileTypes: true }).filter(
+        (entry) =>
+          entry.isDirectory() &&
+          !entry.isSymbolicLink() &&
+          normalizedPackageName(entry.name) !== null,
       ).length;
     }
 
@@ -132,10 +156,11 @@ export function scanSourceFiles(root) {
     );
   }
 
-  if (packageDirs === 0) {
+  if (matrixPackageDirs === 0) {
     throw new Error(
-      `no package directory found under ${[...WORKSPACE_ROOTS].join(", ")} in ${root}; ` +
-        "the boundary matrix would have nothing to judge, so this is not a pass",
+      `no workspace package directory (${[...WORKSPACE_PACKAGES].join(", ")}) found under ` +
+        `${[...WORKSPACE_ROOTS].join(", ")} in ${root}; directories outside the five-package ` +
+        "matrix cannot produce a boundary verdict, so this is not a pass",
     );
   }
 
@@ -203,8 +228,9 @@ export function resolvePathSpecifier(root, fromDir, specifier) {
     }
 
     // Canonicalize before attributing: a symlink must not make an internal
-    // package look like a local file (nor the other way round).
-    const real = toPosix(realpathSync(candidate));
+    // package look like a local file (nor the other way round), and native
+    // realpath restores the on-disk case of a case-insensitive file system.
+    const real = toPosix(realpathSync.native(candidate));
 
     if (!isInside(root, real)) {
       return { status: "outside" };
@@ -247,6 +273,10 @@ function candidatePaths(base) {
  * Package name for one resolved path, or null when the path is inside the root
  * but outside the five matrix packages.
  *
+ * The returned name is always the normalized (lower-case) package name, even
+ * when the path uses different casing, which Windows accepts for the same
+ * directory.
+ *
  * @param {string} root Absolute posix scan root.
  * @param {string} absolute Absolute posix path.
  * @returns {string | null}
@@ -254,11 +284,17 @@ function candidatePaths(base) {
 export function packageOfPath(root, absolute) {
   const segments = splitRepoRelative(root, absolute);
 
-  if (segments === null || segments.length < 2 || !WORKSPACE_ROOTS.has(segments[0])) {
+  if (segments === null || segments.length < 2) {
     return null;
   }
 
-  return WORKSPACE_PACKAGES.has(segments[1]) ? segments[1] : null;
+  const rootDir = normalizedWorkspaceRoot(segments[0]);
+
+  if (rootDir === null) {
+    return null;
+  }
+
+  return normalizedPackageName(segments[1]);
 }
 
 /**
@@ -272,11 +308,13 @@ export function packageOfPath(root, absolute) {
 export function workspaceRootOfPath(root, absolute) {
   const segments = splitRepoRelative(root, absolute);
 
-  if (segments === null || segments.length < 2 || !WORKSPACE_ROOTS.has(segments[0])) {
+  if (segments === null || segments.length < 2) {
     return null;
   }
 
-  return `${segments[0]}/${segments[1]}`;
+  const rootDir = normalizedWorkspaceRoot(segments[0]);
+
+  return rootDir === null ? null : `${rootDir}/${segments[1]}`;
 }
 
 /**
@@ -358,7 +396,72 @@ export function describePath(root, absolute) {
  * @returns {boolean}
  */
 function isInside(root, target) {
-  return target === root || target.startsWith(`${root}/`);
+  const foldedRoot = foldPath(root);
+  const foldedTarget = foldPath(target);
+
+  return foldedTarget === foldedRoot || foldedTarget.startsWith(`${foldedRoot}/`);
+}
+
+/**
+ * Fold one path for comparison when the file system is case-insensitive.
+ * On POSIX the value is returned unchanged, so `Core` and `core` stay distinct.
+ *
+ * @param {string} value Absolute posix path.
+ * @returns {string}
+ */
+function foldPath(value) {
+  return CASE_INSENSITIVE_PATHS ? value.toLowerCase() : value;
+}
+
+/**
+ * Canonical workspace package name for one directory segment.
+ *
+ * @param {string} segment One repo-relative path segment.
+ * @returns {string | null} The normalized package name, or null when the
+ *   segment names no matrix package.
+ */
+function normalizedPackageName(segment) {
+  return normalizedName(WORKSPACE_PACKAGES, segment);
+}
+
+/**
+ * Canonical workspace root name (`packages` or `apps`) for one directory
+ * segment.
+ *
+ * @param {string} segment One repo-relative path segment.
+ * @returns {string | null}
+ */
+function normalizedWorkspaceRoot(segment) {
+  return normalizedName(WORKSPACE_ROOTS, segment);
+}
+
+/**
+ * Match one directory segment against a set of canonical names. Exact match
+ * first; on a case-insensitive file system a case-insensitive match is accepted
+ * and the canonical name is returned, never the caller's spelling.
+ *
+ * @param {Set<string>} names Canonical names.
+ * @param {string} segment One directory segment.
+ * @returns {string | null}
+ */
+function normalizedName(names, segment) {
+  if (names.has(segment)) {
+    return segment;
+  }
+
+  if (!CASE_INSENSITIVE_PATHS) {
+    return null;
+  }
+
+  const folded = segment.toLowerCase();
+
+  for (const name of names) {
+    if (name.toLowerCase() === folded) {
+      return name;
+    }
+  }
+
+  return null;
 }
 
 /**

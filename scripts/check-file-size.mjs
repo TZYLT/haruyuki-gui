@@ -8,7 +8,12 @@
  *
  * Scope
  *   Directories: packages, apps, scripts.
- *   Extensions:  .ts .tsx .mts .cts .js .mjs .cjs
+ *   Root level:  the source files directly in the repository root, one level deep
+ *                (for example eslint.config.mjs, vitest.config.mts). The 1000 line
+ *                limit applies to every unregistered file, and a
+ *                root-level config is a source file like any other. Generated files
+ *                below the root level are not hand-written source and are skipped.
+ *   Extensions:  .ts .tsx .mts .cts .js .mjs .cjs .jsx
  *   Skipped dirs (any depth): node_modules, dist, out, build, coverage, fixtures,
  *   _research, docs. `fixtures` is skipped because the gate self-tests there
  *   deliberately create oversized files.
@@ -65,8 +70,14 @@ const EXCLUDED_DIRS = new Set([
   "docs",
 ]);
 
-/** File extensions that count as source. */
-const SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".mts", ".cts", ".js", ".mjs", ".cjs"]);
+/** File extensions that count as source. Kept identical to the other gates. */
+const SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".mts", ".cts", ".js", ".mjs", ".cjs", ".jsx"]);
+
+/**
+ * Name fragments that mark a root-level source file as generated build output.
+ * Generated files are not hand-written, so the 1000 line rule does not apply.
+ */
+const GENERATED_FILE_MARKERS = [".generated."];
 
 /** Repo-relative path of the ratchet baseline. */
 const BASELINE_PATH = "scripts/source-file-size-baseline.json";
@@ -187,16 +198,49 @@ function scanSourceFiles(root) {
     walk(directory, root, files);
   }
 
+  scanRootFiles(root, files);
+
   files.sort();
 
   if (files.length === 0) {
     throw new Error(
-      `no source files found under ${SCAN_DIRS.join(", ")} in ${root}; ` +
+      `no source files found under ${SCAN_DIRS.join(", ")} or at the root of ${root}; ` +
         "refusing to report PASS without inspecting anything",
     );
   }
 
   return files;
+}
+
+/**
+ * Collect the source files that sit directly in the repository root.
+ *
+ * Only regular files are considered: subdirectories are covered by SCAN_DIRS, and
+ * directories outside that set (fixtures, docs, _research, node_modules) stay out
+ * of scope. Generated files below the root level are skipped.
+ *
+ * @param {string} root Absolute posix scan root.
+ * @param {string[]} files Accumulator.
+ * @returns {void}
+ */
+function scanRootFiles(root, files) {
+  for (const entry of readdirSync(root, { withFileTypes: true })) {
+    if (!entry.isFile() || entry.isSymbolicLink()) {
+      continue;
+    }
+
+    const lowered = entry.name.toLowerCase();
+
+    if (!SOURCE_EXTENSIONS.has(path.posix.extname(lowered))) {
+      continue;
+    }
+
+    if (GENERATED_FILE_MARKERS.some((marker) => lowered.includes(marker))) {
+      continue;
+    }
+
+    files.push(toPosix(entry.name));
+  }
 }
 
 /**

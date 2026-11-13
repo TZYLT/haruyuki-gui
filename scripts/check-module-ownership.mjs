@@ -17,6 +17,14 @@
  *      relative import such as ../../core/src/engine/x.ts is caught exactly like
  *      @haruyuki/core/src/engine/x.ts. An edge whose importer also lives inside the
  *      same domain is always allowed, so a domain never has to allow-list itself.
+ *      A rule in a non-empty rule set that matches no imported file at all is a
+ *      configuration failure (exit 2), not a pass: a trailing slash or a renamed
+ *      directory would otherwise disable the boundary silently.
+ *
+ *      Resolved paths are canonical (realpath relative to the canonical root, see
+ *      ./lib/module-ownership-sources.mjs) and globs are matched case-insensitively
+ *      by folding both sides to lower case. A case variant of a protected directory
+ *      on Windows, or a junction that aliases it, therefore cannot bypass a rule.
  *
  *   B. barrel
  *      A pure forwarding module is a violation unless `barrels.allow` matches its
@@ -49,14 +57,15 @@
  *
  * Scope
  *   Directories: packages, apps, scripts.
- *   Extensions:  .ts .tsx .mts .cts .js .mjs .cjs. Declaration files are scanned for
- *   ownership edges but excluded from check B.
+ *   Extensions:  .ts .tsx .mts .cts .js .mjs .cjs .jsx. Declaration files are scanned
+ *   for ownership edges but excluded from check B.
  *   Skipped dirs (any depth): node_modules, dist, out, build, coverage, fixtures,
  *   _research, docs. Symbolic links are skipped.
  *
  * Failure policy (exit 2, never a pass)
  *   Missing, unreadable or malformed config, unknown config keys, a bad --root, zero
- *   source files, or a workspace package.json that does not parse.
+ *   source files, a workspace package.json that does not parse, or a `modules[]` rule
+ *   in a non-empty rule set that matched no imported file.
  *
  * Output
  *   One violation per line: <file>:<line> <rule> <message>. Paths are posix and every
@@ -175,14 +184,14 @@ function collectViolations({ root, flags }) {
       repoEdges += 1;
 
       for (const [index, rule] of config.modules.entries()) {
-        if (!rule.pathRegExp.test(resolution.file)) {
+        if (!rule.pathRegExp.test(foldPath(resolution.file))) {
           continue;
         }
 
         matchedByRule[index] += 1;
 
         // Inside the same domain is the normal case and needs no allow entry.
-        if (rule.pathRegExp.test(file) || matchesAny(rule.importerGlobs, file)) {
+        if (rule.pathRegExp.test(foldPath(file)) || matchesAny(rule.importerGlobs, file)) {
           continue;
         }
 
@@ -239,6 +248,20 @@ function collectViolations({ root, flags }) {
         `${unresolved.length} in-repo import(s) do not resolve to a repository path: ${shown}${more}; ` +
         "an unresolved import makes this gate blind, so fix the specifier or declare the dependency",
     });
+  }
+
+  // A rule in a non-empty rule set that matched nothing is a typo (a trailing
+  // slash, a renamed directory), not protection. Failing here is the only way to
+  // keep the boundary from silently protecting nothing.
+  const unmatchedRules = config.modules.filter((_, index) => matchedByRule[index] === 0);
+
+  if (unmatchedRules.length > 0) {
+    const listed = unmatchedRules.map((rule) => `"${rule.path}"`).join(", ");
+
+    throw new Error(
+      `${CONFIG_PATH}: modules[].path ${listed} matched no imported file under ${root}; ` +
+        "a rule that protects nothing is a configuration error, not a pass",
+    );
   }
 
   return violations;
@@ -410,18 +433,23 @@ function readPattern(value, where) {
  * (any run across segments) and "**\/" (zero or more leading segments, so "**\/*.ts"
  * also matches a file at the repository root).
  *
+ * The pattern is folded to lower case here and candidates are folded with
+ * foldPath(), so matching is case-insensitive on every platform: the repository
+ * lives on Windows, where "ENGINE" and "engine" are the same directory.
+ *
  * @param {string} pattern
  * @returns {RegExp}
  */
 function compileGlob(pattern) {
+  const folded = pattern.toLowerCase();
   let source = "";
 
-  for (let index = 0; index < pattern.length; index += 1) {
-    const char = pattern[index];
+  for (let index = 0; index < folded.length; index += 1) {
+    const char = folded[index];
 
     if (char === "*") {
-      if (pattern[index + 1] === "*") {
-        if (pattern[index + 2] === "/") {
+      if (folded[index + 1] === "*") {
+        if (folded[index + 2] === "/") {
           source += "(?:[^/]+/)*";
           index += 2;
         } else {
@@ -530,7 +558,23 @@ function isConfigActive(config) {
  * @returns {boolean}
  */
 function matchesAny(globs, file) {
-  return globs.some((glob) => glob.regexp.test(file));
+  const folded = foldPath(file);
+
+  return globs.some((glob) => glob.regexp.test(folded));
+}
+
+/**
+ * Fold a repo-relative path for glob comparison only.
+ *
+ * Windows file systems are case-insensitive, so "ENGINE" and "engine" denote the
+ * same directory there. Folding both the compiled glob and the candidate keeps a
+ * rule from being bypassed by a case variant. Never use the folded form in output.
+ *
+ * @param {string} value
+ * @returns {string}
+ */
+function foldPath(value) {
+  return toPosix(value).toLowerCase();
 }
 
 /**

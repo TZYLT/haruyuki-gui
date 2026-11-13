@@ -235,3 +235,104 @@ describe("check-file-size: --write-baseline never registers a new file", () => {
     expect(written).toEqual({ "packages/core/src/big.ts": 1001 });
   });
 });
+
+describe("check-file-size: root-level source files are in scope (P2-05)", () => {
+  it("fails a root-level source file with 1001 lines", () => {
+    const root = makeTree({ "eslint.config.mjs": sourceLines(1001) });
+    const run = runFileSizeGate(root);
+
+    expect(run.status, run.output).toBe(1);
+    expect(run.output).toContain("eslint.config.mjs");
+    expect(run.output).toContain("1001 lines exceeds the 1000 line limit");
+  });
+
+  it("passes a root-level source file with exactly 1000 lines", () => {
+    const root = makeTree({ "vitest.config.mts": sourceLines(1000) });
+    const run = runFileSizeGate(root);
+
+    expect(run.status, run.output).toBe(0);
+    expect(run.output).toContain("PASS");
+  });
+
+  it("still refuses to pass when the tree contains no source file at all", () => {
+    const root = makeTree({ "README.md": "not source\n" });
+    const run = runFileSizeGate(root);
+
+    expect(run.status, run.output).toBe(2);
+    expect(run.output).toContain("refusing to report PASS");
+  });
+});
+
+describe("check-file-size: line counting edge cases (P2-07)", () => {
+  it("fails 1001 lines without a trailing newline", () => {
+    const content = `${sourceLines(1000)}export const value = 1;`;
+    const root = makeTree({ "packages/core/src/big.ts": content });
+    const run = runFileSizeGate(root);
+
+    expect(run.status, run.output).toBe(1);
+    expect(run.output).toContain("1001 lines exceeds the 1000 line limit");
+  });
+
+  it("fails 1001 CRLF lines", () => {
+    const root = makeTree({
+      "packages/core/src/big.ts": "export const value = 1;\r\n".repeat(1001),
+    });
+    const run = runFileSizeGate(root);
+
+    expect(run.status, run.output).toBe(1);
+    expect(run.output).toContain("1001 lines exceeds the 1000 line limit");
+  });
+
+  it("passes 1000 CRLF lines", () => {
+    const root = makeTree({
+      "packages/core/src/exact.ts": "export const value = 1;\r\n".repeat(1000),
+    });
+    const run = runFileSizeGate(root);
+
+    expect(run.status, run.output).toBe(0);
+    expect(run.output).toContain("PASS");
+  });
+
+  it("passes 1000 lines behind a byte order mark", () => {
+    const root = makeTree({ "packages/core/src/exact.ts": `\uFEFF${sourceLines(1000)}` });
+    const run = runFileSizeGate(root);
+
+    expect(run.status, run.output).toBe(0);
+    expect(run.output).toContain("PASS");
+  });
+
+  it("fails 1001 lines behind a byte order mark", () => {
+    const root = makeTree({ "packages/core/src/big.ts": `\uFEFF${sourceLines(1001)}` });
+    const run = runFileSizeGate(root);
+
+    expect(run.status, run.output).toBe(1);
+    expect(run.output).toContain("1001 lines exceeds the 1000 line limit");
+  });
+
+  it("counts .jsx source files like any other source file", () => {
+    const root = makeTree({
+      "packages/ui/src/big.jsx": "export const view = <div />;\n".repeat(1001),
+    });
+    const run = runFileSizeGate(root);
+
+    expect(run.status, run.output).toBe(1);
+    expect(run.output).toContain("packages/ui/src/big.jsx");
+  });
+});
+
+describe("check-file-size: --write-baseline is all-or-nothing (P2-07)", () => {
+  it("leaves every existing baseline byte untouched when it refuses a new file", () => {
+    const rawBaseline = '{"packages/core/src/big.ts": 1200}';
+    const root = makeTree({
+      "packages/core/src/big.ts": sourceLines(1200),
+      "packages/core/src/new.ts": sourceLines(1001),
+      [BASELINE]: rawBaseline,
+    });
+    const before = readFileSync(path.join(root, BASELINE), "utf8");
+    const run = runFileSizeGate(root, ["--write-baseline"]);
+
+    expect(run.status, run.output).toBe(1);
+    expect(run.output).toContain("is not pinned yet");
+    expect(readFileSync(path.join(root, BASELINE), "utf8")).toBe(before);
+  });
+});

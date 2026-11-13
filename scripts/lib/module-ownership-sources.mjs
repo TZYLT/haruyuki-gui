@@ -23,10 +23,14 @@
  *             a bare name that is neither workspace, builtin nor installed) is
  *             unresolved.
  *   Probing order for a relative specifier: the exact path, the path plus
- *   .ts/.tsx/.mts/.cts/.js/.mjs/.cjs, then the same extensions on <path>/index. A
- *   ".js"/".mjs"/".cjs" specifier also probes its TypeScript counterpart because ESM
- *   TypeScript writes "./x.js" for "./x.ts". An existing file with any other
+ *   .ts/.tsx/.mts/.cts/.js/.mjs/.cjs/.jsx, then the same extensions on <path>/index.
+ *   A ".js"/".mjs"/".cjs" specifier also probes its TypeScript counterpart because
+ *   ESM TypeScript writes "./x.js" for "./x.ts". An existing file with any other
  *   extension (an asset import) counts as resolved.
+ *   A resolved path is CANONICAL: it is run through `realpathSync.native` and made
+ *   relative to the canonical root, so a Windows case variant or a junction cannot
+ *   smuggle an edge past the ownership policy. Ownership matching therefore stays
+ *   on a single spelling of each path.
  *   Not modelled: path aliases other than workspace package names (a tsconfig "@/*"
  *   alias) and subpath imports ("#internal"). Such a bare name becomes unresolved
  *   rather than ignored, so introducing one later fails loudly.
@@ -36,20 +40,43 @@
  *   statement is a forwarding export, an import or an empty statement. So any local
  *   declaration, any executable statement, `export {a}` without `from`, `export
  *   default`, `export =` and `export {}` all disqualify the file, and
- *   `export * from "./a"; export const own = 1;` is not a barrel. Declaration files
- *   (*.d.ts / *.d.mts / *.d.cts) are excluded by isDeclarationFile().
+ *   `export * from "./a"; export const own = 1;` is not a barrel. An
+ *   `import x = require("y")` declaration is an import form, not a local
+ *   declaration, so it does not by itself make a forwarding module a barrel.
+ *   Declaration files (*.d.ts / *.d.mts / *.d.cts) are excluded by
+ *   isDeclarationFile().
  */
 
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 
 import ts from "typescript";
 
-/** Extensions that count as source. */
-export const SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".mts", ".cts", ".js", ".mjs", ".cjs"]);
+import { toPosix } from "./gate-cli.mjs";
+
+/** Extensions that count as source. Kept identical to the other gates. */
+export const SOURCE_EXTENSIONS = new Set([
+  ".ts",
+  ".tsx",
+  ".mts",
+  ".cts",
+  ".js",
+  ".mjs",
+  ".cjs",
+  ".jsx",
+]);
 
 /** Extensions probed when a specifier omits one, in resolution order. */
-export const PROBE_EXTENSIONS = [".ts", ".tsx", ".mts", ".cts", ".js", ".mjs", ".cjs"];
+export const PROBE_EXTENSIONS = [".ts", ".tsx", ".mts", ".cts", ".js", ".mjs", ".cjs", ".jsx"];
+
+/**
+ * Cache of scan root -> canonical (realpath) posix form. A repository can be
+ * reached through more than one absolute spelling (drive letter case, junction),
+ * so the root is canonicalized once per run and reused for every resolved edge.
+ *
+ * @type {Map<string, string>}
+ */
+const canonicalRoots = new Map();
 
 /** Suffixes that mark a declaration file. */
 const DECLARATION_SUFFIXES = [".d.ts", ".d.mts", ".d.cts"];
@@ -118,6 +145,8 @@ export function parseSource(file, text) {
 
   if (lowered.endsWith(".tsx")) {
     scriptKind = ts.ScriptKind.TSX;
+  } else if (lowered.endsWith(".jsx")) {
+    scriptKind = ts.ScriptKind.JSX;
   } else if (lowered.endsWith(".ts") || lowered.endsWith(".mts") || lowered.endsWith(".cts")) {
     scriptKind = ts.ScriptKind.TS;
   }
@@ -143,7 +172,10 @@ export function analyzeSource(sourceFile) {
       continue;
     }
 
-    if (ts.isImportDeclaration(statement)) {
+    if (ts.isImportDeclaration(statement) || ts.isImportEqualsDeclaration(statement)) {
+      // `import x = require("y")` is an import form, not a local declaration:
+      // treating it as one would let `import x = require("./b"); export * from
+      // "./a";` pass the barrel check while still hiding ownership.
       continue;
     }
 
@@ -164,7 +196,7 @@ export function analyzeSource(sourceFile) {
     }
 
     // Everything else (declarations, `export =`, `export default`, executable
-    // statements, `import =` declarations) proves the module has a body.
+    // statements) proves the module has a body.
     hasLocalDeclaration = true;
   }
 
@@ -327,6 +359,11 @@ export function isDeclarationFile(file) {
 /**
  * Probe a repo-relative base path for the file it denotes.
  *
+ * A hit is returned in canonical form (real path relative to the canonical root),
+ * never in the spelling derived from the specifier. That is what closes the
+ * Windows case-variant and junction bypasses: matching always sees the one real
+ * location of the file.
+ *
  * @param {string} root Absolute posix scan root.
  * @param {string} base Repo-relative posix path, already normalized.
  * @returns {string | undefined}
@@ -337,8 +374,10 @@ function probeFile(root, base) {
   }
 
   // Exact match first: it covers explicit extensions and non-source assets.
-  if (isFile(path.posix.join(root, base))) {
-    return base;
+  const exact = canonicalFile(root, base);
+
+  if (exact !== undefined) {
+    return exact;
   }
 
   const extension = path.posix.extname(base).toLowerCase();
@@ -356,8 +395,10 @@ function probeFile(root, base) {
             : [];
 
     for (const counterpart of counterparts) {
-      if (isFile(path.posix.join(root, `${stem}${counterpart}`))) {
-        return `${stem}${counterpart}`;
+      const match = canonicalFile(root, `${stem}${counterpart}`);
+
+      if (match !== undefined) {
+        return match;
       }
     }
 
@@ -365,18 +406,83 @@ function probeFile(root, base) {
   }
 
   for (const candidateExtension of PROBE_EXTENSIONS) {
-    if (isFile(path.posix.join(root, `${base}${candidateExtension}`))) {
-      return `${base}${candidateExtension}`;
+    const match = canonicalFile(root, `${base}${candidateExtension}`);
+
+    if (match !== undefined) {
+      return match;
     }
   }
 
   for (const candidateExtension of PROBE_EXTENSIONS) {
-    if (isFile(path.posix.join(root, `${base}/index${candidateExtension}`))) {
-      return `${base}/index${candidateExtension}`;
+    const match = canonicalFile(root, `${base}/index${candidateExtension}`);
+
+    if (match !== undefined) {
+      return match;
     }
   }
 
   return undefined;
+}
+
+/**
+ * Canonical repo-relative posix path of an existing file below the root.
+ *
+ * @param {string} root Absolute posix scan root.
+ * @param {string} base Repo-relative posix path.
+ * @returns {string | undefined} Undefined when there is no file, or when its real
+ *   location escapes the scanned root.
+ */
+function canonicalFile(root, base) {
+  const absolute = path.posix.join(root, base);
+
+  if (!isFile(absolute)) {
+    return undefined;
+  }
+
+  let real;
+
+  try {
+    real = toPosix(realpathSync.native(absolute));
+  } catch {
+    // The file exists (checked above) but cannot be canonicalized: refuse to
+    // guess a path, so the caller reports the edge as unresolved (exit 2 path).
+    return undefined;
+  }
+
+  const relative = toPosix(path.posix.relative(canonicalRoot(root), real));
+
+  if (
+    relative === "" ||
+    relative === ".." ||
+    relative.startsWith("../") ||
+    path.posix.isAbsolute(relative)
+  ) {
+    return undefined;
+  }
+
+  return relative;
+}
+
+/**
+ * Real (canonical) posix form of a scan root, computed once per run.
+ *
+ * @param {string} root Absolute posix scan root.
+ * @returns {string}
+ */
+function canonicalRoot(root) {
+  let canonical = canonicalRoots.get(root);
+
+  if (canonical === undefined) {
+    try {
+      canonical = toPosix(realpathSync.native(root));
+    } catch {
+      canonical = toPosix(root);
+    }
+
+    canonicalRoots.set(root, canonical);
+  }
+
+  return canonical;
 }
 
 /**

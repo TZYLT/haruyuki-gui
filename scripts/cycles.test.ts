@@ -53,4 +53,39 @@ describe("check-cycles (A-9)", () => {
       "packages/core/src/a.ts -> packages/core/src/b.ts -> packages/core/src/a.ts",
     );
   });
+
+  it("fails a cycle made of .tsx modules", () => {
+    const run = runCyclesGate("red-tsx-cycle");
+
+    expect(run.status, run.output).toBe(1);
+    expect(run.output).toMatch(/ circular /);
+    expect(run.output).toContain(
+      "packages/core/src/a.tsx -> packages/core/src/b.tsx -> packages/core/src/a.tsx",
+    );
+  });
+
+  it("passes a tree whose only source files are .tsx", () => {
+    const run = runCyclesGate("clean-tsx");
+
+    expect(run.status, run.output).toBe(0);
+    expect(run.output).toContain("PASS");
+    expect(run.output).not.toMatch(/ circular /);
+  });
+});
+
+describe("check-cycles: a broken graph is exit 2, never PASS", () => {
+  it("reports the file:line of a source file that does not parse", () => {
+    const run = runCyclesGate("red-syntax-error");
+
+    expect(run.status, run.output).toBe(2);
+    expect(run.output).toContain("packages/core/src/broken.ts:1");
+    expect(run.output).toContain("cannot parse");
+  });
+
+  it("reports an in-repo import that does not resolve", () => {
+    const run = runCyclesGate("red-unresolved");
+
+    expect(run.status, run.output).toBe(2);
+    expect(run.output).toContain('"./missing"');
+  });
 });

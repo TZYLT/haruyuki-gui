@@ -1,0 +1,14 @@
+{
+  "modules": [
+    {
+      "path": "packages/core/src/engine/**",
+      "allowedImporters": [
+        "packages/core/src/entry.ts"
+      ]
+    }
+  ],
+  "barrels": {
+    "forbid": true,
+    "allow": []
+  }
+}

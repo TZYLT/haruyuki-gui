@@ -35,7 +35,11 @@
  *   - ExportDeclaration (`export { x } from`, `export * from`, `export * as ns`)
  *   - ImportEqualsDeclaration (`import x = require("...")`)
  *   - CallExpression `require("...")` with one string-literal-like argument
+ *   - `createRequire(<anything>)("<literal>")` and
+ *     `module.require("<literal>")`, with a string-literal-like argument
  *   - dynamic `import("...")`
+ *   - ImportTypeNode: `import("<literal>").T` and `typeof import("<literal>")`
+ *     in a type position. Always type-only (see below).
  *
  * Type-only detection
  *   The import clause is type-only (`import type X from`, phaseModifier
@@ -44,20 +48,40 @@
  *   uses `isTypeOnly` plus, for named re-exports, "every specifier is
  *   type-only". A side-effect import (`import "..."`) and an empty named clause
  *   (`import {} from "..."`) are value imports: they execute the module.
+ *   An ImportTypeNode exists only in a type position, so it is always
+ *   type-only: the type-allowed edges (ui -> protocol/core) accept it, and the
+ *   type-forbidding edges (R1/R8-R11) still reject it, exactly like
+ *   `import type`. ESLint's `no-restricted-imports` visits import/export
+ *   declarations only (plus `allowTypeImports`, which is why `import type` is
+ *   accepted on the type-allowed edges there); it does not visit TypeScript
+ *   type-position `import()`, `require`, `createRequire`, `module.require` or a
+ *   non-literal dynamic import. Those forms are this script's responsibility.
  *
  * Resolution and attribution
  *   See scripts/lib/boundaries-resolve.mjs for the full contract. In short: a
  *   path specifier is resolved against the importing file's directory (exact
  *   path, path plus each source extension, path plus `/index.<ext>`, and a
  *   TypeScript rewrite of an explicit JS extension), canonicalized with
- *   realpath, and attributed to `packages/<name>` or `apps/<name>`. Bare
- *   `@haruyuki/<name>` specifiers map by name, deep paths included. `electron`,
- *   `vscode`, `node:*`, bare Node builtins and every other bare name are
- *   external dependencies: never matrix edges, only inputs for R2-R5 and R12.
- *   R12 is the shell-to-shell host-API rule: apps/desktop must not import the
- *   VSCode host API `vscode`, and apps/vscode must not import the Electron host
- *   API `electron` or `electron/*`. Internal packages stay matrix edges, so
- *   `@haruyuki/vscode` is R8/R9 material, never R12 material.
+ *   `realpathSync.native` (which also restores the on-disk case), and
+ *   attributed to `packages/<name>` or `apps/<name>`. On Windows the
+ *   attribution is case-insensitive, so `../../Core/src/index.ts` still counts
+ *   as `core`; POSIX stays case-sensitive. Bare `@haruyuki/<name>` specifiers
+ *   map by name, deep paths included. `electron`, `vscode`, `node:*`, bare Node
+ *   builtins and every other bare name are external dependencies: never matrix
+ *   edges, only inputs for R2-R5 and R12. R12 is the shell-to-shell host-API
+ *   rule: apps/desktop must not import the VSCode host API `vscode`, and
+ *   apps/vscode must not import the Electron host API `electron` or
+ *   `electron/*`. Internal packages stay matrix edges, so `@haruyuki/vscode`
+ *   is R8/R9 material, never R12 material.
+ *
+ * `file:` URLs
+ *   A `file:` specifier is a path specifier in disguise: it is converted with
+ *   `fileURLToPath` and then resolved, attributed and judged like any other
+ *   path. A `file:` URL that cannot be converted (malformed percent-encoding,
+ *   a relative path) and one that names no existing file are `unresolved`,
+ *   never an external dependency, so the import cannot slip past the matrix.
+ *   A `file:` URL that provably points outside the root stays external, the
+ *   same as an absolute path outside the root.
  *
  * Unresolved specifiers
  *   A path specifier that resolves to no file inside the root is a violation
@@ -76,12 +100,21 @@
  *
  * Fail-closed policy
  *   - Zero scanned modules: exit 2, never PASS.
- *   - No package directory under `packages`/`apps`: exit 2.
+ *   - No workspace package directory under `packages`/`apps`, or only
+ *     directories that name none of the five matrix packages (for example
+ *     `packages/tooling` alone): exit 2. An empty shell has nothing to judge.
  *   - A source file that does not parse: exit 2. TypeScript would recover most
  *     imports, but "could not inspect the file" must never look like "clean".
  *   - A restricted matrix edge without a rule id (or the reverse): exit 2.
  *   - A bad `--root`: exit 2 (resolveRoot in scripts/lib/gate-cli.mjs).
  *   - Any other internal error: exit 2 (runGate maps throws to exit 2).
+ *
+ * Self-tests
+ *   `MATRIX`, `RULE_BY_EDGE` and `assertMatrixIsConsistent()` are exported so
+ *   scripts/boundaries-matrix.test.ts can prove the matrix/rule cross-check
+ *   rejects drift. The `runGate()` call is guarded by an entry-point check, so
+ *   importing this module has no side effects (same pattern as
+ *   scripts/check-contract.mjs).
  *
  * Scope
  *   Directories: packages, apps, scripts.
@@ -99,8 +132,9 @@
  * Exit codes: 0 = pass, 1 = violation, 2 = the script or its configuration is broken.
  */
 
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import ts from "typescript";
 
@@ -129,7 +163,7 @@ import { runGate } from "./lib/gate-cli.mjs";
  * The diagonal (a package importing itself) is intentionally absent: it is
  * always allowed.
  */
-const MATRIX = {
+export const MATRIX = {
   protocol: { core: "forbid", ui: "forbid", desktop: "forbid", vscode: "forbid" },
   core: { protocol: "allow", ui: "forbid", desktop: "forbid", vscode: "forbid" },
   ui: { protocol: "type", core: "type", desktop: "forbid", vscode: "forbid" },
@@ -141,7 +175,7 @@ const MATRIX = {
  * Rule id per restricted matrix edge. Exactly one entry per `forbid`/`type`
  * cell of MATRIX; `assertMatrixIsConsistent()` enforces both directions.
  */
-const RULE_BY_EDGE = new Map([
+export const RULE_BY_EDGE = new Map([
   ["protocol->core", { rule: "R1", permission: "forbid" }],
   ["protocol->ui", { rule: "R1", permission: "forbid" }],
   ["protocol->desktop", { rule: "R1", permission: "forbid" }],
@@ -222,7 +256,44 @@ const FOREIGN_HOST_API_BY_SHELL = new Map([
   ["vscode", "electron"],
 ]);
 
-await runGate(collectViolations, { flags: ["verbose"] });
+/**
+ * Whether this module is the process entry point. Importing the module from a
+ * self-test must not run the gate, so `runGate()` only runs when node was
+ * started with this file.
+ */
+const ENTRY_POINT = isEntryPoint(process.argv[1]);
+
+if (ENTRY_POINT) {
+  await runGate(collectViolations, { flags: ["verbose"] });
+}
+
+/**
+ * Entry-point test for the CLI guard. Both paths are canonicalized with
+ * `realpathSync.native` first, so a symlinked/junctioned checkout, a differently
+ * cased drive letter or a relative `argv[1]` still identifies the entry point.
+ * A guard that wrongly says "false" would silently skip the gate, so the
+ * canonical comparison is the safe direction. Importing the module is still
+ * side-effect free because a failed canonicalization returns false.
+ *
+ * @param {string | undefined} argvPath `process.argv[1]`.
+ * @returns {boolean}
+ */
+function isEntryPoint(argvPath) {
+  if (argvPath === undefined) {
+    return false;
+  }
+
+  try {
+    const self = realpathSync.native(fileURLToPath(import.meta.url));
+    const entry = realpathSync.native(path.resolve(argvPath));
+
+    return process.platform === "win32"
+      ? entry.toLowerCase() === self.toLowerCase()
+      : entry === self;
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Gate body.
@@ -317,12 +388,26 @@ function collectViolations({ root, flags }) {
 function checkSpecifier({ scanRoot, file, sourcePackage, stats, sourceLine, specifier, typeOnly }) {
   const violation = (rule, message) => [{ file, line: sourceLine, rule, message }];
 
-  // 1. Path specifiers: resolved against the importing file's directory.
-  if (isPathSpecifier(specifier)) {
+  // 1. Path specifiers, including `file:` URLs, are resolved against the
+  //    importing file's directory.
+  const pathForm = pathFormOf(specifier);
+
+  if (pathForm.kind === "file-url-error") {
+    stats.unresolved += 1;
+
+    return violation(
+      "unresolved",
+      `specifier "${specifier}" is a file: URL that cannot be converted to a path ` +
+        `(${pathForm.message}); an unreadable specifier silently disables the boundary ` +
+        "check, so fix the URL or delete the import",
+    );
+  }
+
+  if (pathForm.kind === "path") {
     const resolution = resolvePathSpecifier(
       scanRoot,
       path.dirname(path.resolve(scanRoot, file)),
-      specifier,
+      pathForm.value,
     );
 
     if (resolution.status === "outside") {
@@ -529,13 +614,26 @@ function nodeBuiltinViolation(sourcePackage, specifier) {
  * a rule id (or a rule for a cell that no longer exists) fails loudly instead
  * of leaving the edge silently unchecked.
  *
+ * The three tables default to this module's authoritative ones; they are
+ * parameters so scripts/boundaries-matrix.test.ts can prove the guard rejects a
+ * drifted matrix without touching production state.
+ *
+ * @param {Record<string, Record<string, string>>} [matrix] Permission matrix.
+ * @param {Map<string, { rule: string, permission: string }>} [ruleByEdge] Rule id
+ *   per restricted edge.
+ * @param {Map<string, (from: string, to: string) => string>} [ruleMessages] Message
+ *   factory per rule id.
  * @returns {void}
  */
-function assertMatrixIsConsistent() {
+export function assertMatrixIsConsistent(
+  matrix = MATRIX,
+  ruleByEdge = RULE_BY_EDGE,
+  ruleMessages = RULE_MESSAGES,
+) {
   /** @type {Array<{ key: string, permission: string }>} */
   const restricted = [];
 
-  for (const [from, row] of Object.entries(MATRIX)) {
+  for (const [from, row] of Object.entries(matrix)) {
     for (const [to, permission] of Object.entries(row)) {
       if (from === to || permission === "allow") {
         continue;
@@ -545,15 +643,15 @@ function assertMatrixIsConsistent() {
     }
   }
 
-  if (restricted.length !== RULE_BY_EDGE.size) {
+  if (restricted.length !== ruleByEdge.size) {
     throw new Error(
       `matrix has ${restricted.length} restricted edge(s) but RULE_BY_EDGE has ` +
-        `${RULE_BY_EDGE.size}; the matrix and the rule table must describe the same cells`,
+        `${ruleByEdge.size}; the matrix and the rule table must describe the same cells`,
     );
   }
 
   for (const cell of restricted) {
-    const edge = RULE_BY_EDGE.get(cell.key);
+    const edge = ruleByEdge.get(cell.key);
 
     if (edge === undefined) {
       throw new Error(`matrix edge ${cell.key} is "${cell.permission}" but has no rule id`);
@@ -566,12 +664,12 @@ function assertMatrixIsConsistent() {
       );
     }
 
-    if (!RULE_MESSAGES.has(edge.rule)) {
+    if (!ruleMessages.has(edge.rule)) {
       throw new Error(`rule ${edge.rule} for matrix edge ${cell.key} has no message`);
     }
   }
 
-  for (const key of RULE_BY_EDGE.keys()) {
+  for (const key of ruleByEdge.keys()) {
     if (!restricted.some((cell) => cell.key === key)) {
       throw new Error(`rule table entry ${key} has no restricted matrix cell`);
     }
@@ -618,57 +716,46 @@ function collectSpecifiers(sourceFile) {
   /** @type {Array<{ text: string, position: number, typeOnly: boolean }>} */
   const found = [];
 
+  /**
+   * @param {import("typescript").Node} node A string-literal-like node.
+   * @param {boolean} typeOnly
+   * @returns {void}
+   */
+  const record = (node, typeOnly) => {
+    const literal = /** @type {import("typescript").StringLiteralLike} */ (node);
+
+    found.push({ text: literal.text, position: literal.getStart(sourceFile), typeOnly });
+  };
+
   /** @param {import("typescript").Node} node */
   const visit = (node) => {
     if (ts.isImportDeclaration(node) && ts.isStringLiteralLike(node.moduleSpecifier)) {
-      const specifier = node.moduleSpecifier;
-
-      found.push({
-        text: specifier.text,
-        position: specifier.getStart(sourceFile),
-        typeOnly: isTypeOnlyImportClause(node.importClause),
-      });
+      record(node.moduleSpecifier, isTypeOnlyImportClause(node.importClause));
     } else if (
       ts.isExportDeclaration(node) &&
       node.moduleSpecifier !== undefined &&
       ts.isStringLiteralLike(node.moduleSpecifier)
     ) {
-      const specifier = node.moduleSpecifier;
-
-      found.push({
-        text: specifier.text,
-        position: specifier.getStart(sourceFile),
-        typeOnly: isTypeOnlyExportDeclaration(node),
-      });
+      record(node.moduleSpecifier, isTypeOnlyExportDeclaration(node));
     } else if (
       ts.isImportEqualsDeclaration(node) &&
       ts.isExternalModuleReference(node.moduleReference) &&
       node.moduleReference.expression !== undefined &&
       ts.isStringLiteralLike(node.moduleReference.expression)
     ) {
-      const specifier = node.moduleReference.expression;
-
-      found.push({
-        text: specifier.text,
-        position: specifier.getStart(sourceFile),
-        typeOnly: node.isTypeOnly === true,
-      });
+      record(node.moduleReference.expression, node.isTypeOnly === true);
     } else if (ts.isCallExpression(node) && isRequireCall(node)) {
-      const argument = /** @type {import("typescript").StringLiteralLike} */ (node.arguments[0]);
-
-      found.push({
-        text: argument.text,
-        position: argument.getStart(sourceFile),
-        typeOnly: false,
-      });
+      record(node.arguments[0], false);
+    } else if (ts.isCallExpression(node) && isModuleRequireCall(node)) {
+      record(node.arguments[0], false);
+    } else if (ts.isCallExpression(node) && isCreateRequireResultCall(node)) {
+      record(node.arguments[0], false);
     } else if (ts.isCallExpression(node) && isDynamicImportCall(node)) {
-      const argument = /** @type {import("typescript").StringLiteralLike} */ (node.arguments[0]);
-
-      found.push({
-        text: argument.text,
-        position: argument.getStart(sourceFile),
-        typeOnly: false,
-      });
+      record(node.arguments[0], false);
+    } else if (ts.isImportTypeNode(node) && isLiteralImportTypeNode(node)) {
+      // A type position exists only in type space, so every ImportTypeNode is
+      // type-only: accepted on the type-allowed edges, rejected on R1/R8-R11.
+      record(/** @type {import("typescript").LiteralTypeNode} */ (node.argument).literal, true);
     }
 
     ts.forEachChild(node, visit);
@@ -756,6 +843,100 @@ function isDynamicImportCall(node) {
     node.arguments.length === 1 &&
     ts.isStringLiteralLike(node.arguments[0])
   );
+}
+
+/**
+ * `module.require("m")` with a static string argument. A non-literal argument
+ * cannot be decided statically and is not collected (documented blind spot, the
+ * same one `require(variable)` has).
+ *
+ * @param {import("typescript").CallExpression} node
+ * @returns {boolean}
+ */
+function isModuleRequireCall(node) {
+  return (
+    ts.isPropertyAccessExpression(node.expression) &&
+    node.expression.name.text === "require" &&
+    ts.isIdentifier(node.expression.expression) &&
+    node.expression.expression.text === "module" &&
+    node.arguments.length === 1 &&
+    ts.isStringLiteralLike(node.arguments[0])
+  );
+}
+
+/**
+ * `createRequire(<anything>)("<literal>")` with a static string argument.
+ *
+ * The `createRequire(...)` call itself is not a dependency (its argument is
+ * usually `import.meta.url`); the module load is the *returned* function call,
+ * which this test recognizes. Both the bare `createRequire` and a
+ * `<namespace>.createRequire` callee are accepted.
+ *
+ * @param {import("typescript").CallExpression} node
+ * @returns {boolean}
+ */
+function isCreateRequireResultCall(node) {
+  if (node.arguments.length !== 1 || !ts.isStringLiteralLike(node.arguments[0])) {
+    return false;
+  }
+
+  if (!ts.isCallExpression(node.expression)) {
+    return false;
+  }
+
+  const factory = node.expression.expression;
+
+  if (ts.isIdentifier(factory)) {
+    return factory.text === "createRequire";
+  }
+
+  return ts.isPropertyAccessExpression(factory) && factory.name.text === "createRequire";
+}
+
+/**
+ * `import("<literal>")` in a type position, including `typeof import("...")`.
+ *
+ * @param {import("typescript").ImportTypeNode} node
+ * @returns {boolean}
+ */
+function isLiteralImportTypeNode(node) {
+  return ts.isLiteralTypeNode(node.argument) && ts.isStringLiteralLike(node.argument.literal);
+}
+
+/**
+ * The path form of one specifier: a path specifier as written, a `file:` URL
+ * converted with `fileURLToPath`, or none for a bare/external specifier.
+ *
+ * @param {string} specifier
+ * @returns {{ kind: "path", value: string } | { kind: "none" } | { kind: "file-url-error", message: string }}
+ */
+function pathFormOf(specifier) {
+  if (isPathSpecifier(specifier)) {
+    return { kind: "path", value: specifier };
+  }
+
+  if (!isFileUrlSpecifier(specifier)) {
+    return { kind: "none" };
+  }
+
+  try {
+    return { kind: "path", value: fileURLToPath(specifier) };
+  } catch (error) {
+    return {
+      kind: "file-url-error",
+      message: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+/**
+ * `file:` URL test. URL schemes are case-insensitive, so `FILE:` counts too.
+ *
+ * @param {string} specifier
+ * @returns {boolean}
+ */
+function isFileUrlSpecifier(specifier) {
+  return specifier.slice(0, 5).toLowerCase() === "file:";
 }
 
 /**
