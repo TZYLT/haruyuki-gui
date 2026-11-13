@@ -141,7 +141,7 @@ describe("EngineSpawnSpec", () => {
   const spec = {
     exePath: "C:\\Program Files\\nodejs\\node.exe",
     env: { HARUYUKI_HOME: "C:\\tmp\\isolate", USERPROFILE: "C:\\tmp\\isolate" },
-    argvPrefix: ["--require", "C:\\repo\\packages\\core\\src\\runtime\\watchdog.cjs"],
+    argvPrefix: ["server", "--listen", "ws://127.0.0.1:0"],
     bundlePath: "C:\\repo\\_research\\engine-0.6.0\\package\\haruyuki.js",
     cwd: "C:\\tmp\\isolate",
     stdio: "pipe",

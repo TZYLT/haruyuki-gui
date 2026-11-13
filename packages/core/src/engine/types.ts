@@ -92,10 +92,11 @@ export type AppServerInfo = {
  * Everything the host knows about how to start the engine, resolved by the host
  * port before the facade spawns anything.
  *
- * `exePath` + `argvPrefix` describe the interpreter invocation (`node
- * <bundlePath>` in the headless today, a bundled binary later), `bundlePath` is
- * the engine entry point itself, and `env` is the complete environment the child
- * receives - callers must not merge it with `process.env` afterwards.
+ * The child argv is `<exePath> <bundlePath> <argvPrefix...>`: `exePath` is the
+ * interpreter (`node` in the headless today, a bundled binary later),
+ * `bundlePath` is the engine entry point, and `argvPrefix` holds the engine's
+ * own arguments (`server --listen ...`). `env` is the complete environment the
+ * child receives - callers must not merge it with `process.env` afterwards.
  * `cwd` is where the engine writes its `.haruyuki` state, so it must point at an
  * isolated directory. `stdio` is pinned to `"pipe"` because the port discovery
  * reads stdout and the watchdog needs a live stdin. `detached` and

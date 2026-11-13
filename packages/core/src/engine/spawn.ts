@@ -63,16 +63,17 @@ const inFlightStops = new WeakMap<ChildProcess, Promise<void>>();
 /**
  * Start the engine child described by `spec` and return it immediately.
  *
- * This is a thin, platform-free `spawn` wrapper: `argvPrefix` precedes
- * `bundlePath`, `env` is passed through verbatim (the spec already contains the
- * complete environment, callers must not merge `process.env` afterwards), and
- * stdio stays piped so the port discovery layer can read stdout and the
+ * This is a thin, platform-free `spawn` wrapper: the child runs as
+ * `<exePath> <bundlePath> <argvPrefix...>` (`node haruyuki.js server ...` in the
+ * headless today), `env` is passed through verbatim (the spec already contains
+ * the complete environment, callers must not merge `process.env` afterwards),
+ * and stdio stays piped so the port discovery layer can read stdout and the
  * watchdog keeps a live stdin. The promise of readiness is deliberately absent:
  * the caller waits for the port line or for `onProcessError`, never for this
  * call.
  */
 export function startEngineProcess(spec: EngineSpawnSpec): ChildProcess {
-  const child = spawn(spec.exePath, [...spec.argvPrefix, spec.bundlePath], {
+  const child = spawn(spec.exePath, [spec.bundlePath, ...spec.argvPrefix], {
     env: spec.env,
     cwd: spec.cwd,
     stdio: spec.stdio,

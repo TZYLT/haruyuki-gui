@@ -13,3 +13,6 @@ export * from "./spawn";
 export * from "./token";
 export * from "./port-discovery";
 export * from "./connection";
+export * from "./engine";
+export * from "./errors";
+export * from "./attach";

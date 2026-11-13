@@ -252,15 +252,18 @@ function environment(): Record<string, string> {
 }
 
 /**
- * Fake-engine spec: `node -e <source>`. `argvPrefix` + `bundlePath` is exactly
- * the argv tail that startEngineProcess builds, so the seam under test is real.
+ * Fake-engine spec: `node -e <source>`. The child argv is
+ * `<bundlePath> <argvPrefix...>`, so `bundlePath = "-e"` plus
+ * `argvPrefix = [source]` yields exactly the tail startEngineProcess builds;
+ * the seam under test is real even though `-e` is an interpreter flag rather
+ * than a file.
  */
 function engineSpec(source: string): EngineSpawnSpec {
   return {
     exePath: process.execPath,
     env: environment(),
-    argvPrefix: ["-e"],
-    bundlePath: source,
+    argvPrefix: [source],
+    bundlePath: "-e",
     cwd: process.cwd(),
     stdio: "pipe",
     windowsHide: true,
