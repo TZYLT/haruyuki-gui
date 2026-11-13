@@ -39,11 +39,16 @@ const USAGE = `Usage:
 Exit codes: 0 pass, 1 violation, 2 broken input / not implemented.
 This skeleton only parses arguments; every subcommand is not implemented yet.`;
 
+import { readFileSync, writeFileSync } from "node:fs";
+
+import { runDiff as runDiffCommand } from "./diff.mjs";
+import { generateMap } from "./map.mjs";
 import { buildSnapshot, writeSnapshot } from "./snapshot.mjs";
 
 /** Default artifacts, relative to the process working directory (the repo root). */
 const DEFAULT_CAPABILITIES = "packages/protocol/src/contract/capabilities.json";
 const DEFAULT_SNAPSHOT = "packages/protocol/src/contract/snapshot.json";
+const DEFAULT_GENERATED = "packages/protocol/src/contract/command-map.generated.ts";
 
 /** Subcommand owner map, used by the TODO notice. */
 const OWNERS = Object.freeze({
@@ -265,7 +270,7 @@ function runCheck(args) {
  * @param {string[]} args
  */
 function runDiff(args) {
-  const parsed = parseArguments(args, []);
+  const parsed = parseArguments(args, ["--out"]);
   const errors = [...parsed.errors];
 
   if (parsed.positionals.length < 1) {
@@ -282,7 +287,16 @@ function runDiff(args) {
     return;
   }
 
-  notImplemented("diff");
+  const out = parsed.options.get("--out") ?? null;
+  const { lines } = runDiffCommand({
+    a: parsed.positionals[0],
+    b: parsed.positionals[1],
+    out,
+  });
+
+  if (out === null) {
+    process.stdout.write(lines.join("\n") + "\n");
+  }
 }
 
 /**
@@ -291,7 +305,7 @@ function runDiff(args) {
  * @param {string[]} args
  */
 function runGenerate(args) {
-  const parsed = parseArguments(args, []);
+  const parsed = parseArguments(args, ["--out"]);
 
   if (parsed.errors.length > 0 || parsed.positionals.length > 0) {
     const errors = [...parsed.errors];
@@ -305,7 +319,30 @@ function runGenerate(args) {
     return;
   }
 
-  notImplemented("generate");
+  const snapshot = JSON.parse(readFileSync(DEFAULT_SNAPSHOT, "utf8"));
+  const capabilities = JSON.parse(readFileSync(DEFAULT_CAPABILITIES, "utf8"));
+  const result = generateMap({ snapshot, capabilities });
+
+  if (result.code !== 0) {
+    for (const violation of result.violations) {
+      if (violation.severity !== "error") continue;
+
+      process.stderr.write(
+        `${violation.file ?? DEFAULT_GENERATED}:${violation.line ?? 0} ` +
+          `${violation.rule} ${violation.message}\n`,
+      );
+    }
+
+    process.stderr.write("contract generate: capability table is invalid; nothing written\n");
+    process.exitCode = 2;
+
+    return;
+  }
+
+  const outPath = parsed.options.get("--out") ?? DEFAULT_GENERATED;
+
+  writeFileSync(outPath, result.text, "utf8");
+  process.stdout.write(`generated ${outPath}\n`);
 }
 
 /**
