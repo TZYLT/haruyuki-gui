@@ -25,6 +25,12 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["scripts/**/*.test.ts", "packages/**/*.test.ts", "packages/**/*.test.tsx"],
+    // Renderer tests need an explicit cleanup hook: @testing-library/react only
+    // auto-cleans when a global `afterEach` exists, and this config deliberately
+    // leaves `globals` off. Without this file the DOM accumulates between tests
+    // and a second query for the same test id fails. The gate tests under
+    // `scripts/**` never import a DOM, so the file is inert for them.
+    setupFiles: ["packages/ui/src/test-setup.ts"],
     exclude: [
       "**/node_modules/**",
       "**/dist/**",
