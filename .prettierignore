@@ -9,6 +9,11 @@ _research/
 # them would destroy the very thing the gate asserts.
 fixtures/
 
+# Generated contract snapshot: one command/message per line is deliberate (a
+# pretty-printed copy would exceed the 2000-line file rule and make every wire
+# change a multi-line diff). The byte layout is the artifact, not a style choice.
+packages/protocol/src/contract/snapshot.json
+
 coverage/
 dist/
 out/

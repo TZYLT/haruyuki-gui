@@ -1,0 +1,617 @@
+{
+  "schemaVersion": 1,
+  "capabilities": [
+    {
+      "name": "agent.create",
+      "wire": "agent_create",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire agent_create forwards a generic create body to the agents API; this is the canonical resource create"
+    },
+    {
+      "name": "agent.createPreset",
+      "wire": "create_agent",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire create_agent builds an agent from a built-in personality preset (memo/tutorial/blank/linus/kawaii); kept separate from agent.create until the T-6 merge is measured"
+    },
+    {
+      "name": "agent.delete",
+      "wire": "agent_delete",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire agent_delete deletes one agent by agent_id; the wire carries no runtime scope"
+    },
+    {
+      "name": "agent.get",
+      "wire": "agent_retrieve",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire agent_retrieve reads one agent by agent_id; the wire carries no runtime scope"
+    },
+    {
+      "name": "agent.list",
+      "wire": "agent_list",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire agent_list queries the agent registry and is callable before any runtime starts"
+    },
+    {
+      "name": "agent.secretApply",
+      "wire": "secret_apply",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire secret_apply patches one agent's secrets as a single atomic batch of set and unset keys; the response returns sorted key names only, never values"
+    },
+    {
+      "name": "agent.secretList",
+      "wire": "secret_list",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire secret_list refreshes the agent secrets cache and returns plaintext key and value pairs for the settings modal; secrets are agent resources, so the agent domain owns them"
+    },
+    {
+      "name": "agent.update",
+      "wire": "agent_update",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire agent_update patches one agent through a forwarded update body; no runtime scope on the wire"
+    },
+    {
+      "name": "compaction.cancel",
+      "wire": "compaction_cancel",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire compaction_cancel drops one pending compaction preview by prepare_id; cancelled=false means the id was unknown, expired or already consumed"
+    },
+    {
+      "name": "compaction.commit",
+      "wire": "compaction_commit",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire compaction_commit lands one prepared compaction by prepare_id; block_index is 1-based over topic_report.blocks and a restart makes commit answer prepare_expired"
+    },
+    {
+      "name": "compaction.prepare",
+      "wire": "compaction_prepare",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire compaction_prepare returns a prepare_id plus the topic report that feeds the cut-point picker; the preview lives in listener memory only"
+    },
+    {
+      "name": "conversation.create",
+      "wire": "conversation_create",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire conversation_create creates a conversation from a create body; no runtime scope on the wire"
+    },
+    {
+      "name": "conversation.delete",
+      "wire": "conversation_delete",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire conversation_delete deletes a hidden conversation by conversation_id; no runtime scope on the wire"
+    },
+    {
+      "name": "conversation.fork",
+      "wire": "conversation_fork",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire conversation_fork forks one conversation and returns the child id in the response; no runtime scope on the wire"
+    },
+    {
+      "name": "conversation.get",
+      "wire": "conversation_retrieve",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire conversation_retrieve reads one conversation by conversation_id; no runtime scope on the wire"
+    },
+    {
+      "name": "conversation.list",
+      "wire": "conversation_list",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire conversation_list lists conversation rows for the sidebar before runtime_start; no runtime scope on the wire"
+    },
+    {
+      "name": "conversation.recompile",
+      "wire": "conversation_recompile",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire conversation_recompile applies pending model or toolset changes to one conversation; no runtime scope on the wire"
+    },
+    {
+      "name": "conversation.switch",
+      "wire": "runtime_start",
+      "since": "0.6.0",
+      "scope": "conversation",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire id is runtime_start; the UI semantic is switching or starting a conversation runtime"
+    },
+    {
+      "name": "conversation.sync",
+      "wire": "sync",
+      "since": "0.6.0",
+      "scope": "conversation",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire sync replays runtime state; sync_response returns only when request_id is set and the replay itself arrives as state frames"
+    },
+    {
+      "name": "conversation.update",
+      "wire": "conversation_update",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire conversation_update patches one conversation through a forwarded update body; no runtime scope on the wire"
+    },
+    {
+      "name": "device.info",
+      "wire": "app_server_info",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire app_server_info is the post-auth handshake carrying backend, engine version, protocol version and capability flags"
+    },
+    {
+      "name": "device.setState",
+      "wire": "change_device_state",
+      "since": "0.6.0",
+      "scope": "conversation",
+      "shape": "one-way",
+      "detail": true,
+      "notes": "wire change_device_state sets permission mode, cwd and the bound agent/conversation for one runtime scope; there is no response and the result arrives as update_device_status"
+    },
+    {
+      "name": "file.edit",
+      "wire": "edit_file",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire edit_file replaces an exact old string with a new string in one file"
+    },
+    {
+      "name": "file.ops",
+      "wire": "file_ops",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "bidirectional",
+      "legacy": true,
+      "notes": "wire file_ops carries Egwalker CRDT ops in both directions for collaborative editing; legacy, no helper is built"
+    },
+    {
+      "name": "file.read",
+      "wire": "read_file",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire read_file reads one file as utf8 text or base64 bytes"
+    },
+    {
+      "name": "file.unwatch",
+      "wire": "unwatch_file",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "one-way",
+      "detail": true,
+      "notes": "wire unwatch_file stops the single-file watcher; there is no response and changes are observed as file_changed events"
+    },
+    {
+      "name": "file.watch",
+      "wire": "watch_file",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "one-way",
+      "detail": true,
+      "notes": "wire watch_file starts a single-file watcher; there is no response, failures are silent and changes arrive as file_changed events"
+    },
+    {
+      "name": "file.write",
+      "wire": "write_file",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire write_file writes full file content to one absolute path"
+    },
+    {
+      "name": "git.checkoutBranch",
+      "wire": "checkout_branch",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire checkout_branch switches the working directory to one branch and can create it; cwd falls back to the conversation cwd"
+    },
+    {
+      "name": "git.searchBranches",
+      "wire": "search_branches",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire search_branches substring-filters local and remote branch names for the branch picker; an empty query returns all branches"
+    },
+    {
+      "name": "memory.commitDiff",
+      "wire": "memory_commit_diff",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire memory_commit_diff returns the file-level patch of one memory commit by sha; a single-file diff is composed from this plus memory.fileAtRef"
+    },
+    {
+      "name": "memory.deleteFile",
+      "wire": "delete_memory_file",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire delete_memory_file removes one path from the agent memory worktree and commits the deletion; it is idempotent and reports success without a commit when the file is already absent"
+    },
+    {
+      "name": "memory.enable",
+      "wire": "enable_memfs",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire enable_memfs turns the MemFS store on for one agent and returns its memory directory; it also pushes memory_updated so the file list refreshes"
+    },
+    {
+      "name": "memory.fileAtRef",
+      "wire": "memory_file_at_ref",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire memory_file_at_ref reads one memory file as it existed at a git ref; paired with memory.commitDiff it yields a single-file diff"
+    },
+    {
+      "name": "memory.history",
+      "wire": "memory_history",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire memory_history lists memory commits, optionally narrowed to one relative file path and capped by limit (default 50)"
+    },
+    {
+      "name": "memory.list",
+      "wire": "list_memory",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire list_memory streams memory file entries in list_memory_response chunks flagged by done and total, and reports memfs_enabled"
+    },
+    {
+      "name": "memory.readFile",
+      "wire": "read_memory_file",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire read_memory_file reads one file from the agent memory worktree as utf8 text or base64 bytes; the path is relative to the memory root"
+    },
+    {
+      "name": "memory.writeFile",
+      "wire": "write_memory_file",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire write_memory_file writes one memory file and commits it; paths that escape the memory root are rejected"
+    },
+    {
+      "name": "message.abort",
+      "wire": "abort_message",
+      "since": "0.6.0",
+      "scope": "conversation",
+      "shape": "one-way",
+      "detail": true,
+      "notes": "wire abort_message interrupts the active turn; abort_message_response is optional and the authoritative result arrives as state frames"
+    },
+    {
+      "name": "message.list",
+      "wire": "conversation_messages_list",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire conversation_messages_list pages the messages of one conversation; named under the message domain because it lists messages and turns, not conversation metadata"
+    },
+    {
+      "name": "message.send",
+      "wire": "input",
+      "since": "0.6.0",
+      "scope": "conversation",
+      "shape": "one-way",
+      "detail": true,
+      "notes": "only input_accepted comes back; the result is observed through stream_delta and status frames"
+    },
+    {
+      "name": "model.list",
+      "wire": "list_models",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire list_models reads the model catalog plus the handles available to this account; force skips the listener cache"
+    },
+    {
+      "name": "model.update",
+      "wire": "update_model",
+      "since": "0.6.0",
+      "scope": "conversation",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire update_model sets the model and reasoning effort of one conversation and reports applied_to as agent or conversation"
+    },
+    {
+      "name": "provider.connect",
+      "wire": "connect_provider",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire connect_provider stores credentials or OAuth config for one provider in the local provider store and returns the refreshed provider list"
+    },
+    {
+      "name": "provider.disconnect",
+      "wire": "disconnect_provider",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire disconnect_provider removes one provider entry, or one alias when provider_name is given, from the local provider store"
+    },
+    {
+      "name": "provider.listConnected",
+      "wire": "list_connect_providers",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire list_connect_providers lists the providers configured in the local store with their auth methods and model handles"
+    },
+    {
+      "name": "queue.remove",
+      "wire": "remove_queue_item",
+      "since": "0.6.0",
+      "scope": "agent",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire remove_queue_item removes one parked queue item without stopping the active turn"
+    },
+    {
+      "name": "queue.resume",
+      "wire": "resume_queue",
+      "since": "0.6.0",
+      "scope": "conversation",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire resume_queue releases queue items parked by an interrupt; unlike remove_queue_item its wire carries a ConversationRuntimeScope"
+    },
+    {
+      "name": "queue.stopMonitor",
+      "wire": "monitor_stop",
+      "since": "0.6.0",
+      "scope": "agent",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire monitor_stop kills a running background monitor process owned by one runtime scope; grouped with the queue domain as background task control"
+    },
+    {
+      "name": "settings.getExperiments",
+      "wire": "get_experiments",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire get_experiments reads the feature-flag snapshot; the command carries no runtime scope because experiments are device-wide"
+    },
+    {
+      "name": "settings.getReflection",
+      "wire": "get_reflection_settings",
+      "since": "0.6.0",
+      "scope": "agent",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire get_reflection_settings reads reflection settings inside one agent runtime scope"
+    },
+    {
+      "name": "settings.setExperiment",
+      "wire": "set_experiment",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire set_experiment flips one experiment id on or off; the command carries no runtime scope because experiments are device-wide"
+    },
+    {
+      "name": "settings.setReflection",
+      "wire": "set_reflection_settings",
+      "since": "0.6.0",
+      "scope": "agent",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire set_reflection_settings writes reflection trigger settings inside one agent runtime scope; omitted fields keep their current values"
+    },
+    {
+      "name": "slash.exec",
+      "wire": "execute_command",
+      "since": "0.6.0",
+      "scope": "agent",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire execute_command runs a slash command; the 14 slash ids are arguments tracked in the watch list, not separate capabilities, and the output is a single string"
+    },
+    {
+      "name": "subagent.launch",
+      "wire": "launch_subagent",
+      "since": "0.6.0",
+      "scope": "agent",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire launch_subagent starts a child agent from the parent runtime scope and returns the task id and output file"
+    },
+    {
+      "name": "terminal.input",
+      "wire": "terminal_input",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "one-way",
+      "detail": true,
+      "notes": "wire terminal_input writes raw data into one PTY; output is observed as terminal_output frames"
+    },
+    {
+      "name": "terminal.kill",
+      "wire": "terminal_kill",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "one-way",
+      "detail": true,
+      "notes": "wire terminal_kill terminates one PTY; the exit is observed as a terminal_exited frame"
+    },
+    {
+      "name": "terminal.resize",
+      "wire": "terminal_resize",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "one-way",
+      "detail": true,
+      "notes": "wire terminal_resize updates PTY columns and rows; there is no response"
+    },
+    {
+      "name": "terminal.spawn",
+      "wire": "terminal_spawn",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "one-way",
+      "detail": true,
+      "notes": "wire terminal_spawn opens a PTY for a client-supplied terminal_id; readiness and output arrive as terminal_spawned and terminal_output frames"
+    },
+    {
+      "name": "toolset.update",
+      "wire": "update_toolset",
+      "since": "0.6.0",
+      "scope": "conversation",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire update_toolset sets the toolset preference (auto, default, codex, gemini) for one conversation runtime"
+    },
+    {
+      "name": "usage.aggregate",
+      "wire": "usage_aggregate",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire usage_aggregate reads ledger totals and per-run buckets for one agent, optionally narrowed by run, session or time bounds"
+    },
+    {
+      "name": "usage.chatgpt",
+      "wire": "chatgpt_usage_read",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire chatgpt_usage_read reads ChatGPT plan usage for a connected provider from the local or api store; it is a usage read, not a provider write"
+    },
+    {
+      "name": "workspace.cwdMap",
+      "wire": "get_cwd_map",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire get_cwd_map reads persisted per-conversation cwd overrides plus the boot working directory"
+    },
+    {
+      "name": "workspace.grep",
+      "wire": "grep_in_files",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire grep_in_files returns line-level content matches with snippet context, not a file list"
+    },
+    {
+      "name": "workspace.list",
+      "wire": "list_in_directory",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire list_in_directory pages folders and files for one absolute directory path"
+    },
+    {
+      "name": "workspace.search",
+      "wire": "search_files",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire search_files matches file paths under a root; content search is workspace.grep"
+    },
+    {
+      "name": "workspace.setBootCwd",
+      "wire": "set_boot_working_directory",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire set_boot_working_directory sets the boot cwd used by conversations without an override"
+    },
+    {
+      "name": "workspace.tree",
+      "wire": "get_tree",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire get_tree returns a depth-bounded subtree rooted at one absolute path"
+    }
+  ]
+}

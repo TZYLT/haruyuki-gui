@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "engine": {
+    "version": "0.6.0",
+    "commit": "1641a4f"
+  },
+  "commands": [
+    {
+      "wire": "agent_list",
+      "fieldLevel": true
+    },
+    {
+      "wire": "file_ops",
+      "fieldLevel": false
+    },
+    {
+      "wire": "queue_resume",
+      "fieldLevel": true
+    }
+  ],
+  "health": {
+    "degraded": false,
+    "coarse": [],
+    "unparsed": []
+  }
+}
