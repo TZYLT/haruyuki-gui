@@ -2,6 +2,114 @@
   "schemaVersion": 1,
   "capabilities": [
     {
+      "name": "agent.create",
+      "wire": "agent_create",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire agent_create forwards a generic create body to the agents API; this is the canonical resource create"
+    },
+    {
+      "name": "agent.createPreset",
+      "wire": "create_agent",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire create_agent builds an agent from a built-in personality preset (memo/tutorial/blank/linus/kawaii); kept separate from agent.create until the T-6 merge is measured"
+    },
+    {
+      "name": "agent.delete",
+      "wire": "agent_delete",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire agent_delete deletes one agent by agent_id; the wire carries no runtime scope"
+    },
+    {
+      "name": "agent.get",
+      "wire": "agent_retrieve",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire agent_retrieve reads one agent by agent_id; the wire carries no runtime scope"
+    },
+    {
+      "name": "agent.list",
+      "wire": "agent_list",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire agent_list queries the agent registry and is callable before any runtime starts"
+    },
+    {
+      "name": "agent.update",
+      "wire": "agent_update",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire agent_update patches one agent through a forwarded update body; no runtime scope on the wire"
+    },
+    {
+      "name": "conversation.create",
+      "wire": "conversation_create",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire conversation_create creates a conversation from a create body; no runtime scope on the wire"
+    },
+    {
+      "name": "conversation.delete",
+      "wire": "conversation_delete",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire conversation_delete deletes a hidden conversation by conversation_id; no runtime scope on the wire"
+    },
+    {
+      "name": "conversation.fork",
+      "wire": "conversation_fork",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire conversation_fork forks one conversation and returns the child id in the response; no runtime scope on the wire"
+    },
+    {
+      "name": "conversation.get",
+      "wire": "conversation_retrieve",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire conversation_retrieve reads one conversation by conversation_id; no runtime scope on the wire"
+    },
+    {
+      "name": "conversation.list",
+      "wire": "conversation_list",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire conversation_list lists conversation rows for the sidebar before runtime_start; no runtime scope on the wire"
+    },
+    {
+      "name": "conversation.recompile",
+      "wire": "conversation_recompile",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire conversation_recompile applies pending model or toolset changes to one conversation; no runtime scope on the wire"
+    },
+    {
       "name": "conversation.switch",
       "wire": "runtime_start",
       "since": "0.6.0",
@@ -11,6 +119,114 @@
       "notes": "wire id is runtime_start; the UI semantic is switching or starting a conversation runtime"
     },
     {
+      "name": "conversation.sync",
+      "wire": "sync",
+      "since": "0.6.0",
+      "scope": "conversation",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire sync replays runtime state; sync_response returns only when request_id is set and the replay itself arrives as state frames"
+    },
+    {
+      "name": "conversation.update",
+      "wire": "conversation_update",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire conversation_update patches one conversation through a forwarded update body; no runtime scope on the wire"
+    },
+    {
+      "name": "device.info",
+      "wire": "app_server_info",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire app_server_info is the post-auth handshake carrying backend, engine version, protocol version and capability flags"
+    },
+    {
+      "name": "device.setState",
+      "wire": "change_device_state",
+      "since": "0.6.0",
+      "scope": "conversation",
+      "shape": "one-way",
+      "detail": true,
+      "notes": "wire change_device_state sets permission mode, cwd and the bound agent/conversation for one runtime scope; there is no response and the result arrives as update_device_status"
+    },
+    {
+      "name": "file.edit",
+      "wire": "edit_file",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire edit_file replaces an exact old string with a new string in one file"
+    },
+    {
+      "name": "file.ops",
+      "wire": "file_ops",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "bidirectional",
+      "legacy": true,
+      "notes": "wire file_ops carries Egwalker CRDT ops in both directions for collaborative editing; legacy, no helper is built"
+    },
+    {
+      "name": "file.read",
+      "wire": "read_file",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire read_file reads one file as utf8 text or base64 bytes"
+    },
+    {
+      "name": "file.unwatch",
+      "wire": "unwatch_file",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "one-way",
+      "detail": true,
+      "notes": "wire unwatch_file stops the single-file watcher; there is no response and changes are observed as file_changed events"
+    },
+    {
+      "name": "file.watch",
+      "wire": "watch_file",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "one-way",
+      "detail": true,
+      "notes": "wire watch_file starts a single-file watcher; there is no response, failures are silent and changes arrive as file_changed events"
+    },
+    {
+      "name": "file.write",
+      "wire": "write_file",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire write_file writes full file content to one absolute path"
+    },
+    {
+      "name": "message.abort",
+      "wire": "abort_message",
+      "since": "0.6.0",
+      "scope": "conversation",
+      "shape": "one-way",
+      "detail": true,
+      "notes": "wire abort_message interrupts the active turn; abort_message_response is optional and the authoritative result arrives as state frames"
+    },
+    {
+      "name": "message.list",
+      "wire": "conversation_messages_list",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire conversation_messages_list pages the messages of one conversation; named under the message domain because it lists messages and turns, not conversation metadata"
+    },
+    {
       "name": "message.send",
       "wire": "input",
       "since": "0.6.0",
@@ -18,6 +234,132 @@
       "shape": "one-way",
       "detail": true,
       "notes": "only input_accepted comes back; the result is observed through stream_delta and status frames"
+    },
+    {
+      "name": "queue.remove",
+      "wire": "remove_queue_item",
+      "since": "0.6.0",
+      "scope": "agent",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire remove_queue_item removes one parked queue item without stopping the active turn"
+    },
+    {
+      "name": "queue.resume",
+      "wire": "resume_queue",
+      "since": "0.6.0",
+      "scope": "conversation",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire resume_queue releases queue items parked by an interrupt; unlike remove_queue_item its wire carries a ConversationRuntimeScope"
+    },
+    {
+      "name": "queue.stopMonitor",
+      "wire": "monitor_stop",
+      "since": "0.6.0",
+      "scope": "agent",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire monitor_stop kills a running background monitor process owned by one runtime scope; grouped with the queue domain as background task control"
+    },
+    {
+      "name": "slash.exec",
+      "wire": "execute_command",
+      "since": "0.6.0",
+      "scope": "agent",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire execute_command runs a slash command; the 14 slash ids are arguments tracked in the watch list, not separate capabilities, and the output is a single string"
+    },
+    {
+      "name": "terminal.input",
+      "wire": "terminal_input",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "one-way",
+      "detail": true,
+      "notes": "wire terminal_input writes raw data into one PTY; output is observed as terminal_output frames"
+    },
+    {
+      "name": "terminal.kill",
+      "wire": "terminal_kill",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "one-way",
+      "detail": true,
+      "notes": "wire terminal_kill terminates one PTY; the exit is observed as a terminal_exited frame"
+    },
+    {
+      "name": "terminal.resize",
+      "wire": "terminal_resize",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "one-way",
+      "detail": true,
+      "notes": "wire terminal_resize updates PTY columns and rows; there is no response"
+    },
+    {
+      "name": "terminal.spawn",
+      "wire": "terminal_spawn",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "one-way",
+      "detail": true,
+      "notes": "wire terminal_spawn opens a PTY for a client-supplied terminal_id; readiness and output arrive as terminal_spawned and terminal_output frames"
+    },
+    {
+      "name": "workspace.cwdMap",
+      "wire": "get_cwd_map",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire get_cwd_map reads persisted per-conversation cwd overrides plus the boot working directory"
+    },
+    {
+      "name": "workspace.grep",
+      "wire": "grep_in_files",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire grep_in_files returns line-level content matches with snippet context, not a file list"
+    },
+    {
+      "name": "workspace.list",
+      "wire": "list_in_directory",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire list_in_directory pages folders and files for one absolute directory path"
+    },
+    {
+      "name": "workspace.search",
+      "wire": "search_files",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire search_files matches file paths under a root; content search is workspace.grep"
+    },
+    {
+      "name": "workspace.setBootCwd",
+      "wire": "set_boot_working_directory",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire set_boot_working_directory sets the boot cwd used by conversations without an override"
+    },
+    {
+      "name": "workspace.tree",
+      "wire": "get_tree",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire get_tree returns a depth-bounded subtree rooted at one absolute path"
     }
   ]
 }
