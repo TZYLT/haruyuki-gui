@@ -9,3 +9,6 @@
  * `packages/core/src/port`.
  */
 export * from "./types";
+export * from "./spawn";
+export * from "./token";
+export * from "./port-discovery";
