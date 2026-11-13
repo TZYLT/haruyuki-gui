@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "capabilities": [
+    {
+      "name": "conversation.switch",
+      "wire": "runtime_start",
+      "since": "0.6.0",
+      "scope": "conversation",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "wire id is runtime_start; the UI semantic is switching or starting a conversation runtime"
+    },
+    {
+      "name": "message.send",
+      "wire": "input",
+      "since": "0.6.0",
+      "scope": "conversation",
+      "shape": "one-way",
+      "detail": true,
+      "notes": "only input_accepted comes back; the result is observed through stream_delta and status frames"
+    }
+  ]
+}
