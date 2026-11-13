@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "capabilities": [
+    {
+      "name": "agent.list",
+      "wire": "agent_list",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "mini fixture: field-level wire"
+    },
+    {
+      "name": "agent.ghost",
+      "wire": "agent_ghost",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "request-response"
+    }
+  ]
+}

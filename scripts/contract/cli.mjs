@@ -2,11 +2,9 @@
 /**
  * cli.mjs - thin dispatcher for the contract pipeline.
  *
- * This file owns argument parsing and the three-value exit code only. Every
- * subcommand body is a TODO owned by a later work package, so today each one
- * throws `NotImplementedError` and exits 2. Nothing here reads `snapshot.json`,
- * the engine source or `capabilities.json`; the extractors stay in their own
- * modules (the capability table...the wiring) and are wired in at the wave boundary by the Lead.
+ * This file owns argument parsing, the three-value exit code and the wiring
+ * between the extractors. The extractors themselves stay in their own modules;
+ * only the dispatcher lives here.
  *
  * Usage (frozen by route doc 08 section 3.4b):
  *   node scripts/contract/cli.mjs update   --engine <dir> [--out <file>]
@@ -16,16 +14,15 @@
  *
  * Exit codes (the gate-cli three-value contract):
  *   0 = the operation passed (help is also 0)
- *   1 = the operation found a violation (never produced by the type skeleton)
- *   2 = broken input, bad argument, I/O error or "not implemented yet"
+ *   1 = the operation found a violation
+ *   2 = broken input, bad argument or I/O error
  *
  * Usage details:
  *   - `--help` / `-h` prints usage on stdout and exits 0.
  *   - No subcommand, or an unknown one, prints usage on stderr and exits 2.
  *   - Flags accept `--name value` and `--name=value`.
  *   - A missing required flag, an unknown flag or a wrong positional count is a
- *     usage error (exit 2), reported before the "not implemented" notice, so a
- *     caller can already pin the argument surface.
+ *     usage error (exit 2).
  *   - `diff` accepts one or two snapshots. One means "compare with the snapshot
  *     committed in this repo", which is why it is not a required positional.
  */
@@ -36,41 +33,26 @@ const USAGE = `Usage:
   node scripts/contract/cli.mjs diff     <a.json> [b.json]
   node scripts/contract/cli.mjs generate
 
-Exit codes: 0 pass, 1 violation, 2 broken input / not implemented.
-This skeleton only parses arguments; every subcommand is not implemented yet.`;
+Exit codes: 0 pass, 1 violation, 2 broken input.`;
 
 import { readFileSync, writeFileSync } from "node:fs";
 
-import { runDiff as runDiffCommand } from "./diff.mjs";
+import { collectContractViolations } from "../check-contract.mjs";
+import { crossCheck, formatCrossCheck } from "./cross-check.mjs";
+import {
+  diffSnapshots,
+  loadCapabilities,
+  loadSnapshot,
+  runDiff as runDiffCommand,
+} from "./diff.mjs";
 import { generateMap } from "./map.mjs";
+import { renderReport } from "./report.mjs";
 import { buildSnapshot, writeSnapshot } from "./snapshot.mjs";
 
 /** Default artifacts, relative to the process working directory (the repo root). */
 const DEFAULT_CAPABILITIES = "packages/protocol/src/contract/capabilities.json";
 const DEFAULT_SNAPSHOT = "packages/protocol/src/contract/snapshot.json";
 const DEFAULT_GENERATED = "packages/protocol/src/contract/command-map.generated.ts";
-
-/** Subcommand owner map, used by the TODO notice. */
-const OWNERS = Object.freeze({
-  update: "snapshot assembly",
-  check: "contract (gate segment)",
-  diff: "the log (diff and report)",
-  generate: "the wiring (generator)",
-});
-
-/**
- * Raised when parsing succeeded but the subcommand is still a stub.
- */
-class NotImplementedError extends Error {
-  /**
-   * @param {string} subcommand
-   */
-  constructor(subcommand) {
-    super(`subcommand "${subcommand}" is not implemented yet`);
-    this.name = "NotImplementedError";
-    this.subcommand = subcommand;
-  }
-}
 
 /**
  * Print usage to one stream and set the exit code.
@@ -177,16 +159,6 @@ function usageError(subcommand, messages) {
 }
 
 /**
- * Throw the stub error that maps to exit 2.
- *
- * @param {string} subcommand
- * @returns {never}
- */
-function notImplemented(subcommand) {
-  throw new NotImplementedError(subcommand);
-}
-
-/**
  * `update --engine <dir> [--out <file>]`
  *
  * @param {string[]} args
@@ -255,13 +227,109 @@ function runCheck(args) {
     errors.push(`unexpected positional argument: ${parsed.positionals[0]}`);
   }
 
+  const engineRoot = parsed.options.get("--engine");
+  const dtsDir = parsed.options.get("--dts");
+
+  if (engineRoot !== undefined && dtsDir !== undefined) {
+    errors.push("--engine and --dts cannot be combined");
+  }
+
   if (errors.length > 0) {
     usageError("check", errors);
 
     return;
   }
 
-  notImplemented("check");
+  if (engineRoot !== undefined) {
+    checkAgainstEngine(engineRoot);
+
+    return;
+  }
+
+  checkInRepo();
+
+  if (dtsDir !== undefined) {
+    checkAgainstDts(dtsDir);
+  }
+}
+
+/**
+ * Rebuild the snapshot from a live engine tree and report drift against the
+ * committed baseline on stdout. Only used by release-time / G3 checks.
+ *
+ * @param {string} engineRoot
+ */
+function checkAgainstEngine(engineRoot) {
+  const rebuilt = buildSnapshot({ engineRoot, capabilitiesPath: DEFAULT_CAPABILITIES });
+
+  if (rebuilt.health.degraded) {
+    process.stderr.write(
+      "contract check: the rebuilt snapshot is degraded (symbols missing); drift is not trustworthy\n",
+    );
+    process.exitCode = 2;
+
+    return;
+  }
+
+  const committed = loadSnapshot(DEFAULT_SNAPSHOT, { cwd: process.cwd(), label: "committed" });
+  const capabilities = loadCapabilities(DEFAULT_CAPABILITIES);
+  const result = diffSnapshots(committed, rebuilt, { capabilities });
+  const lines = renderReport(result);
+
+  process.stdout.write(lines.join("\n") + "\n");
+
+  if (result.summary.total > 0) {
+    process.exitCode = 1;
+  }
+}
+
+/** In-repo check: artifact consistency, six map rules and coverage closure. */
+function checkInRepo() {
+  const violations = collectContractViolations({ root: process.cwd() });
+
+  for (const violation of violations) {
+    const line = typeof violation.line === "number" ? violation.line : 0;
+
+    process.stdout.write(`${violation.file}:${line} ${violation.rule} ${violation.message}\n`);
+  }
+
+  if (violations.length === 0) {
+    process.stdout.write("PASS\n");
+
+    return;
+  }
+
+  process.stdout.write(`FAIL: ${violations.length} violation(s)\n`);
+  process.exitCode = 1;
+}
+
+/**
+ * Type-level cross-check against an unpacked declaration directory. Differences
+ * are reported but never change the exit code (only broken input does).
+ *
+ * @param {string} dtsDir
+ */
+function checkAgainstDts(dtsDir) {
+  let snapshot;
+
+  try {
+    snapshot = loadSnapshot(DEFAULT_SNAPSHOT, { cwd: process.cwd(), label: "committed" });
+  } catch (error) {
+    process.stderr.write(
+      `contract check: ${error instanceof Error ? error.message : String(error)}\n`,
+    );
+    process.exitCode = 2;
+
+    return;
+  }
+
+  const result = crossCheck({ dtsDir, snapshot });
+
+  process.stdout.write(formatCrossCheck(result));
+
+  if (!result.ok) {
+    process.exitCode = 2;
+  }
 }
 
 /**
@@ -387,15 +455,8 @@ function main(args) {
 try {
   main(process.argv.slice(2));
 } catch (error) {
-  if (error instanceof NotImplementedError) {
-    process.stderr.write(
-      `contract ${error.subcommand}: not implemented yet (planned owner: ${OWNERS[error.subcommand]})\n`,
-    );
-  } else {
-    const message = error instanceof Error ? error.message : String(error);
+  const message = error instanceof Error ? error.message : String(error);
 
-    process.stderr.write(`contract: internal error: ${message}\n`);
-  }
-
+  process.stderr.write(`contract: internal error: ${message}\n`);
   process.exitCode = 2;
 }

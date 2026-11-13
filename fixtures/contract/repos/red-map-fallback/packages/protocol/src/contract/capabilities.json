@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "capabilities": [
+    {
+      "name": "agent.list",
+      "wire": "agent_list",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "request-response",
+      "detail": true,
+      "notes": "mini fixture: field-level wire"
+    },
+    {
+      "name": "agent.fallback",
+      "wire": "agent_list",
+      "since": "0.6.0",
+      "scope": "none",
+      "shape": "request-response",
+      "fallback": "agent.unknown"
+    }
+  ]
+}

@@ -94,6 +94,7 @@ const GATE_SELF_TEST_FILES = [
   "scripts/cycles.test.ts",
   "scripts/file-size-ratchet.test.ts",
   "scripts/module-ownership.test.ts",
+  "scripts/contract-gate.test.ts",
 ];
 
 /** Long form of the gate self-test heading; see the segment definition. */
@@ -270,6 +271,10 @@ function buildSegments(options) {
       command: () => vitest(GATE_SELF_TEST_FILES),
     },
     {
+      label: "contract",
+      command: () => gate("scripts/check-contract.mjs", options.verbose),
+    },
+    {
       label: "test",
       skipReason:
         unitTestFiles.length === 0
@@ -322,7 +327,8 @@ function buildSegments(options) {
 function gate(relative, verbose) {
   const supportsVerbose =
     relative === "scripts/check-boundaries.mjs" ||
-    relative === "scripts/check-module-ownership.mjs";
+    relative === "scripts/check-module-ownership.mjs" ||
+    relative === "scripts/check-contract.mjs";
   const args = [relative];
 
   if (verbose && supportsVerbose) {
