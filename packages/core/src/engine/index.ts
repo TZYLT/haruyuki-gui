@@ -12,3 +12,4 @@ export * from "./types";
 export * from "./spawn";
 export * from "./token";
 export * from "./port-discovery";
+export * from "./connection";
