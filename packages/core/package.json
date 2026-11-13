@@ -11,6 +11,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@haruyuki/protocol": "workspace:*"
+    "@haruyuki/protocol": "workspace:*",
+    "ws": "8.19.0"
   }
 }
