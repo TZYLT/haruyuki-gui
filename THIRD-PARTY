@@ -58,14 +58,32 @@ or not we declared them.
 | @formatjs/icu-messageformat-parser | 3.5.23 | MIT | https://github.com/formatjs/formatjs | ICU parse step. Used at build time to precompile message ASTs, and is a declared dependency of intl-messageformat, so it is listed rather than assumed absent from the artifact. |
 | lucide-react | 1.72.0 | ISC | https://github.com/lucide-icons/lucide | Icon path source. Only the icons actually imported are bundled; the licence covers the artwork as well as the code, so the attribution stays even though most of the package is tree-shaken away. **115 of its icons are derived from the Feather project and carry MIT instead of ISC** -- `search`, `trash-2`, `x`, `check`, `chevron-down`, `info`, `alert-triangle`, `calendar`, `plus`, `minus`, `download`, `upload`, `clock`, `lock` and `link` among them, so both notices are required. See NOTICE. |
 
+## The application runtime
+
+The shell ships an Electron runtime, so Electron and everything inside it reach a
+user. Unlike the packages above, this is not a module the bundler inlines -- it is
+a prebuilt binary tree installed by `electron`'s own download step. Its licences
+travel inside that tree and are reproduced by the packager, not by this file.
+
+| Package | Version | License | Source | Notes |
+| ------- | ------- | ------- | ------ | ----- |
+| electron | 45.3.2 | MIT | https://github.com/electron/electron | Desktop runtime: Chromium, V8, Node.js and the Electron API surface, as one binary tree (`node_modules/electron/dist`, 358 MB). Ships `LICENSE` (MIT, Electron contributors + GitHub Inc.) and `LICENSES.chromium.html` (5.4 MB, the full Chromium third-party attribution set) next to the executable. **Those two files must be copied into any packaged artifact** -- they are the attribution for everything Chromium is built from, and there is no shorter substitute. |
+| chromium | 156.0.8078.100 | BSD-3-Clause and others | https://www.chromium.org/ | Embedded in electron. Version read from `process.versions.chrome`. Third-party attributions are the `LICENSES.chromium.html` file above; do not enumerate them individually here. |
+| node | 24.22.2 | MIT | https://nodejs.org/ | Embedded in electron (`process.versions.node`). Node's own dependency notices are inside the Chromium licence file. |
+
 ## Dev-only dependencies (not shipped, therefore not listed above)
 
 Lint, format, type-check, test and build tooling: ESLint, Prettier, TypeScript,
-typescript-eslint, Vitest, the Vitest coverage provider, madge, `@types/node`,
+typescript-eslint, Vitest, the Vitest coverage provider, madge, Vite, `@types/node`,
 `@types/react`, `@types/react-dom`, `jsdom`, `@testing-library/react` and
 `@testing-library/user-event`. The authoritative versions live in `package.json`
 (`devDependencies`) and `pnpm-lock.yaml`. If any of these ever becomes part of a
 published artifact, it must be moved into the inventory table above.
+
+Note on Vite: it is build tooling and does not ship, but it is what produces the
+renderer bundle from `packages/ui` sources, so it is named here to keep the line
+between "bundled by Vite" and "is Vite" explicit. `esbuild` is **not** installed;
+Vite 8 bundles with Rolldown.
 
 Note on `@testing-library/react` and `jsdom`: they are test-only today. They stay
 on this side of the line as long as no shipped artifact imports them, which is
