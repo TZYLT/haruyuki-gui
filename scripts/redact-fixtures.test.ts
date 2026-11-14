@@ -53,6 +53,9 @@ const SYNTHETIC_REQUEST_ID = /^(?:r|req)-\d{1,6}$|^synthetic-[a-z0-9]+(?:-[a-z0-
 /** The name the gate must refuse to see in a corpus fixture. */
 const LOCAL_NAME = localUserName();
 
+/** This machine's name: the engine echoes it back as `connection_name`. */
+const LOCAL_HOST = os.hostname().trim();
+
 /** Fixture identity: the value appears verbatim in the raw file. */
 const NAME = LOCAL_NAME === "" ? "localuser" : LOCAL_NAME;
 const WINDOWS_PATH = `C:\\Users\\${NAME}\\notes.txt`;
@@ -61,6 +64,9 @@ const EMAIL = "alice.cooper@example.com";
 const BEARER = "Bearer abcdef0123456789";
 const HEX_TOKEN = "0123456789abcdef".repeat(4);
 const PROVIDER_KEY = `sk-${"a1".repeat(16)}`;
+
+/** The device name the pass substitutes for this machine's name. */
+const SYNTHETIC_HOSTNAME = "synthetic-host";
 const UNICODE_NOTE = "\u4e2d\u6587";
 const REQUEST_ID = "msg-abc-1";
 const APPROVAL_ID = "perm-tool-call-abc";
@@ -73,6 +79,7 @@ const EXPECTED_RULES = [
   "redaction-username",
   "redaction-email",
   "redaction-token",
+  "redaction-host",
   "redaction-request-id",
 ];
 
@@ -117,6 +124,7 @@ describe("redaction pass", () => {
 
     expect(run.status, run.output).toBe(0);
     expect(run.stderr).toContain("redaction-path=");
+    expect(run.stderr).toContain("redaction-host=");
     expect(run.stderr).toContain("request-id-map=");
     expect(/^[\x00-\x7F]*$/.test(run.stderr)).toBe(true);
 
@@ -129,7 +137,7 @@ describe("redaction pass", () => {
     const header = asRecord(outputDocuments[0]);
 
     expect(header.kind).toBe("wire");
-    expect(header.redaction).toBe("r1");
+    expect(header.redaction).toBe("r2");
     expect(outputDocuments.length).toBe(rawDocuments.length);
 
     const decoded = outputDocuments.map((document) => JSON.stringify(document)).join("\n");
@@ -142,6 +150,13 @@ describe("redaction pass", () => {
     expect(decoded).not.toContain(BEARER);
     expect(decoded).not.toContain(HEX_TOKEN);
     expect(decoded).not.toContain(PROVIDER_KEY);
+    // The device name is replaced whole in `connection_name` and wherever else
+    // it was mentioned; the placeholder is the only device name the gate takes.
+    expect(decoded).toContain(`"connection_name":"${SYNTHETIC_HOSTNAME}"`);
+
+    if (LOCAL_HOST.length >= 4) {
+      expect(decoded).not.toContain(LOCAL_HOST);
+    }
 
     if (LOCAL_NAME.length >= 2) {
       expect(decoded).not.toContain(LOCAL_NAME);
@@ -248,7 +263,7 @@ function buildRawRecording(): string {
   };
   const prompt =
     `Open ${WINDOWS_PATH} and ${POSIX_PATH} as ${NAME}; mail ${EMAIL}; ` +
-    `token ${BEARER}; digest ${HEX_TOKEN}; key ${PROVIDER_KEY}.`;
+    `token ${BEARER}; digest ${HEX_TOKEN}; key ${PROVIDER_KEY}; host ${LOCAL_HOST}.`;
   const rows: unknown[] = [
     {
       dir: "c2s",
@@ -277,6 +292,7 @@ function buildRawRecording(): string {
         type: "update_device_status",
         device_status: {
           owner: NAME,
+          connection_name: LOCAL_HOST,
           current_working_directory: WINDOWS_PATH,
           memory_directory: `D:\\private\\${NAME}\\memory`,
           skills: [{ name: "skill", path: `/opt/${NAME}/skill` }],

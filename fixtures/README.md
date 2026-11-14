@@ -18,17 +18,21 @@ corpus; the gate does not read them.
 
 ```bash
 pnpm fixtures:check                 # gate the corpus (shape, redaction, V-14 warning)
-pnpm record --scenario <name>       # record a real session into _research/engine-raw/
-node scripts/fixtures/redact.mjs <raw.jsonl> <out.jsonl>  # redaction pass (r0 -> r1)
+node scripts/engine/scenarios/index.mjs --emit <name>   # write the --send list
+pnpm record --scenario <name> --send _research/engine-raw/<name>.cmd.json
+node scripts/redact-fixtures.mjs <raw.jsonl> <out.jsonl>  # redaction pass (r0 -> r2)
 ```
 
 `pnpm fixtures:check` (or `node scripts/check-fixtures.mjs`) is the `fixtures`
 segment of `pnpm verify`. It exits `0` on pass, `1` on violations and `2` when
 the script itself is broken.
 
-`pnpm record` is the package-script wrapper around `scripts/engine/record.mjs`.
+`pnpm record` is the package-script wrapper around `scripts/engine/record.mjs`,
+and `--send` is required: the command list comes from a scenario module, not from
+the recorder. The output is written to `<out>.partial` and renamed only when the
+session settles on `idle`, so an interrupted run leaves no half fixture behind.
 If the wrapper is not wired in the current checkout, run the same command
-directly: `node scripts/engine/record.mjs --scenario <name>`.
+directly: `node scripts/engine/record.mjs --scenario <name> --send <list.json>`.
 
 Raw recorder output is `redaction: "r0"` and stays under `_research/` (gitignored,
 never scanned by the gate). Only a redacted copy (`r1` or later) may be committed
@@ -41,12 +45,12 @@ then gate the result. The pass is deterministic - the same raw recording always
 produces byte-identical output - and only writes the output path it is given.
 
 ```bash
-node scripts/fixtures/redact.mjs \
+node scripts/redact-fixtures.mjs \
   _research/engine-raw/<scenario>.jsonl \
   fixtures/engine/recordings/<scenario>.jsonl [--report]
 ```
 
-It rewrites the header marker (default `r1`; `--redaction r2` for a later
+It rewrites the header marker (default `r2`; `--redaction r3` for a later
 revision) and replaces every matching value in every string of every line:
 
 | Rule | Replacement |
@@ -56,6 +60,7 @@ revision) and replaces every matching value in every string of every line:
 | local user name | `user` |
 | email address | `<redacted-email>` |
 | `Bearer ...`, 64-hex, `sk-...` | `<redacted-token>` |
+| machine name (`device_status.connection_name` and any other mention) | `synthetic-host` |
 | non-synthetic `request_id` | `synthetic-<slug>`, or `synthetic-perm-<slug>` |
 
 `request_id` consistency is one in-memory map for the whole file: the same
@@ -72,7 +77,7 @@ are never echoed.
 > The gate rejects every email-shaped string, including `alice@example.com`, so
 > the pass emits the non-email placeholder `<redacted-email>`. If the gate ever
 > allows example.com addresses, change `EMAIL_PLACEHOLDER` in
-> `scripts/fixtures/redact.mjs`.
+> `scripts/redact-fixtures.mjs`.
 
 ## Wire recording format
 
@@ -80,7 +85,7 @@ Line 1 is the header; every later line is one engine message, in emission order
 (docs/18 INV-A3-1).
 
 ```json
-{"kind":"wire","schemaVersion":1,"engine":{"version":"0.6.0","commit":"1641a4f"},"scenario":"tool-call","redaction":"r1","clock":"virtual","recordedAt":"2026-11-14T00:00:00.000Z"}
+{"kind":"wire","schemaVersion":1,"engine":{"version":"0.6.0","commit":"1641a4f"},"scenario":"tool-call","redaction":"r2","clock":"virtual","recordedAt":"2026-11-14T00:00:00.000Z"}
 {"dir":"s2c","at":0,"msg":{"type":"app_server_info_response"}}
 {"dir":"c2s","at":3,"msg":{"type":"input","request_id":"r-1"}}
 ```
@@ -93,7 +98,7 @@ Header fields:
 | `schemaVersion` | `1`; the only version this gate reads |
 | `engine.version` / `engine.commit` | the engine that produced the frames; compared with the contract pin (warning only) |
 | `scenario` | the scenario name, matching the file name |
-| `redaction` | `"r0"` = not redacted yet (never in the corpus); `"r1"`+ = redacted |
+| `redaction` | `"r0"` = not redacted yet (never in the corpus); `"r1"`+ = redacted (current revision: `"r2"`) |
 | `clock` | `"real"` for recorder output, `"virtual"` for replayed timing |
 | `recordedAt` | ISO timestamp; informational, never asserted |
 | `synthetic` | optional `true`; see below |
@@ -160,7 +165,8 @@ only re-checks it.
 | `redaction-path` | an absolute path outside the synthetic roots: Windows `X:\...` / `X:/...` or POSIX `/...` |
 | `redaction-username` | the local user name from the deny-list (`os.userInfo().username`, `%USERNAME%`, `$USER`) |
 | `redaction-email` | any `name@example.tld` address |
-| `redaction-token` | `Bearer <token>` or a 64-hex token-like string |
+| `redaction-token` | `Bearer <token>`, a 64-hex token-like string or a provider API key (`sk-...`) |
+| `redaction-host` | a `device_status.connection_name` that is not `synthetic-host` |
 | `redaction-request-id` | a `request_id` outside the synthetic vocabulary |
 
 Allowed synthetic values:
@@ -169,9 +175,14 @@ Allowed synthetic values:
   when it equals one of those roots or sits below it; `C:/workstation` is not.
 - Request ids: `r-<n>` (the frozen example is `"r-1"`), `req-<n>`, or
   `synthetic-<slug>` such as `synthetic-perm-allow`.
+- Device name: `synthetic-host`, the only value accepted in
+  `device_status.connection_name`. The engine echoes the machine name there, and
+  a machine name says where a recording was made. The rule is an allow-list, not
+  a deny-list of local host names, so the verdict does not depend on the machine
+  running the gate.
 
 Everything else observed in a real session - home directories, workspace paths,
-account names, prompts, tool output with local data - is replaced with synthetic
+machine names, account names, prompts, tool output with local data - is replaced with synthetic
 text before the file enters the corpus. Structure and token counts stay; content
 does not.
 
@@ -190,9 +201,9 @@ readable pin is a configuration error (exit `2`).
 
 1. Record into `_research/` (`pnpm record --scenario <name>`), or write the
    JSONL by hand from the frozen shapes.
-2. Redact with `node scripts/fixtures/redact.mjs <raw> <out>` (or by hand:
-   synthetic paths and request ids, no user name, email or token, and
-   `redaction: "r1"` in the header).
+2. Redact with `node scripts/redact-fixtures.mjs <raw> <out>` (or by hand:
+   synthetic paths and request ids, no user name, machine name, email or token,
+   and `redaction: "r2"` in the header).
 3. Put the file under the right corpus directory.
 4. Run `pnpm fixtures:check`; it must print `PASS` (warnings are fine, violations
    are not). A red gate means the fixture does not get committed (docs/18
