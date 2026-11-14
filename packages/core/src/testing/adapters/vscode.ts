@@ -144,7 +144,7 @@ export type VscodeHostPortOptions = {
   bundlePath: string;
   globalStorageUri: string;
   allowedRoots?: string[];
-  pickQueue?: Array<string | string[]>;
+  pickQueue?: string[];
   secureSeed?: Record<string, string>;
   nodePath?: string;
   droppedContent?: Record<string, string>;
@@ -295,26 +295,21 @@ export async function createVscodeHostPort(
       return { ok: true };
     },
 
-    async pickPaths(opts) {
+    async pickPaths(_opts) {
       // Every call counts, including a cancelled one: the counter records how
       // many dialogs the core opened, which is what a test asserts about
       // behaviour, while the return value records the outcome.
       calls.pickPaths += 1;
 
-      // One queued answer per call. An entry may be a single path or a list, so a
-      // `multiple: true` call can return several; a single-value call truncates,
-      // the way a real dialog honours the properties it was opened with. An empty
-      // queue is the documented cancellation, which is `[]` and not an error
-      // .
+      // One queued answer per call, whatever `kind`/`multiple` say. This host
+      // answers a multi-select call with at most one path, which the replay engine
+      // 3.4.1.1 S-3 freezes for this version: the queue is the whole
+      // deterministic answer of a host, and no consumer asks for several yet. An
+      // empty queue is the documented cancellation, which is `[]` and not an
+      // error .
       const picked = pickQueue.shift();
 
-      if (picked === undefined) {
-        return [];
-      }
-
-      const answer = typeof picked === "string" ? [picked] : picked;
-
-      return opts.multiple === true ? answer : answer.slice(0, 1);
+      return picked === undefined ? [] : [picked];
     },
 
     async resolveLocalResource(absPath) {

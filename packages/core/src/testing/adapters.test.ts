@@ -108,8 +108,7 @@ type Fixture = {
   bundlePath: string;
   insideFile: string;
   outsideFile: string;
-  /** One answer per `pickPaths` call; a list is a `multiple: true` answer. */
-  pickedAnswers: Array<string | string[]>;
+  pickedAnswers: string[];
   droppedFilePath: string;
   droppedContent: string;
   port: TraceablePort;
@@ -180,15 +179,11 @@ describe("headless, desktop and VSCode adapters agree", () => {
     // Each adapter handed back the answers it was queued with, at its own path
     // content: the call sequence is identical, the file names are not.
     for (const kind of ["headless", "desktop", "vscode"] as const) {
-      const [firstAnswer, secondAnswer] = fixtures[kind].pickedAnswers;
-
-      expect(firstAnswer).toBeDefined();
-      expect(secondAnswer).toBeDefined();
-      expect(results[kind].specific.pickFirstAnswer).toEqual(asList(firstAnswer));
-      // The second call asks for `multiple: true`, so a list answer survives
-      // whole; before this the parity test asked for multiple and asserted one.
-      expect(results[kind].specific.pickSecondAnswer).toEqual(asList(secondAnswer));
-      expect(results[kind].specific.pickSecondAnswer.length).toBe(2);
+      // One queued answer per call even when the call asks for several: the
+      // second call passes `multiple: true` and still answers with its own single
+      // path , so the corpus section 3.4.1.1 S-3), so the three shells stay comparable.
+      expect(results[kind].specific.pickFirstAnswer).toEqual([fixtures[kind].pickedAnswers[0]]);
+      expect(results[kind].specific.pickSecondAnswer).toEqual([fixtures[kind].pickedAnswers[1]]);
     }
 
     // Spot-check the meaningful entries rather than trusting the object diff
@@ -443,15 +438,6 @@ async function createAll(): Promise<{ fixtures: AllFixtures; results: AllResults
  * every adapter except the adapter's own path content (each root differs) and
  * the dropped-file payload, which is where the shells differ by design.
  */
-/** @param value a queued pick answer @returns always a list */
-function asList(value: string | string[] | undefined): string[] {
-  if (value === undefined) {
-    return [];
-  }
-
-  return typeof value === "string" ? [value] : value;
-}
-
 async function runSequence(fixture: Fixture): Promise<SequenceResult> {
   const { port } = fixture;
 
@@ -559,10 +545,7 @@ async function createHeadlessFixture(): Promise<Fixture> {
   const root = await makeRoot();
   const engineHome = path.join(root, "engine-home");
   const bundlePath = prepareBundle(root);
-  const pickedAnswers = [
-    path.join(root, "pick-1.txt"),
-    [path.join(root, "pick-2.txt"), path.join(root, "pick-3.txt")],
-  ];
+  const pickedAnswers = [path.join(root, "pick-1.txt"), path.join(root, "pick-2.txt")];
 
   const port = await createHeadlessHostPort({
     bundlePath,
@@ -589,10 +572,7 @@ async function createHeadlessFixture(): Promise<Fixture> {
 async function createDesktopFixture(): Promise<Fixture> {
   const root = await makeRoot();
   const bundlePath = prepareBundle(root);
-  const pickedAnswers = [
-    path.join(root, "pick-1.txt"),
-    [path.join(root, "pick-2.txt"), path.join(root, "pick-3.txt")],
-  ];
+  const pickedAnswers = [path.join(root, "pick-1.txt"), path.join(root, "pick-2.txt")];
 
   const paths: HostPortStartup["paths"] = {
     userData: path.join(root, "desktop", "userData"),
@@ -626,10 +606,7 @@ async function createDesktopFixture(): Promise<Fixture> {
 async function createVscodeFixture(): Promise<Fixture> {
   const root = await makeRoot();
   const bundlePath = prepareBundle(root);
-  const pickedAnswers = [
-    path.join(root, "pick-1.txt"),
-    [path.join(root, "pick-2.txt"), path.join(root, "pick-3.txt")],
-  ];
+  const pickedAnswers = [path.join(root, "pick-1.txt"), path.join(root, "pick-2.txt")];
   const storageRoot = path.join(root, "vscode", "globalStorage");
 
   const port = await createVscodeHostPort({
