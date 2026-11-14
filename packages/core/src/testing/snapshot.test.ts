@@ -41,9 +41,13 @@ function fixturePath(name: string): string {
 /* ------------------------------------------------------------------ */
 
 describe("normalizeForSnapshot", () => {
-  it("turns one fixture snapshot into the same bytes on two runs", async () => {
+  it("turns two runs of the same scenario into the same bytes", async () => {
     const fixture = await loadFramesFixture(fixturePath("three-channels.jsonl"));
-    const payload = {
+    // The two runs differ exactly where a live run differs: timestamps, ids, pids
+    // and the directory the fixture sat in. Normalising one payload twice would be
+    // true of any pure function and would not show that the volatile values are
+    // gone; the second payload is a *different* run of the same scenario.
+    const runOne = {
       header: fixture.header,
       frames: fixture.frames,
       state: reduce(fixture.frames),
@@ -55,9 +59,20 @@ describe("normalizeForSnapshot", () => {
       recordedFrom: fixturePath("three-channels.jsonl"),
       scratch: path.join(tmpdir(), "haruyuki-snapshot", "frames.jsonl"),
     };
+    const runTwo = {
+      ...runOne,
+      emitted_at: "2024-03-02T11:31:01.500Z",
+      idempotency_key: "idem-2",
+      request_id: "req-2",
+      pid: 4343,
+      at: 1709299000001,
+      recordedFrom: path.join(tmpdir(), "elsewhere", "frames.jsonl"),
+      scratch: "/tmp/other/run/frames.jsonl",
+    };
 
-    const first = JSON.stringify(normalizeForSnapshot(payload));
-    const second = JSON.stringify(normalizeForSnapshot(payload));
+    const payload = runOne;
+    const first = JSON.stringify(normalizeForSnapshot(runOne));
+    const second = JSON.stringify(normalizeForSnapshot(runTwo));
     const normalized = normalizeForSnapshot(payload) as Record<string, unknown>;
 
     expect(second).toBe(first);

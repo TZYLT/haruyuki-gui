@@ -47,9 +47,21 @@ export { normalizeForSnapshot, DEFAULT_VOLATILE_KEYS, DEFAULT_PATH_PATTERNS } fr
 export { createDesktopHostPort } from "./adapters/desktop";
 export { createVscodeHostPort } from "./adapters/vscode";
 
-export type { Clock, WireFixture, FramesFixture, ReplayPlan, ReplayInjection } from "./fixture";
+export type {
+  Clock,
+  WireFixture,
+  WireFixtureLine,
+  FramesFixture,
+  BridgeFrame,
+  FrameChannel,
+  ReplayPlan,
+  ReplayInjection,
+  ReplayStep,
+} from "./fixture";
 export type { ReplayThroughOptions, ReplayThroughResult } from "./replay-client";
 export type {
+  Delivery,
+  DeliveryScheduler,
   TransportDouble,
   TransportRejection,
   TransportDoubleOptions,
@@ -59,5 +71,9 @@ export type { Observation, ObserveOptions, RecordingTransportDouble } from "./ob
 export type { ComparisonReport, ComparisonHarness } from "./compare";
 export type { ReducedState } from "./reducer";
 export type { SnapshotRules } from "./snapshot";
-export type { DesktopHostPort } from "./adapters/desktop";
-export type { VscodeHostPort } from "./adapters/vscode";
+export type {
+  DesktopHostPort,
+  DesktopHostPortCalls,
+  DesktopHostPortOptions,
+} from "./adapters/desktop";
+export type { VscodeHostPort, VscodeHostPortCalls, VscodeHostPortOptions } from "./adapters/vscode";
