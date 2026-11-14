@@ -9,27 +9,34 @@
  *               malformed, oversized or cyclic, so `fixtures/**` is excluded
  *               explicitly.
  *
- *   packages/** product tests, including the renderer. These need a DOM; jsdom
- *               is selected per file with a `@vitest-environment jsdom` docblock
- *               rather than globally, so the gate tests keep running without a
- *               DOM and cannot accidentally depend on one.
+ *   packages/*\/src/**  product tests, including the renderer's component tests.
+ *               These sit next to their sources. The `src/` segment is part of
+ *               the pattern on purpose: it keeps a stray file in a package root
+ *               from being collected as a test.
  *
- * Both extensions `.test.ts` and `.test.tsx` are collected: the renderer's
- * component tests are TSX. Keeping that list here and in `scripts/verify.mjs`
- * in sync is the point  - a test file nobody collects is a test file
- * that never fails.
+ * Both `.test.ts` and `.test.tsx` are collected: the renderer's component tests
+ * are TSX. Keeping that list here and in `scripts/verify.mjs` in sync is the
+ * point -- a test file nobody collects is a test file that never fails.
+ *
+ * `environment` is `node` globally, and a DOM file opts in with a
+ * `@vitest-environment jsdom` docblock. That way the gate tests keep running
+ * without a DOM and cannot accidentally come to depend on one.
  */
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
     environment: "node",
-    include: ["scripts/**/*.test.ts", "packages/**/*.test.ts", "packages/**/*.test.tsx"],
+    include: [
+      "scripts/**/*.test.ts",
+      "packages/*/src/**/*.test.ts",
+      "packages/*/src/**/*.test.tsx",
+    ],
     // Renderer tests need an explicit cleanup hook: @testing-library/react only
     // auto-cleans when a global `afterEach` exists, and this config deliberately
     // leaves `globals` off. Without this file the DOM accumulates between tests
-    // and a second query for the same test id fails. The gate tests under
-    // `scripts/**` never import a DOM, so the file is inert for them.
+    // and a second query for the same test id fails. The setup guards itself, so
+    // it is inert for the gate tests that have no DOM.
     setupFiles: ["packages/ui/src/test-setup.ts"],
     exclude: [
       "**/node_modules/**",
