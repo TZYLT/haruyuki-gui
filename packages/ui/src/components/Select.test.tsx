@@ -163,7 +163,7 @@ describe("Select", () => {
     // The listbox role sits on base-ui's inner list; the popup is the styled
     // wrapper around it. Asserting on the wrapper is the point -- it is the
     // element whose derived class name is built from the base.
-    const listbox = screen.getByRole("listbox");
+    const listbox = await screen.findByRole("listbox");
     const popup = listbox.closest(".ui-select__popup");
 
     expect(popup, "the popup wrapper keeps its own class").not.toBeNull();
