@@ -1,0 +1,4 @@
+{
+  "speed": "instant",
+  "inject": [{ "kind": "reorder", "lines": [3, 4] }]
+}

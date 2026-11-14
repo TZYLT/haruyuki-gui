@@ -1,0 +1,8 @@
+{"kind":"frames","schemaVersion":1,"bridgeVersion":1,"clock":"virtual","note":"three channels: control, stream, bulk. seq increases per channel; cross-channel order is not promised (INV-A3-8). No replay plan."}
+{"v":1,"ch":"control","seq":1,"t":"bridge.ready","body":{"appVersion":"0.1.0","bridgeVersion":1}}
+{"v":1,"ch":"bulk","seq":1,"t":"bulk.page","body":{"page":1,"items":["a"]},"page":{"more":true}}
+{"v":1,"ch":"stream","seq":1,"t":"delta.message","body":{"index":1,"text":"a"}}
+{"v":1,"ch":"bulk","seq":2,"t":"bulk.page","body":{"page":2,"items":["b"]},"page":{"more":false}}
+{"v":1,"ch":"stream","seq":2,"t":"state.queue","body":{"pending":0}}
+{"v":1,"ch":"stream","seq":3,"t":"delta.message","body":{"index":2,"text":"b"}}
+{"v":1,"ch":"stream","seq":4,"t":"state.queue","body":{"pending":1}}
