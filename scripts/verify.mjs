@@ -120,6 +120,21 @@ const GLYPH_FOLDS = new Map([
 const COVERAGE_REPORT_PATTERN = /% Coverage report/;
 
 /**
+ * Per-segment wall-clock limits, in milliseconds.
+ *
+ * `spawnSync` had no `timeout` at all, so the "new segment <= 20 s, whole run
+ * <= 60 s" budget was documentation rather than a constraint: a segment that
+ * hung (a watcher that never exits, a lock file, a browser that will not start)
+ * made `pnpm verify` wait forever instead of failing. A limit turns that into a
+ * reported failure, which is the only outcome a CI box can act on.
+ *
+ * The default is generous against the measured run (the whole thing is ~60 s) so
+ * a slow machine does not produce a spurious red; the point is to bound a hang,
+ * not to police a second.
+ */
+const SEGMENT_TIMEOUT_MS = 180_000;
+
+/**
  * Gate self-tests: each file drives a real gate script against red and green
  * fixtures, so a failure means the rule matrix (not the product code) is
  * broken. Every other test file below scripts/ belongs to the test segment.
@@ -401,11 +416,21 @@ function buildSegments(options) {
           ? "no test files outside the gate self-test set; nothing to run"
           : undefined,
       command: () => vitest(unitTestFiles, ["--coverage", "--coverage.reporter=text"]),
-      // A number report is the whole coverage contract: uncovered code never fails
-      // here, so a non-zero exit that still produced the table is not a coverage
-      // failure. A non-zero exit *with* a failing test verdict still fails, which is
-      // what the segment is for.
-      evaluate: (run) => run.status === 0 || COVERAGE_REPORT_PATTERN.test(run.output),
+      // The exit code decides this segment. Full stop.
+      //
+      // It used to be `run.status === 0 || COVERAGE_REPORT_PATTERN.test(...)`,
+      // and that second half made the segment unable to fail for the one thing
+      // it exists to catch. A run with every test passing but an unhandled
+      // rejection exits 1 AND prints the coverage table -- measured in this repo:
+      // `Test Files 1 passed`, `Unhandled Rejection`, exit 1, table present. The
+      // gate therefore reported `[8/8] test PASS` for a process that had crashed
+      // on a stray promise. `--coverage.reportOnFailure` would widen the same
+      // hole further, because then even red tests print the table.
+      //
+      // The coverage contract is still honoured -- it is advisory, so a thin
+      // table is deliberately not a failure -- but "advisory" means it cannot
+      // *rescue* a failing run, only fail to add one.
+      evaluate: (run) => run.status === 0,
       notes: [
         "coverage is advisory: no threshold, uncovered code never fails verify",
         "in-process coverage of scripts/ stays low because gates run as child processes",
@@ -606,8 +631,13 @@ function runSegment(segment, index, total, options) {
     }
   }
 
-  for (const note of segment.notes ?? []) {
-    printLine(`${OUTPUT_INDENT}note: ${note}`);
+  // Notes describe why a passing segment is trustworthy, so printing them under
+  // a FAIL reads as if the explanation still applies. It does not: "coverage is
+  // advisory" means nothing about a run that died.
+  if (passed) {
+    for (const note of segment.notes ?? []) {
+      printLine(`${OUTPUT_INDENT}note: ${note}`);
+    }
   }
 
   return { label: segment.label, passed };
@@ -625,12 +655,22 @@ function runCommand(command, options) {
     encoding: "utf8",
     maxBuffer: MAX_BUFFER_BYTES,
     windowsHide: true,
+    // A hung segment must fail, not hang the run. `spawnSync` reports the kill as
+    // an `error` with code `ETIMEDOUT`, which the existing `spawnFailed` channel
+    // already turns into a failure line.
+    timeout: SEGMENT_TIMEOUT_MS,
     env: { ...process.env, NO_COLOR: "1", FORCE_COLOR: "0" },
   });
 
+  const timedOut = result.error?.code === "ETIMEDOUT";
+
   return {
-    status: result.status,
-    output: normalizeOutput(`${result.stdout ?? ""}${result.stderr ?? ""}`),
+    status: timedOut ? null : result.status,
+    output: normalizeOutput(
+      `${result.stdout ?? ""}${result.stderr ?? ""}${
+        timedOut ? `\nsegment exceeded ${SEGMENT_TIMEOUT_MS} ms and was killed` : ""
+      }`,
+    ),
     spawnFailed: result.error !== undefined,
   };
 }

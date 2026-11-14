@@ -319,12 +319,14 @@ export default [
   // word is ambiguous enough (a class, a unit, a state constant) that flagging it
   // would produce enough noise to get the rule turned off.
   {
-    files: [
-      "packages/ui/src/components/**/*.{ts,tsx}",
-      "packages/ui/src/examples/**/*.{ts,tsx}",
-      "packages/ui/src/icons/**/*.{ts,tsx}",
-    ],
-    ignores: ["**/*.test.{ts,tsx}"],
+    // G-2 says `packages/ui` and `apps/*`, not "the three directories that
+    // existed when the rule was written". Scoped by extension rather than by
+    // listing subdirectories, so a new folder under `packages/ui/src` (a `pages`
+    // tree, say) is covered on the day it is created rather than on the day
+    // somebody remembers to add it here -- and `apps/*` is the other half of the
+    // requirement, which was not covered at all.
+    files: ["packages/ui/src/**/*.{ts,tsx}", "apps/*/src/**/*.{ts,tsx}"],
+    ignores: ["**/*.test.{ts,tsx}", "**/i18n/locales/**/*.ts", "**/__generated__/**"],
     plugins: {
       "haruyuki-i18n": { rules: i18nRules },
     },
