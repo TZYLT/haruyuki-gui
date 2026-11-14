@@ -48,13 +48,17 @@ export default defineConfig({
     sourcemap: true,
     target: "node24",
     lib: {
-      entry: path.resolve(PACKAGE_DIR, "scripts/engine-probe.ts"),
+      entry: {
+        // Two probes, two entry points. Both are test artifacts and neither ships.
+        "engine-probe": path.resolve(PACKAGE_DIR, "scripts/engine-probe.ts"),
+        "coldstart-probe": path.resolve(PACKAGE_DIR, "scripts/coldstart-probe.ts"),
+      },
       formats: ["cjs"],
-      fileName: () => "engine-probe.cjs",
+      fileName: (_format, entryName) => `${entryName}.cjs`,
     },
     rollupOptions: {
       external: EXTERNAL,
-      output: { entryFileNames: "engine-probe.cjs" },
+      output: { entryFileNames: "[name].cjs" },
     },
   },
   define: {
