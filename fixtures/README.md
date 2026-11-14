@@ -19,6 +19,7 @@ corpus; the gate does not read them.
 ```bash
 pnpm fixtures:check                 # gate the corpus (shape, redaction, V-14 warning)
 pnpm record --scenario <name>       # record a real session into _research/engine-raw/
+node scripts/fixtures/redact.mjs <raw.jsonl> <out.jsonl>  # redaction pass (r0 -> r1)
 ```
 
 `pnpm fixtures:check` (or `node scripts/check-fixtures.mjs`) is the `fixtures`
@@ -32,6 +33,46 @@ directly: `node scripts/engine/record.mjs --scenario <name>`.
 Raw recorder output is `redaction: "r0"` and stays under `_research/` (gitignored,
 never scanned by the gate). Only a redacted copy (`r1` or later) may be committed
 below `fixtures/`.
+
+## Redaction pass (record -> redact -> check)
+
+The workflow is: record a session into `_research/`, redact it with the pass,
+then gate the result. The pass is deterministic - the same raw recording always
+produces byte-identical output - and only writes the output path it is given.
+
+```bash
+node scripts/fixtures/redact.mjs \
+  _research/engine-raw/<scenario>.jsonl \
+  fixtures/engine/recordings/<scenario>.jsonl [--report]
+```
+
+It rewrites the header marker (default `r1`; `--redaction r2` for a later
+revision) and replaces every matching value in every string of every line:
+
+| Rule | Replacement |
+|---|---|
+| absolute Windows path | `C:/work/<last segment>` (an existing synthetic path is kept) |
+| absolute POSIX path | `/tmp/x/<last segment>` (an existing synthetic path is kept) |
+| local user name | `user` |
+| email address | `<redacted-email>` |
+| `Bearer ...`, 64-hex, `sk-...` | `<redacted-token>` |
+| non-synthetic `request_id` | `synthetic-<slug>`, or `synthetic-perm-<slug>` |
+
+`request_id` consistency is one in-memory map for the whole file: the same
+original id always gets the same synthetic id, so a response still answers its
+request. A `perm-<toolCallId>` approval id becomes
+`synthetic-perm-<slugified toolCallId>` while the `tool_call_id` field is left
+alone, which keeps the approval linked to its tool call. Synthetic ids already
+present are reserved; collisions get a `-2`/`-3` suffix.
+
+One summary line on stderr reports the file pair and a count per gate rule;
+`--report` adds per-line counts and the request-id map size. Offending values
+are never echoed.
+
+> The gate rejects every email-shaped string, including `alice@example.com`, so
+> the pass emits the non-email placeholder `<redacted-email>`. If the gate ever
+> allows example.com addresses, change `EMAIL_PLACEHOLDER` in
+> `scripts/fixtures/redact.mjs`.
 
 ## Wire recording format
 
@@ -149,8 +190,9 @@ readable pin is a configuration error (exit `2`).
 
 1. Record into `_research/` (`pnpm record --scenario <name>`), or write the
    JSONL by hand from the frozen shapes.
-2. Redact: synthetic paths and request ids, no user name, email or token, and
-   `redaction: "r1"` in the header.
+2. Redact with `node scripts/fixtures/redact.mjs <raw> <out>` (or by hand:
+   synthetic paths and request ids, no user name, email or token, and
+   `redaction: "r1"` in the header).
 3. Put the file under the right corpus directory.
 4. Run `pnpm fixtures:check`; it must print `PASS` (warnings are fine, violations
    are not). A red gate means the fixture does not get committed (docs/18
