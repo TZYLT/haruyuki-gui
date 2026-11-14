@@ -374,6 +374,247 @@ const ALERT_CSS = `
 }
 `;
 
+/** Select rules: trigger, popup, item. The popup is portalled, so its styles
+ * must not depend on an ancestor. */
+const SELECT_CSS = `
+.ui-select__trigger {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-space-2);
+  ${CONTROL_BASE}
+  background-color: var(--ui-color-surface-1);
+  border: 1px solid var(--ui-color-neutral-3);
+  padding: var(--ui-space-2) var(--ui-space-4);
+  cursor: pointer;
+  font-size: var(--ui-font-size-3);
+  color: var(--ui-color-neutral-1);
+  min-width: 0;
+}
+
+.ui-select__trigger:focus-visible {
+  ${FOCUS_RING}
+}
+
+.ui-select__trigger[data-invalid="true"] {
+  border-color: var(--ui-color-danger-1);
+}
+
+.ui-select__trigger[data-disabled] {
+  background-color: var(--ui-color-surface-2);
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+.ui-select__value {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: start;
+}
+
+/* The placeholder state is a value, not a separate element: base-ui reports an
+   empty selection and we style the trigger for it. */
+.ui-select__trigger[data-placeholder] .ui-select__value,
+.ui-select__value[data-placeholder] {
+  color: var(--ui-color-neutral-2);
+}
+
+.ui-select__popup {
+  background-color: var(--ui-color-surface-1);
+  border: 1px solid var(--ui-color-neutral-3);
+  border-radius: var(--ui-radius-2);
+  box-shadow: 0 4px 16px rgb(0 0 0 / 12%);
+  padding: var(--ui-space-1);
+  max-height: 18rem;
+  overflow-y: auto;
+  z-index: var(--ui-z-dropdown);
+}
+
+.ui-select__item {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-space-2);
+  padding: var(--ui-space-2) var(--ui-space-4);
+  border-radius: var(--ui-radius-1);
+  cursor: pointer;
+  font-size: var(--ui-font-size-3);
+  line-height: var(--ui-font-lineHeight-2);
+  color: var(--ui-color-neutral-1);
+}
+
+.ui-select__item[data-highlighted] {
+  background-color: var(--ui-color-surface-2);
+}
+
+.ui-select__item[data-selected] {
+  color: var(--ui-color-accent-1);
+  font-weight: var(--ui-font-weight-2);
+}
+
+.ui-select__empty {
+  padding: var(--ui-space-3) var(--ui-space-4);
+  font-size: var(--ui-font-size-3);
+  color: var(--ui-color-neutral-2);
+}
+`;
+
+/** Dialog shell: backdrop, popup, header and footer. */
+const DIALOG_CSS = `
+.ui-dialog__backdrop {
+  position: fixed;
+  inset: 0;
+  background-color: rgb(0 0 0 / 40%);
+  z-index: var(--ui-z-overlay);
+}
+
+.ui-dialog__popup {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: var(--ui-z-overlay);
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-space-4);
+  background-color: var(--ui-color-surface-1);
+  border: 1px solid var(--ui-color-neutral-3);
+  border-radius: var(--ui-radius-3);
+  padding: var(--ui-space-6);
+  /* A dialog wider than the viewport is unusable on a small screen; capping it
+     and allowing internal scroll is the only arrangement that still works. */
+  width: min(32rem, calc(100vw - var(--ui-space-8) * 2));
+  max-height: calc(100vh - var(--ui-space-8) * 2);
+  overflow-y: auto;
+  font-family: var(--ui-font-family-body);
+  color: var(--ui-color-neutral-1);
+}
+
+.ui-dialog__popup:focus-visible {
+  ${FOCUS_RING}
+}
+
+.ui-dialog__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--ui-space-4);
+}
+
+.ui-dialog__title {
+  font-size: var(--ui-font-size-5);
+  font-weight: var(--ui-font-weight-3);
+  line-height: var(--ui-font-lineHeight-2);
+  margin: 0;
+}
+
+.ui-dialog__close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: none;
+  padding: var(--ui-space-1);
+  cursor: pointer;
+  color: var(--ui-color-neutral-2);
+  border-radius: var(--ui-radius-1);
+  flex-shrink: 0;
+}
+
+.ui-dialog__close:focus-visible {
+  ${FOCUS_RING}
+}
+
+.ui-dialog__body {
+  font-size: var(--ui-font-size-3);
+  line-height: var(--ui-font-lineHeight-2);
+  color: var(--ui-color-neutral-1);
+}
+
+.ui-dialog__footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--ui-space-3);
+}
+`;
+
+/** Skeleton: a placeholder with no text, so it cannot be misread as content. */
+const SKELETON_CSS = `
+.ui-skeleton {
+  display: block;
+  background-color: var(--ui-color-surface-2);
+  border-radius: var(--ui-radius-1);
+  /* The animation is the only decoration here. It is disabled globally under
+     prefers-reduced-motion by the token layer, which is why the duration comes
+     from a token rather than a literal. */
+  animation: ui-skeleton-pulse calc(var(--ui-motion-duration-3) * 4) var(--ui-motion-easing-1) infinite;
+}
+
+@keyframes ui-skeleton-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.ui-skeleton__stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-space-2);
+}
+`;
+
+/** Empty and error states share a shape; they differ in tone and actions. */
+const STATE_CSS = `
+.ui-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--ui-space-3);
+  text-align: center;
+  padding: var(--ui-space-8);
+  font-family: var(--ui-font-family-body);
+}
+
+.ui-state__icon {
+  display: inline-flex;
+  color: var(--ui-color-neutral-2);
+}
+
+.ui-state[data-tone="danger"] .ui-state__icon {
+  color: var(--ui-color-danger-1);
+}
+
+.ui-state__title {
+  font-size: var(--ui-font-size-4);
+  font-weight: var(--ui-font-weight-3);
+  line-height: var(--ui-font-lineHeight-2);
+  color: var(--ui-color-neutral-1);
+  margin: 0;
+}
+
+.ui-state__description {
+  font-size: var(--ui-font-size-3);
+  line-height: var(--ui-font-lineHeight-2);
+  color: var(--ui-color-neutral-2);
+  max-width: 32rem;
+  margin: 0;
+}
+
+.ui-state__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-space-3);
+  margin-top: var(--ui-space-2);
+}
+`;
+
 /**
  * The full component stylesheet.
  *
@@ -381,7 +622,17 @@ const ALERT_CSS = `
  * component's rules without scrolling past the others, while the injector still
  * sees a single string.
  */
-export const COMPONENT_CSS = [BUTTON_CSS, INPUT_CSS, SWITCH_CSS, TAG_CSS, ALERT_CSS].join("\n");
+export const COMPONENT_CSS = [
+  BUTTON_CSS,
+  INPUT_CSS,
+  SWITCH_CSS,
+  TAG_CSS,
+  ALERT_CSS,
+  SELECT_CSS,
+  DIALOG_CSS,
+  SKELETON_CSS,
+  STATE_CSS,
+].join("\n");
 
 /**
  * Install the token sheet and the component sheet, once each.

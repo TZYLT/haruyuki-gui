@@ -10,7 +10,13 @@
  * accessible name, and a switch with no name is unusable with a screen reader --
  * so the prop is required rather than merely documented.
  *
- * Controlled: `checked` and `onCheckedChange` both come from the caller.
+ * Controlled: `checked` and `onChange` both come from the caller.
+ *
+ * The callback is named `onChange`, matching FZ §6.4, rather than base-ui's
+ * `onCheckedChange`. Base UI's name is more precise -- a switch has a state, not a
+ * value -- but the frozen surface is the public contract and every other control
+ * in this package calls its callback `onChange`, so a divergent name here would be
+ * the one exception a consumer has to remember.
  */
 
 import { Switch as BaseSwitch } from "@base-ui/react/switch";
@@ -24,7 +30,7 @@ export interface SwitchProps extends BaseProps {
   /** Current state. Controlled. */
   checked: boolean;
   /** Called with the requested state. */
-  onCheckedChange: (checked: boolean) => void;
+  onChange: (checked: boolean) => void;
   /** Visible and accessible label. Required. */
   label: string;
   /** Disables interaction and marks the control disabled. */
@@ -41,7 +47,7 @@ export interface SwitchProps extends BaseProps {
  */
 export function Switch({
   checked,
-  onCheckedChange,
+  onChange,
   label,
   disabled = false,
   id,
@@ -57,7 +63,7 @@ export function Switch({
     <BaseSwitch.Root
       checked={checked}
       onCheckedChange={(next) => {
-        onCheckedChange(next);
+        onChange(next);
       }}
       disabled={disabled}
       id={id}

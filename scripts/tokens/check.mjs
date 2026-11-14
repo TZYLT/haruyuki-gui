@@ -17,6 +17,9 @@
  *                      enumerable, not merely documented
  *   T4 contrast        every pair a component actually renders clears WCAG AA:
  *                      text 4.5:1, borders and icon strokes 3:1
+ *   T5 known-slot      every `var(--ui-...)` a component references actually
+ *                      exists; a typo'd slot renders as an empty value, which is
+ *                      invisible in review and silently drops the declaration
  *
  * T1 and T4 read the TypeScript sources rather than importing them. Importing
  * would work today, but it would tie the gate to a build step and make a red gate
@@ -396,6 +399,39 @@ function collectViolations(args) {
               line: index + 1,
               rule: "T2",
               message: "colour literal in a component; use var(--ui-...) so the theme can reach it",
+            });
+          }
+        }
+      });
+    }
+  }
+
+  // ---- T5: every referenced token slot exists.
+  //
+  // A misspelled slot name is not a colour literal, so T2 lets it through, and
+  // `var(--ui-typo)` is not a CSS error -- it resolves to nothing, the
+  // declaration is dropped, and the element renders with whatever was inherited.
+  // That is the quietest possible failure, so it gets its own rule.
+  const knownSlots = new Set(slots);
+  const referencePattern = /var\(\s*(--ui-[A-Za-z0-9-]+)/g;
+
+  for (const directory of CONSUMER_DIRS) {
+    for (const relative of listFiles(args.root, directory, [".ts", ".tsx"])) {
+      if (relative.includes(".test.")) continue;
+
+      const source = read(path.join(args.root, relative));
+      const lines = source.split(/\r?\n/);
+
+      lines.forEach((line, index) => {
+        for (const match of line.matchAll(referencePattern)) {
+          const slot = match[1];
+
+          if (slot !== undefined && !knownSlots.has(slot)) {
+            violations.push({
+              file: relative,
+              line: index + 1,
+              rule: "T5",
+              message: `${slot} is not a declared token slot; a var() reference to it resolves to nothing`,
             });
           }
         }

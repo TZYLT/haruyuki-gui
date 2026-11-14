@@ -88,6 +88,18 @@ describe("token gate: each rule fires on its own fixture", () => {
     expect(run.output).toContain("below 4.5:1");
   });
 
+  it("T5 rejects a reference to a slot that does not exist", () => {
+    // This rule exists because the first draft of the wave-3 styles referenced
+    // --ui-z-popover, which is not a slot. T2 passed it: the spelling was
+    // correct, the value was a var(). var() of a missing property is not a CSS
+    // error, so the declaration would have been dropped silently.
+    const run = runGateOn("red-unknown-slot");
+
+    expect(run.status, run.output).toBe(1);
+    expect(run.output).toContain("T5");
+    expect(run.output).toContain("--ui-z-popover");
+  });
+
   it("T4 reports a pair below the non-text threshold separately", () => {
     // Borders and icon strokes have their own, lower threshold. A gate that only
     // checked 4.5:1 would either pass a 3.1:1 border or fail a legal one.
