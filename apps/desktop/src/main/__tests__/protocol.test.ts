@@ -13,6 +13,7 @@ import {
   isInside,
   resolveInside,
 } from "../protocol.js";
+import type { ShellError } from "../../shared/shell-error.js";
 
 const ROOT = process.platform === "win32" ? "C:\\srv\\app" : "/srv/app";
 
@@ -267,6 +268,81 @@ describe("createProtocolHandler", () => {
     const response = await handler(new Request(`app://${APP_HOST}/`));
 
     expect(response.status).toBe(404);
+  });
+
+  it("reports a boundary refusal with its own code", async () => {
+    // A refusal that leaves no trace is indistinguishable from a request that
+    // never arrived. The code is what tells "your allow root is wrong" apart from
+    // "the file is missing" -- which look identical from the window: nothing.
+    const reported: ShellError[] = [];
+    const reporting = createProtocolHandler({
+      allowRoot: ROOT,
+      headersFor,
+      onFailure: (error) => reported.push(error),
+    });
+
+    await reporting(new Request(`app://${APP_HOST}/%2e%2e%2fsecrets.txt`));
+
+    expect(reported).toHaveLength(1);
+    expect(reported[0]?.code).toBe("APP_PROTOCOL_DENIED");
+    expect(reported[0]?.messageKey).toBe("error.shell.resourceDenied");
+  });
+
+  it("reports a missing file for a path inside the root", async () => {
+    const reported: ShellError[] = [];
+    const reporting = createProtocolHandler({
+      allowRoot: ROOT,
+      headersFor,
+      onFailure: (error) => reported.push(error),
+    });
+
+    await reporting(new Request(`app://${APP_HOST}/nope.txt`));
+
+    expect(reported).toHaveLength(1);
+    expect(reported[0]?.code).toBe("APP_PROTOCOL_NOT_FOUND");
+  });
+
+  it("reports a miss for a directory as not-found, not denied", async () => {
+    // A directory is inside the root. Reporting it as denied would send the user
+    // looking for a permissions problem that does not exist.
+    const reported: ShellError[] = [];
+    const reporting = createProtocolHandler({
+      allowRoot: ROOT,
+      headersFor,
+      onFailure: (error) => reported.push(error),
+    });
+
+    await reporting(new Request(`app://${APP_HOST}/`));
+
+    expect(reported[0]?.code).toBe("APP_PROTOCOL_NOT_FOUND");
+  });
+
+  it("reports nothing for a served file", async () => {
+    // The absence of a report is the only signal that success is genuinely
+    // silent; a handler that reported everything would be noise nobody reads.
+    const root = await mkdtemp(path.join(tmpdir(), "app-root-"));
+
+    await writeFile(path.join(root, "index.html"), "<!doctype html>");
+
+    const reported: ShellError[] = [];
+    const reporting = createProtocolHandler({
+      allowRoot: root,
+      headersFor,
+      onFailure: (error) => reported.push(error),
+    });
+
+    const response = await reporting(new Request(`app://${APP_HOST}/index.html`));
+
+    expect(response.status).toBe(200);
+    expect(reported).toHaveLength(0);
+  });
+
+  it("does not require a reporter", async () => {
+    // The tests above answer questions about responses; a required callback would
+    // make every one of them pass a no-op.
+    const silent = createProtocolHandler({ allowRoot: ROOT, headersFor });
+
+    await expect(silent(new Request(`app://${APP_HOST}/nope.txt`))).resolves.toBeDefined();
   });
 });
 

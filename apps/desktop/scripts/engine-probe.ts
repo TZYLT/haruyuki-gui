@@ -26,7 +26,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { Engine } from "@haruyuki/core";
+import { Engine, ENGINE_ERROR_CODES } from "@haruyuki/core";
 import type { EngineSpawnSpec } from "@haruyuki/core";
 
 /**
@@ -73,6 +73,16 @@ interface ProbeResult {
   stopMs?: number;
   state?: string;
   error?: string;
+  /**
+   * The engine's own classification of the failure, when it produced one.
+   *
+   * One of B1's five codes (`SPAWN_FAILED`, `PORT_NOT_FOUND`, `AUTH_FAILED`,
+   * `PROTOCOL_MISMATCH`, `TIMEOUT`). Reported verbatim rather than folded into a
+   * generic "the probe failed": the shell's `ENGINE_PROBE_FAILED` code is meant to
+   * subdivide using exactly this value (requirement doc section 6.3), and a
+   * generic message would throw away the only part a human can act on.
+   */
+  errorCode?: string;
 }
 
 /**
@@ -233,6 +243,7 @@ async function main(): Promise<void> {
       {
         ready: false,
         error: error instanceof Error ? error.message : String(error),
+        ...readEngineErrorCode(error),
         state: engine.state,
       },
       1,
@@ -241,6 +252,30 @@ async function main(): Promise<void> {
     // Pointwise: the directory this run made, by exact path.
     await rm(tokenDir, { recursive: true, force: true }).catch(() => undefined);
   }
+}
+
+/**
+ * Pull the engine's own classification out of a thrown failure, if it has one.
+ *
+ * `EngineStartError` carries a `code`; a plain `Error` does not. Read rather than
+ * cast, and validated against the exported list, so a code that does not exist in
+ * `@haruyuki/core` cannot leak into the report as a plausible-looking string.
+ *
+ * Returns a spreadable object so the field is omitted rather than set to
+ * `undefined`, which `exactOptionalPropertyTypes` would reject.
+ *
+ * @param error whatever the start path threw
+ */
+function readEngineErrorCode(error: unknown): { errorCode?: string } {
+  if (typeof error !== "object" || error === null) return {};
+
+  const candidate = (error as { code?: unknown }).code;
+
+  if (typeof candidate !== "string") return {};
+
+  return (ENGINE_ERROR_CODES as readonly string[]).includes(candidate)
+    ? { errorCode: candidate }
+    : {};
 }
 
 void app

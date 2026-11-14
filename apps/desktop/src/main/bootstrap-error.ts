@@ -28,6 +28,16 @@ export interface BootstrapFailure {
   detail: string;
   /** Absolute log path, when one is known. Shown so the user can attach it. */
   logPath?: string;
+  /**
+   * The shell error code, when the failure has one.
+   *
+   * Shown verbatim: it is ASCII, stable, and it is the token a bug report needs.
+   * The page does *not* translate it. Translating here would mean shipping a
+   * catalogue into the one page that exists because the catalogue may be
+   * unavailable, and a wrong-language heading is a smaller problem than a page
+   * that cannot render.
+   */
+  code?: string;
 }
 
 /**
@@ -66,6 +76,10 @@ export function bootstrapErrorHtml(failure: BootstrapFailure): string {
     failure.logPath === undefined
       ? ""
       : `<dt>Log / 日志</dt><dd><code>${escapeHtml(failure.logPath)}</code></dd>`;
+  const codeRow =
+    failure.code === undefined
+      ? ""
+      : `<dt>Code / 错误码</dt><dd><code>${escapeHtml(failure.code)}</code></dd>`;
 
   return `<!doctype html>
 <html lang="en">
@@ -93,6 +107,7 @@ export function bootstrapErrorHtml(failure: BootstrapFailure): string {
     <h1>haruyuki could not start / haruyuki 启动失败</h1>
     <dl>
       <dt>Event / 事件</dt><dd><code>${event}</code></dd>
+      ${codeRow}
       <dt>Detail / 详情</dt><dd>${detail}</dd>
       ${logRow}
     </dl>

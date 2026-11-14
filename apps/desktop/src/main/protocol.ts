@@ -20,6 +20,8 @@
 import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 
+import { shellError, type ShellError } from "../shared/shell-error.js";
+
 /** The scheme registered for the shell's own assets. A rename is a contract change. */
 export const APP_SCHEME = "app" as const;
 
@@ -217,6 +219,15 @@ export interface HandlerDeps {
   readonly allowRoot: string;
   /** Build the response headers, so the CSP stays in `csp.ts`. */
   readonly headersFor: (contentType: string) => Record<string, string>;
+  /**
+   * Report a refusal, so it reaches the log with a code.
+   *
+   * Optional because the tests care about responses, not reports, and a required
+   * callback would make every one of them pass a no-op. The production caller
+   * always supplies it: a refused request that leaves no trace is indistinguishable
+   * from a request that never arrived.
+   */
+  readonly onFailure?: (error: ShellError) => void;
 }
 
 /**
@@ -244,6 +255,8 @@ export function createProtocolHandler(deps: HandlerDeps) {
     // Only the registered host is served. `app://elsewhere/...` shares the
     // scheme but not the origin the CSP is written for.
     if (url.host !== APP_HOST) {
+      deps.onFailure?.(shellError("APP_PROTOCOL_NOT_FOUND", `unknown host ${url.host}`));
+
       return new Response(null, { status: 404 });
     }
 
@@ -252,7 +265,24 @@ export function createProtocolHandler(deps: HandlerDeps) {
     if (!resolved.ok || resolved.absolutePath === undefined) {
       // 403 for a boundary refusal, 404 for a malformed path. The distinction is
       // for the log; the page sees a failure either way.
-      return new Response(null, { status: resolved.reason === "outside-root" ? 403 : 404 });
+      //
+      // A refusal is reported with a code of its own. "The file is outside the
+      // root" and "the file is not there" are different answers to the user, and
+      // collapsing them into one reported failure is how a misconfigured allow
+      // root looks like a broken build for an hour.
+      if (resolved.reason === "outside-root") {
+        deps.onFailure?.(
+          shellError("APP_PROTOCOL_DENIED", `path escaped the allow root: ${url.pathname}`),
+        );
+
+        return new Response(null, { status: 403 });
+      }
+
+      deps.onFailure?.(
+        shellError("APP_PROTOCOL_NOT_FOUND", `unusable path: ${url.pathname} (${resolved.reason})`),
+      );
+
+      return new Response(null, { status: 404 });
     }
 
     const filePath = resolved.absolutePath;
@@ -265,16 +295,30 @@ export function createProtocolHandler(deps: HandlerDeps) {
       const info = await stat(filePath);
       isFile = info.isFile();
     } catch {
+      deps.onFailure?.(shellError("APP_PROTOCOL_NOT_FOUND", `no such file: ${filePath}`));
+
       return new Response(null, { status: 404 });
     }
 
-    if (!isFile) return new Response(null, { status: 404 });
+    if (!isFile) {
+      deps.onFailure?.(shellError("APP_PROTOCOL_NOT_FOUND", `not a file: ${filePath}`));
+
+      return new Response(null, { status: 404 });
+    }
 
     let body: Buffer;
 
     try {
       body = await readFile(filePath);
-    } catch {
+    } catch (error) {
+      // A file that exists but cannot be read is still "not found" from the
+      // page's point of view: there is no content to serve. The detail keeps the
+      // reason, because "permissions" and "race with a rebuild" need different
+      // fixes.
+      deps.onFailure?.(
+        shellError("APP_PROTOCOL_NOT_FOUND", `unreadable: ${filePath} (${String(error)})`),
+      );
+
       return new Response(null, { status: 404 });
     }
 
