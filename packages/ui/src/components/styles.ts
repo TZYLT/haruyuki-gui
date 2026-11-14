@@ -86,7 +86,11 @@ const BUTTON_CSS = `
 }
 
 .ui-button[data-variant="secondary"] {
-  background-color: var(--ui-color-surface-1);
+  /* surface-2, not surface-1: the base rule paints the page with surface-1, and a
+     control filled with the page colour has no visible edge in the dark themes.
+     Observed on a screenshot of the dark combination, where the Secondary button
+     and the secondary action buttons vanished into the background. */
+  background-color: var(--ui-color-surface-2);
   color: var(--ui-color-neutral-1);
   border-color: var(--ui-color-neutral-3);
 }
@@ -133,7 +137,9 @@ const INPUT_CSS = `
   align-items: center;
   gap: var(--ui-space-2);
   ${CONTROL_BASE}
-  background-color: var(--ui-color-surface-1);
+  /* surface-2 for the same reason as the secondary button: the page is already
+     surface-1, so a field filled with it has no perceptible boundary. */
+  background-color: var(--ui-color-surface-2);
   border: 1px solid var(--ui-color-neutral-3);
   padding: var(--ui-space-2) var(--ui-space-4);
   transition: border-color var(--ui-motion-duration-2) var(--ui-motion-easing-1);
@@ -382,7 +388,7 @@ const SELECT_CSS = `
   align-items: center;
   gap: var(--ui-space-2);
   ${CONTROL_BASE}
-  background-color: var(--ui-color-surface-1);
+  background-color: var(--ui-color-surface-2);
   border: 1px solid var(--ui-color-neutral-3);
   padding: var(--ui-space-2) var(--ui-space-4);
   cursor: pointer;
@@ -422,7 +428,7 @@ const SELECT_CSS = `
 }
 
 .ui-select__popup {
-  background-color: var(--ui-color-surface-1);
+  background-color: var(--ui-color-surface-2);
   border: 1px solid var(--ui-color-neutral-3);
   border-radius: var(--ui-radius-2);
   box-shadow: 0 4px 16px rgb(0 0 0 / 12%);

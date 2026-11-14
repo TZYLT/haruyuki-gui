@@ -109,6 +109,31 @@ export function themeRule(theme: Theme): string {
 }
 
 /**
+ * Base rules that make a theme actually visible.
+ *
+ * Tokens on their own only define variables. Nothing paints them, so a document
+ * with `data-theme="dark"` and no base rule keeps a white page with dark
+ * components -- which is what a screenshot of the four-combination page showed:
+ * the *components* switched and the page did not, because `body` has a default
+ * background from the user agent and none of our rules touched it.
+ *
+ * This is the minimum needed for a combination to be usable: the page surface, the
+ * text colour, and the font. Everything else stays with the components, so a host
+ * that wants its own page chrome can override these two rules and lose nothing.
+ */
+const BASE_CSS = `
+body {
+  margin: 0;
+  background-color: var(--ui-color-surface-1);
+  color: var(--ui-color-neutral-1);
+  font-family: var(--ui-font-family-body);
+  /* Unitless so line height follows each element's own font size, which is what
+     makes the same control the same height in Chinese and in English. */
+  line-height: var(--ui-font-lineHeight-2);
+}
+`;
+
+/**
  * Render all four themes plus the reduced-motion override as one stylesheet.
  *
  * Sorted by theme key so the output is byte-stable: a snapshot test can then
@@ -129,7 +154,11 @@ export function themeCss(): string {
       return themeRule(theme);
     });
 
-  return [...rules, REDUCED_MOTION_CSS].join("\n\n");
+  // Base rules first: they read the variables, so they must come after the
+  // declarations in cascade order at equal specificity -- and a `body` rule is
+  // less specific than anything scoped to `:root`, so order does not matter for
+  // correctness, only for readability.
+  return [BASE_CSS, ...rules, REDUCED_MOTION_CSS].join("\n\n");
 }
 
 /** Marks the style element this module owns, so injection stays idempotent. */

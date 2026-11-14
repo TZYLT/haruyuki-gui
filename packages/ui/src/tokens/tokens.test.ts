@@ -106,6 +106,18 @@ describe("stylesheet generation", () => {
     }
   });
 
+  it("paints the page surface from the theme, not only the components", () => {
+    // Tokens are variables; nothing paints them. Without a base rule a dark
+    // theme produced a white page with dark components, which is what a
+    // screenshot of the four-combination page showed. The class of bug no token
+    // assertion can see: every value was correct and nothing consumed it.
+    const css = themeCss();
+
+    expect(css).toMatch(/body\s*\{/);
+    expect(css).toContain("background-color: var(--ui-color-surface-1)");
+    expect(css).toContain("color: var(--ui-color-neutral-1)");
+  });
+
   it("zeroes the motion durations under prefers-reduced-motion", () => {
     expect(themeCss()).toContain("@media (prefers-reduced-motion: reduce)");
   });
