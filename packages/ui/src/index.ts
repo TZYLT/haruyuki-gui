@@ -14,6 +14,7 @@
 /** Package name, useful in diagnostics and in error messages. */
 export const PACKAGE_NAME = "@haruyuki/ui" as const;
 
+export * from "./bridge/index.js";
 export * from "./components/index.js";
 export * from "./i18n/index.js";
 export * from "./icons/index.js";
