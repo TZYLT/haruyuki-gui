@@ -536,36 +536,43 @@ function vitest(files, extraArgs = []) {
 }
 
 /**
- * Every test file in the repository below the roots that hold tests, as
- * repo-relative posix paths.
+ * Every test file the gate will run, as repo-relative posix paths.
  *
- * Two roots, because the repository keeps tests in two places and the `test`
- * segment must be the one that runs them all:
+ * Three roots, each with the rule its own tree follows:
  *
- * - `scripts/**`, recursively -- gate self-tests sit next to the gate they
- *   exercise, and a gate may live in a subdirectory (`scripts/tokens/check.mjs`
- *   has `scripts/tokens/check.test.ts`). A flat listing would have missed it,
- *   which is the same class of bug as a test file nobody collects.
- * - `packages/<pkg>/src/**`, co-located with the source they cover.
+ * - `scripts/**`, written whole -- a gate self-test sits next to the gate it
+ *   exercises and a gate may live in a subdirectory.
+ * - `packages/<name>/src/**` and `apps/<name>/src/**`, co-located with the
+ *   source they cover.
+ *
+ * The `<name>/src/` shape is spelled out rather than implied by the walk, because
+ * it has to agree with `vitest.config.mts`'s `include` list exactly. When the two
+ * disagreed, this function collected a test file that vitest's own include
+ * pattern then refused, and the whole segment failed with "no test files found"
+ * for a file sitting right there.
  *
  * The tree is walked rather than globbed because this script has no dependencies.
  * `SKIPPED_TEST_DIRS` is skipped everywhere: the `fixtures` trees are deliberately
  * broken and must never be collected as tests, and a nested worktree or a
  * published copy is not this repository's source.
  *
- * This segment is now the only one that runs the unit tests. It used to share that
+ * This segment is the only one that runs the unit tests. It used to share that
  * job with a separate coverage segment, which re-ran everything under
  * instrumentation and accepted a non-zero exit as long as a table was printed --
  * so a failing package test only failed verify for as long as vitest kept omitting
  * the table on failure. That arrangement is gone; the verdict and the numbers now
  * come from one run.
-
  *
- * @param {string} root Absolute posix repository root.
+ * @param {string} root Absolute repository root.
  * @returns {string[]}
  */
 function discoverTestFiles(root) {
-  const roots = ["scripts", "packages"];
+  /** @type {Array<{ top: string, pattern: RegExp }>} */
+  const roots = [
+    { top: "scripts", pattern: /^scripts\/.*\.test\.ts$/ },
+    { top: "packages", pattern: /^packages\/[^/]+\/src\/.*\.test\.tsx?$/ },
+    { top: "apps", pattern: /^apps\/[^/]+\/src\/.*\.test\.tsx?$/ },
+  ];
 
   /**
    * @param {string} relative Repo-relative posix directory.
@@ -583,7 +590,7 @@ function discoverTestFiles(root) {
       // expensive. `node_modules` and `dist` are covered by the skip set.
       if (entry.name.startsWith(".")) continue;
 
-      const child = `${relative}/${entry.name}`;
+      const child = relative + "/" + entry.name;
 
       if (entry.isDirectory()) {
         if (!SKIPPED_TEST_DIRS.has(entry.name)) found.push(...walk(child));
@@ -595,7 +602,7 @@ function discoverTestFiles(root) {
     return found;
   }
 
-  return roots.flatMap(walk).sort();
+  return roots.flatMap(({ top, pattern }) => walk(top).filter((file) => pattern.test(file))).sort();
 }
 
 /**

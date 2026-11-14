@@ -457,10 +457,25 @@ describe("verify aggregator: test discovery", () => {
     expect(collected.some((file) => file.startsWith("docs/"))).toBe(false);
   });
 
-  it("does not collect a .test.tsx that is not under a discovered root", () => {
+  it("collects a .test.tsx under an app shell's src", () => {
+    // The shells were outside the discovery roots while they held nothing but a
+    // placeholder export. Their tests were collected by the include pattern and
+    // run by nobody, which is the silent version of a test that never fails.
     const tree = makeStubTree({ extraFiles: ["apps/desktop/src/shell.test.tsx"] });
 
-    expect(collectedTests(tree, runVerify(tree))).not.toContain("apps/desktop/src/shell.test.tsx");
+    expect(collectedTests(tree, runVerify(tree))).toContain("apps/desktop/src/shell.test.tsx");
+  });
+
+  it("does not collect an app shell test that is outside src", () => {
+    // Same reasoning as the `src/` segment in the package patterns: a test file
+    // in the app's root or in `dist/` is not source and must stay out.
+    const tree = makeStubTree({
+      extraFiles: ["apps/desktop/shell.test.tsx", "apps/desktop/dist/shell.test.tsx"],
+    });
+    const collected = collectedTests(tree, runVerify(tree));
+
+    expect(collected).not.toContain("apps/desktop/shell.test.tsx");
+    expect(collected).not.toContain("apps/desktop/dist/shell.test.tsx");
   });
 });
 
