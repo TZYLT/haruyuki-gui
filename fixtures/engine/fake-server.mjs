@@ -15,9 +15,12 @@
  *   success-false     the response carries success false and an error message
  *   close-on-connect  the socket is closed right after the connection opens
  *   non-json          requests are answered with a non-JSON text frame
+ *   replay            the 8th mode: emits the fixture's s2c lines, in order and
+ *                     after the plan's injections, and never answers a c2s frame
  *
  * Two ways in:
  *   node fixtures/engine/fake-server.mjs [--port 0] [--mode <mode>] [--token <t>]
+ *   node fixtures/engine/fake-server.mjs --replay fixtures/engine/recordings/x.jsonl
  *   import { startFakeServer } from "./fixtures/engine/fake-server.mjs";
  *
  * The fixture deliberately imports nothing from packages/core: only `ws` via a
@@ -25,10 +28,13 @@
  * of that package and pnpm does not hoist it to the repo root.
  */
 
+import { readFileSync } from "node:fs";
 import http from "node:http";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
+
+import { buildReplaySteps, parseWireFixture, runReplay } from "./replay.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(HERE, "..", "..");
@@ -49,6 +55,7 @@ export const FAKE_SERVER_MODES = Object.freeze([
   "success-false",
   "close-on-connect",
   "non-json",
+  "replay",
 ]);
 
 /**
@@ -89,6 +96,15 @@ function normalizeMode(mode) {
   }
 
   return value;
+}
+
+/** Replay options of the 8th mode: the parsed fixture, an optional plan, a clock. */
+function normalizeReplay(replay) {
+  if (replay === null || typeof replay !== "object" || replay.fixture === undefined) {
+    throw new Error('fake-server: mode "replay" requires options.replay.fixture');
+  }
+
+  return { fixture: replay.fixture, plan: replay.plan ?? {}, clock: replay.clock };
 }
 
 /**
@@ -149,12 +165,14 @@ const NON_JSON_FRAME = "fake-server: this frame is intentionally not JSON";
  *   token?: string | null,
  *   host?: string,
  *   logReceived?: boolean,
+ *   replay?: { fixture: object, plan?: object, clock?: object },
  * }} [options]
  * @returns {Promise<{
  *   url: string,
  *   port: number,
  *   close: () => Promise<void>,
  *   received: string[],
+ *   emitted: string[],
  * }>}
  */
 export function startFakeServer(options = {}) {
@@ -166,7 +184,54 @@ export function startFakeServer(options = {}) {
 
   /** Every frame the server received, in arrival order (for assertions). */
   const received = [];
+  /** Every s2c frame replay emitted, in emission order; the 7 old modes stay empty. */
+  const emitted = [];
   const sockets = new Set();
+
+  const replay = mode === "replay" ? normalizeReplay(options.replay) : null;
+  const replaySteps = replay === null ? [] : buildReplaySteps(replay.fixture, replay.plan);
+
+  // Replay keeps one live socket at a time: a planned disconnect drops it and the
+  // next frame waits for the client to reconnect.
+  let replaySocket = null;
+  let socketWaiter = null;
+  let replayStopped = false;
+
+  const takeSocket = () => {
+    if (replaySocket !== null) return Promise.resolve(replaySocket);
+
+    return new Promise((resolve) => {
+      socketWaiter = resolve;
+    });
+  };
+
+  const sendReplayFrame = async (text) => {
+    const socket = await takeSocket();
+
+    if (replayStopped || socket === null) return;
+
+    try {
+      socket.send(text);
+    } catch {
+      return; // The client went away outside the plan.
+    }
+
+    emitted.push(text);
+  };
+
+  const dropReplaySocket = async () => {
+    const socket = replaySocket;
+
+    replaySocket = null;
+
+    if (socket === null) return;
+
+    try {
+      socket.close();
+    } catch {
+      socket.terminate();
+    }
+  };
 
   let closePromise = null;
 
@@ -176,6 +241,9 @@ export function startFakeServer(options = {}) {
     if (logReceived) {
       process.stderr.write(`[fake-server] received: ${raw}\n`);
     }
+
+    // Replay only records a c2s frame and never answers it (frozen semantics).
+    if (mode === "replay") return;
 
     if (mode === "no-response") return;
 
@@ -235,6 +303,8 @@ export function startFakeServer(options = {}) {
 
       webSocket.on("close", () => {
         sockets.delete(webSocket);
+
+        if (replaySocket === webSocket) replaySocket = null;
       });
       webSocket.on("error", () => {
         // A test may terminate mid-frame; the close handler still runs.
@@ -243,6 +313,17 @@ export function startFakeServer(options = {}) {
         const raw = Buffer.isBuffer(data) ? data.toString("utf8") : String(data);
         handleFrame(webSocket, raw);
       });
+
+      if (mode === "replay") {
+        replaySocket = webSocket;
+
+        const waiter = socketWaiter;
+
+        socketWaiter = null;
+        if (waiter !== null) waiter(webSocket);
+
+        return;
+      }
 
       if (mode === "close-on-connect") {
         webSocket.close();
@@ -267,6 +348,13 @@ export function startFakeServer(options = {}) {
         if (closePromise !== null) return closePromise;
 
         closePromise = (async () => {
+          replayStopped = true;
+
+          const waiter = socketWaiter;
+
+          socketWaiter = null;
+          if (waiter !== null) waiter(null);
+
           for (const socket of sockets) {
             try {
               socket.terminate();
@@ -275,6 +363,7 @@ export function startFakeServer(options = {}) {
             }
           }
           sockets.clear();
+          replaySocket = null;
 
           await new Promise((resolveClose) => {
             socketServer.close(() => resolveClose());
@@ -291,12 +380,28 @@ export function startFakeServer(options = {}) {
         return closePromise;
       };
 
-      resolve({
+      const handle = {
         url: `ws://${host}:${port}/ws`,
         port,
         received,
+        emitted,
         close,
-      });
+      };
+
+      resolve(handle);
+
+      if (replay !== null) {
+        // The driver starts before any client connects; the first frame waits for
+        // the socket, so a fixture with no s2c line simply leaves the socket open.
+        runReplay(replaySteps, {
+          clock: replay.clock,
+          send: sendReplayFrame,
+          disconnect: dropReplaySocket,
+          shouldStop: () => replayStopped,
+        }).catch(() => {
+          // A closed server ends the sequence; the handle is already resolved.
+        });
+      }
     });
   });
 }
@@ -321,6 +426,7 @@ function parseArgs(argv) {
     mode: DEFAULT_MODE,
     token: null,
     host: DEFAULT_HOST,
+    replay: null,
     help: false,
   };
 
@@ -354,6 +460,13 @@ function parseArgs(argv) {
       case "--host":
         options.host = takeValue();
         break;
+      case "--replay": {
+        const value = takeValue();
+        if (value.length === 0) throw new Error("fake-server: --replay must not be empty");
+        options.replay = value;
+        options.mode = "replay";
+        break;
+      }
       case "--help":
       case "-h":
         options.help = true;
@@ -368,6 +481,7 @@ function parseArgs(argv) {
 
 const USAGE = [
   "usage: node fixtures/engine/fake-server.mjs [--port 0] [--mode <mode>] [--token <t>]",
+  "       node fixtures/engine/fake-server.mjs --replay <fixture.jsonl> [--port 0]",
   `modes: ${FAKE_SERVER_MODES.join(", ")}`,
   "",
 ].join("\n");
@@ -388,12 +502,31 @@ async function main() {
     return;
   }
 
+  let replay = null;
+
+  if (options.mode === "replay") {
+    try {
+      if (options.replay === null) {
+        throw new Error("fake-server: --mode replay requires --replay <fixture.jsonl>");
+      }
+
+      replay = { fixture: parseWireFixture(readFileSync(options.replay, "utf8")) };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+
+      process.stderr.write(`[fake-server] ${message}\n`);
+      process.exit(2);
+      return;
+    }
+  }
+
   const server = await startFakeServer({
     port: options.port,
     mode: options.mode,
     token: options.token,
     host: options.host,
     logReceived: true,
+    ...(replay === null ? {} : { replay }),
   });
 
   // Same two lines the real engine prints (F-6), in the same order.
