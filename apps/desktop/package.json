@@ -8,7 +8,14 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "setup:electron": "node ../../node_modules/electron/install.js",
+    "build": "vite build --config vite.main.mts && vite build --config vite.renderer.mts && vite build --config vite.probe.mts",
+    "build:main": "vite build --config vite.main.mts",
+    "build:renderer": "vite build --config vite.renderer.mts",
+    "start": "electron dist/main/main.cjs",
+    "typecheck": "tsc --noEmit",
+    "build:probe": "vite build --config vite.probe.mts",
+    "smoke:engine": "node scripts/smoke-engine.mjs"
   },
   "dependencies": {
     "@haruyuki/core": "workspace:*",

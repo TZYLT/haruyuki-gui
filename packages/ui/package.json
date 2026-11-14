@@ -5,7 +5,9 @@
   "version": "0.1.0",
   "main": "src/index.ts",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./examples": "./src/examples/index.ts",
+    "./i18n/core": "./src/i18n/core.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"
