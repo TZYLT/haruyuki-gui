@@ -68,6 +68,11 @@ Usage:
   --gap       pause between sent commands (default 80 ms; raise it when a
               command bootstraps a runtime that needs real work first)
   --keep-raw  accepted for forward compatibility; raw output stays under _research/
+  --auto-approve <allow|deny>  answer an interactive tool request without a human:
+              the recorder replies to a control_request (subtype can_use_tool) with an
+              approval_response carrying the same permission id, so the turn can run
+              to completion. Without it a static command list can only record the
+              request half of the approval flow.
   --provider-auth  provider credentials file copied into the run's throwaway home
               (<auth.json>/providers/auth.json layout is reproduced verbatim); the
               run root is deleted afterwards, so the caller's own home is never used
@@ -114,6 +119,7 @@ function parseArgs(argv) {
     gapMs: SEND_GAP_MS,
     keepRaw: false,
     providerAuth: null,
+    autoApprove: null,
   };
   const valueFlags = [
     "--scenario",
@@ -123,6 +129,7 @@ function parseArgs(argv) {
     "--timeout",
     "--gap",
     "--provider-auth",
+    "--auto-approve",
   ];
   for (let index = 0; index < argv.length; index += 1) {
     const flag = argv[index];
@@ -135,7 +142,10 @@ function parseArgs(argv) {
       else if (flag === "--send") options.send = raw;
       else if (flag === "--out") options.out = raw;
       else if (flag === "--provider-auth") options.providerAuth = raw;
-      else {
+      else if (flag === "--auto-approve") {
+        if (raw !== "allow" && raw !== "deny") fail("--auto-approve expects allow or deny");
+        options.autoApprove = raw;
+      } else {
         const parsed = Number(raw);
         if (!Number.isInteger(parsed) || parsed <= 0) fail(`${flag} expects a positive integer`);
         if (flag === "--idle") options.idleMs = parsed;
@@ -196,6 +206,33 @@ function loadWebSocket() {
     );
   }
 }
+/**
+ * Answer one interactive tool request, when the caller asked for it.
+ *
+ * The permission id lives on the request (`perm-<toolCallId>`), not on the command
+ * that started the turn, so this is the one place a recording needs to react to a
+ * frame instead of replaying a fixed list. `deny` carries the message the protocol
+ * requires; `allow` needs nothing else.
+ */
+function answerApproval(ws, msg, behavior, record) {
+  if (msg === null || typeof msg !== "object" || msg.type !== "control_request") return;
+  if (msg.request === null || typeof msg.request !== "object") return;
+  if (msg.request.subtype !== "can_use_tool") return;
+  if (typeof msg.request_id !== "string" || typeof msg.request.tool_call_id !== "string") return;
+  const decision =
+    behavior === "allow"
+      ? { behavior: "allow" }
+      : { behavior: "deny", message: "denied by the recorder" };
+  const reply = {
+    type: "input",
+    request_id: `approval-${msg.request.tool_call_id}`,
+    runtime: msg.runtime,
+    payload: { kind: "approval_response", request_id: msg.request_id, decision },
+  };
+  ws.send(JSON.stringify(reply));
+  record("c2s", reply);
+}
+
 /** Isolated run root plus the `work` directory used as the engine cwd. */
 async function createRunRoot() {
   const rootDir = await mkdtemp(path.join(tmpdir(), "haruyuki-record-"));
@@ -515,6 +552,7 @@ async function runRecording(options) {
       }
       if (msg && typeof msg.request_id === "string") responses.set(msg.request_id, msg);
       record("s2c", msg);
+      if (options.autoApprove !== null) answerApproval(ws, msg, options.autoApprove, record);
     });
     const responseOf = async (requestId) => {
       if (!(await waitFor(() => responses.has(requestId), options.timeoutMs)))
