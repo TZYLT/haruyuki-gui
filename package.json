@@ -24,12 +24,14 @@
     "contract:check": "node scripts/contract/cli.mjs check",
     "tokens:check": "node scripts/tokens/check.mjs",
     "i18n:check": "node scripts/i18n/check.mjs",
+    "fixtures:check": "node scripts/check-fixtures.mjs",
     "ui:e2e": "node scripts/ui-e2e/check-layout.mjs",
     "perf:check": "node scripts/perf/baseline.mjs",
     "contract:diff": "node scripts/contract/cli.mjs diff",
     "contract:generate": "node scripts/contract/cli.mjs generate",
     "test": "vitest run",
-    "hooks:install": "node scripts/install-hooks.mjs"
+    "hooks:install": "node scripts/install-hooks.mjs",
+    "record": "node scripts/engine/record.mjs"
   },
   "devDependencies": {
     "@formatjs/icu-messageformat-parser": "3.5.23",

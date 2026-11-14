@@ -1,0 +1,4 @@
+{
+  "speed": "instant",
+  "inject": [{ "kind": "disconnect", "atLine": 3, "resume": true }]
+}

@@ -1,0 +1,7 @@
+{"kind":"frames","schemaVersion":1,"bridgeVersion":1,"clock":"virtual","note":"reorder: reorder.plan.json swaps 1-based lines 3 and 4, two adjacent stream delta.message frames. seq is diagnostic and is never renumbered by the swap."}
+{"v":1,"ch":"control","seq":1,"t":"bridge.ready","body":{"appVersion":"0.1.0","bridgeVersion":1}}
+{"v":1,"ch":"stream","seq":1,"t":"delta.message","body":{"index":1,"text":"a"}}
+{"v":1,"ch":"stream","seq":2,"t":"delta.message","body":{"index":2,"text":"b"}}
+{"v":1,"ch":"stream","seq":3,"t":"delta.message","body":{"index":3,"text":"c"}}
+{"v":1,"ch":"bulk","seq":1,"t":"bulk.page","body":{"page":1,"items":["a"]},"page":{"more":false}}
+{"v":1,"ch":"bulk","seq":2,"t":"bulk.page","body":{"page":2,"items":["b"]},"page":{"more":false}}
