@@ -1,3 +1,7 @@
+import { mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import {
@@ -74,6 +78,70 @@ describe("resolveInside", () => {
 
     expect(result.ok).toBe(false);
   });
+
+  it("decodes a percent-encoded name into the file it actually names", () => {
+    // The regression: `new URL().pathname` is *not* decoded -- `%20`, `%2f` and
+    // every non-ASCII byte survive. Resolving that string looked for a file
+    // called `a%20b.js`, so any asset whose name had a space, an accent or a CJK
+    // character 404'd. Contract-free filenames are the normal case for a user
+    // document name, so this was a real reachability hole, not a curiosity.
+    const spaced = resolveInside(ROOT, "/a%20b.js");
+
+    expect(spaced.ok).toBe(true);
+    expect(spaced.absolutePath?.endsWith("a b.js")).toBe(true);
+
+    const cjk = resolveInside(ROOT, "/%E4%B8%AD%E6%96%87.png");
+
+    expect(cjk.ok).toBe(true);
+    expect(cjk.absolutePath?.endsWith("中文.png")).toBe(true);
+  });
+
+  it("decodes before deciding containment, so an encoded traversal is refused", () => {
+    // `/..%2f..%2fpackage.json` must be read as the escape it spells. The first
+    // version left it encoded, so the handler looked up a file literally named
+    // `..%2f..%2fpackage.json` and answered 404 -- safe by accident, and the
+    // accident was indistinguishable from a working boundary.
+    for (const attempt of ["/..%2f..%2fpackage.json", "/..%2fpackage.json", "/..%5c..%5cx.txt"]) {
+      const result = resolveInside(ROOT, attempt);
+
+      expect(result.ok, attempt).toBe(false);
+      expect(result.reason, attempt).toBe("outside-root");
+    }
+  });
+
+  it("refuses a malformed escape rather than passing it through", () => {
+    // A lone `%` and `%zz` make `decodeURIComponent` throw. Passing the raw
+    // string on would alias a file whose name starts with `%`, which is a
+    // different file from the one the URL names.
+    for (const bad of ["/%zz.js", "/100%.js"]) {
+      const result = resolveInside(ROOT, bad);
+
+      expect(result.ok, bad).toBe(false);
+      expect(result.reason, bad).toBe("bad-path");
+    }
+  });
+
+  it("refuses a NUL byte spelled as an escape", () => {
+    const result = resolveInside(ROOT, "/index%00.png");
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("bad-path");
+  });
+
+  it.skipIf(process.platform !== "win32")(
+    "still refuses a drive-relative path that climbs out",
+    () => {
+      // `C:..\..\win.ini` is not absolute, so the `isAbsolute` guard misses it,
+      // yet `path.resolve` reads it as "the current directory on C:, up two" and
+      // lands outside the root. The containment test is the backstop; this pins
+      // that it actually fires rather than trusting the reasoning. Windows-only,
+      // because the shape does not exist elsewhere.
+      const result = resolveInside(ROOT, "/C:..\\..\\win.ini");
+
+      expect(result.ok).toBe(false);
+      expect(result.reason).toBe("outside-root");
+    },
+  );
 });
 
 describe("isInside", () => {
@@ -137,12 +205,10 @@ describe("createProtocolHandler", () => {
   });
 
   it("never serves a file outside the root, whatever the URL encoding", async () => {
-    // Three encodings reach `handle` unchanged because the URL parser only
-    // decodes `%2e%2e` into a normalised segment; `%2f` and `%5c` survive as
-    // literal characters. None of them escape: `%` is an ordinary filename
-    // character, so the path stays inside the root and the read misses. The
-    // assertion is the security property, not a status code -- pinning 403 here
-    // would have meant asserting a refusal that is not what happens.
+    // Five spellings of the same escape. What they share is that decoding them
+    // yields a `..` segment, so `resolveInside` refuses all five -- the
+    // assertion is the security property (no content) rather than one status,
+    // because the layer that refuses is allowed to change.
     const attempts = [
       `app://${APP_HOST}/%2e%2e/secrets.txt`,
       `app://${APP_HOST}/%2e%2e%2fsecrets.txt`,
@@ -158,6 +224,28 @@ describe("createProtocolHandler", () => {
       expect(response.status, url).not.toBe(200);
       expect(body, url).toBe("");
     }
+  });
+
+  it("answers 403, not 404, for an encoded traversal", async () => {
+    // The distinction is the whole point of decoding first: 403 says "you named
+    // a path outside the root", 404 says "no such file". Before the decode, an
+    // encoded escape was reported as a `404`, which reads like a typo in the
+    // caller rather than an attempt.
+    const response = await handler(new Request(`app://${APP_HOST}/..%2f..%2fpackage.json`));
+
+    expect(response.status).toBe(403);
+  });
+
+  it("serves a file whose name is percent-encoded", async () => {
+    // End-to-end proof of the same fix at the layer a user sees: a renderer
+    // asking for an asset with a space in its name gets the asset.
+    const root = await mkdtemp(path.join(tmpdir(), "app-root-"));
+    await writeFile(path.join(root, "a b.js"), "export {};");
+    const ownHandler = createProtocolHandler({ allowRoot: root, headersFor });
+    const response = await ownHandler(new Request(`app://${APP_HOST}/a%20b.js`));
+
+    expect(response.status).toBe(200);
+    await expect(response.text()).resolves.toBe("export {};");
   });
 
   it("answers 403 when the decoded path really does climb out", async () => {

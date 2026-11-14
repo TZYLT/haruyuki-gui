@@ -60,9 +60,20 @@ export interface ResolveResult {
 /**
  * Resolve a URL pathname to an absolute path inside `root`, or refuse.
  *
- * The input is a URL pathname, so it arrives percent-decoded and with a leading
- * slash. It is untrusted: `..` segments, encoded separators and absolute paths
- * all reach here from a page that may already be compromised.
+ * The input is a URL pathname, so it arrives *percent-encoded* and with a leading
+ * slash. That second half is not a detail: `new URL()` normalises `%2e%2e` into a
+ * real `..` segment but leaves `%20`, `%2f` and every non-ASCII byte encoded, so a
+ * pathname handed straight to `path.resolve` names a file called `a%20b.js`. This
+ * function therefore decodes, and it is the only place that does -- a second
+ * decode would turn `%2520` into a space twice.
+ *
+ * Decoding before the containment test is also what makes the encoded-traversal
+ * attempts behave honestly: `/..%2f..%2fpackage.json` becomes `/../../package.json`
+ * and is refused as an escape, instead of being looked up as a literal filename
+ * that happens to miss. The refusal is the correct interpretation of the URL.
+ *
+ * It is untrusted: `..` segments, encoded separators and absolute paths all reach
+ * here from a page that may already be compromised.
  *
  * The containment test is `path.relative` plus a prefix check on the *separator*,
  * not `startsWith("..")`. That distinction is not cosmetic: the relative path
@@ -77,7 +88,8 @@ export function resolveInside(root: string, urlPathname: string): ResolveResult 
   // A NUL byte truncates the string in several layers below this one (`open`,
   // the Windows path parser), so `index.html\0.png` can pass a suffix check and
   // still open `index.html`. Refusing outright is cheaper than reasoning about
-  // which layer truncates first.
+  // which layer truncates first. Checked before decoding as well as after,
+  // because `%00` is the spelling a caller would actually try.
   if (urlPathname.includes("\0")) {
     return { ok: false, reason: "bad-path" };
   }
@@ -87,11 +99,34 @@ export function resolveInside(root: string, urlPathname: string): ResolveResult 
   // and by D2's resource resolver.
   const withoutQuery = urlPathname.split("?")[0]?.split("#")[0] ?? "";
 
+  // Decode before anything is interpreted. `new URL()` normalises `%2e%2e` into
+  // a real `..` segment but leaves `%20`, `%2f` and every non-ASCII byte encoded,
+  // so reading the pathname as-is would look for a file literally named
+  // `a%20b.js`. This is the only decode in the chain: a second one would turn
+  // `%2520` into a space twice.
+  //
+  // A malformed escape (`%zz`, a lone `%`) is refused rather than passed through
+  // with its percent signs intact, because a path we cannot decode is a path we
+  // cannot reason about -- and passing it through would alias a real file whose
+  // name begins with `%`.
+  let decoded: string;
+
+  try {
+    decoded = decodeURIComponent(withoutQuery);
+  } catch {
+    return { ok: false, reason: "bad-path" };
+  }
+
+  // The decoded form can contain a NUL that was spelled `%00`.
+  if (decoded.includes("\0")) {
+    return { ok: false, reason: "bad-path" };
+  }
+
   // Remove the leading separators *before* the absolute-path test. A URL path
   // always begins with `/`, and on Windows `path.win32.isAbsolute("/x")` is
   // true, so testing first would call every legal path absolute and refuse it.
   // What is left is the part that could still name a volume.
-  const relative = withoutQuery.replace(/^[/\\]+/, "");
+  const relative = decoded.replace(/^[/\\]+/, "");
 
   if (relative === "") {
     return { ok: true, absolutePath: path.resolve(root) };
@@ -102,6 +137,12 @@ export function resolveInside(root: string, urlPathname: string): ResolveResult 
   if (path.win32.isAbsolute(relative) || path.posix.isAbsolute(relative)) {
     return { ok: false, reason: "outside-root" };
   }
+
+  // `C:..\..\win.ini` is drive-*relative*: `isAbsolute` is false, yet
+  // `path.resolve` still reads it as "the current directory on C:, then climb
+  // two levels", which leaves the root. It is not special-cased here because the
+  // containment test below already catches it -- resolution produces an absolute
+  // path outside the root and `isInside` says so. The test suite pins that.
 
   // `path.join` normalises, so `a/../../b` collapses before the containment
   // test rather than after it.
