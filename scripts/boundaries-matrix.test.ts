@@ -319,6 +319,32 @@ describe("check-boundaries: file: URLs (P1-3)", () => {
   });
 });
 
+describe("check-boundaries: workspace subpath specifiers", () => {
+  it("attributes @haruyuki/<pkg>/<subpath> to that package, not to unresolved", () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "haruyuki-boundaries-subpath-"));
+    createdRoots.push(root);
+
+    // A subpath export is a real entry point of the package (the test-support
+    // surface is one), so the matrix must grade it as vscode -> core instead of
+    // treating the second path segment as an unknown external package. If this
+    // regressed to "external", any forbidden edge written as a subpath would
+    // quietly pass.
+    writeTree(root, {
+      "packages/protocol/src/index.ts": 'export const protocol = "protocol";\n',
+      "packages/core/src/index.ts": 'export const core = "core";\n',
+      "apps/vscode/src/extension.ts":
+        'import { TESTING_SUPPORT_VERSION } from "@haruyuki/core/testing";\n' +
+        "export const extension = TESTING_SUPPORT_VERSION;\n",
+    });
+
+    const run = runGateAt(root);
+
+    expect(run.status, run.output).toBe(0);
+    expect(run.output).toContain("PASS");
+    expect(reportedRuleIds(run.output)).toEqual([]);
+  });
+});
+
 describe("check-boundaries: fail-closed regressions (P1-7, P1-10)", () => {
   it("exits 2 when packages/ holds none of the five matrix packages", () => {
     const run = runBoundaryGate("broken-only-unrelated-packages");

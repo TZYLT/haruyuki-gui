@@ -347,7 +347,7 @@ function segmentInputs(segment) {
 }
 
 /**
- * Describe the eight base segments (plus three under --full).
+ * Describe the nine base segments (plus three under --full).
  *
  * @param {VerifyOptions} options
  * @returns {Segment[]}
@@ -397,6 +397,18 @@ function buildSegments(options) {
       // before the test segment where a failure would be harder to attribute.
       label: "i18n",
       command: () => gate("scripts/i18n/check.mjs", options.verbose),
+    },
+    {
+      // Corpus shape for the recorded fixtures: one message per line, a header
+      // that carries `schemaVersion`, and a message shape that matches the kind
+      // the header claims. Same reasoning as `i18n` for the position: a broken
+      // fixture should be named by the segment that owns it, not surface as a
+      // confusing failure in the replay tests that read it.
+      //
+      // Redaction is a separate pass over the same files and is not implied by a
+      // green run here.
+      label: "fixtures",
+      command: () => gate("scripts/check-fixtures.mjs", options.verbose),
     },
     {
       // One run, two outputs: the test verdicts and the coverage numbers.
