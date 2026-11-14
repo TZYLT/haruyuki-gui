@@ -8,7 +8,13 @@
  * scripts/engine/acceptance.mjs. The token only travels through
  * --ws-token-file and is never printed; the port comes from the `WebSocket:`
  * stdout line; temp trees are removed pointwise. Raw output stays under
- * `_research/` (gitignored) as redaction "r0"; redaction rewrites it to "r1".
+ * `_research/` (gitignored) as redaction "r0"; redaction rewrites it to "r2".
+ *
+ * The output file is written as `<out>.partial` and only renamed into place when
+ * the run settles cleanly, so a timeout, a crash or Ctrl-C can never leave a
+ * truncated fixture that looks like a complete one, and can never overwrite the
+ * previous recording. SIGINT/SIGTERM/SIGBREAK remove the run root (and the
+ * provider credentials copied into it) before exiting.
  */
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -20,6 +26,7 @@ import {
   openSync,
   readdirSync,
   readFileSync,
+  renameSync,
   rmdirSync,
   unlinkSync,
   writeSync,
@@ -55,19 +62,19 @@ const HELP_TEXT = `Real-engine wire recorder.
 
 Usage:
   node scripts/engine/record.mjs --scenario <name> --send <commands.json>
-    [--out <file.jsonl>] [--idle <ms>] [--timeout <ms>] [--gap <ms>] [--keep-raw]
-    [--provider-auth <auth.json>]
+    [--out <file.jsonl>] [--idle <ms>] [--timeout <ms>] [--gap <ms>]
+    [--provider-auth <auth.json>] [--auto-approve allow|deny]
 
   --scenario  scenario name; also the default output file name
   --send      JSON array of raw c2s commands, sent in order, one frame each;
               a value written {{<request_id>.<path>}} is filled from the
               response to that request_id (runtime scopes, tool ids, ...)
-  --out       default _research/engine-raw/<scenario>.jsonl (gitignored)
+  --out       default _research/engine-raw/<scenario>.jsonl (gitignored);
+              refused inside fixtures/, because a recorder write is unredacted
   --idle      stop after this long without a frame (default 1500 ms)
   --timeout   hard stop for the listening window (default 20000 ms)
   --gap       pause between sent commands (default 80 ms; raise it when a
               command bootstraps a runtime that needs real work first)
-  --keep-raw  accepted for forward compatibility; raw output stays under _research/
   --auto-approve <allow|deny>  answer an interactive tool request without a human:
               the recorder replies to a control_request (subtype can_use_tool) with an
               approval_response carrying the same permission id, so the turn can run
@@ -80,7 +87,10 @@ Usage:
 
 Output starts with the frozen "wire" header, then one
 { "dir": "s2c" | "c2s", "at": <ms since connect>, "msg": <object> } row per frame.
-Exit codes: 0 recorded, 1 run failed, 2 usage or missing engine artifact.
+It is written to <out>.partial and renamed to <out> only when the session settles
+on "idle": a timeout, an engine exit or a closed socket keeps the .partial file
+and exits 1, so an incomplete recording is never mistaken for a complete one.
+Exit codes: 0 recorded, 1 run failed or incomplete, 2 usage or missing artifact.
 Engine artifact: ${BUNDLE_PATH} (missing? run: ${FETCH_HINT})
 `;
 const out = (text) => process.stdout.write(text);
@@ -117,7 +127,6 @@ function parseArgs(argv) {
     idleMs: DEFAULT_IDLE_MS,
     timeoutMs: DEFAULT_TIMEOUT_MS,
     gapMs: SEND_GAP_MS,
-    keepRaw: false,
     providerAuth: null,
     autoApprove: null,
   };
@@ -134,7 +143,6 @@ function parseArgs(argv) {
   for (let index = 0; index < argv.length; index += 1) {
     const flag = argv[index];
     if (flag === "--help" || flag === "-h") options.help = true;
-    else if (flag === "--keep-raw") options.keepRaw = true;
     else if (valueFlags.includes(flag)) {
       const raw = argv[(index += 1)];
       if (raw === undefined || raw.startsWith("--")) fail(`missing value for ${flag}`);
@@ -160,6 +168,14 @@ function parseArgs(argv) {
   if (!SCENARIO_PATTERN.test(options.scenario))
     fail(`invalid --scenario name: ${options.scenario}`);
   if (options.send === null) fail("missing required flag: --send");
+  if (options.out !== null) {
+    const target = path.resolve(process.cwd(), options.out);
+    if (isInsideCorpus(target))
+      fail(
+        `--out must not point into fixtures/: ${target}\n` +
+          "record under _research/ and redact with scripts/redact-fixtures.mjs",
+      );
+  }
   return options;
 }
 /** Read the command list; a malformed file is a usage error before any spawn. */
@@ -192,6 +208,18 @@ const headerLine = (scenario) => ({
   recordedAt: new Date().toISOString(),
 });
 /** Explicit --out is cwd relative; the default is _research/engine-raw (gitignored). */
+const FIXTURES_ROOT = path.join(REPO_ROOT, "fixtures");
+/**
+ * A recorder write is "r0" (unredacted), so it must not land in the tracked
+ * corpus: that path only accepts the output of scripts/redact-fixtures.mjs, and a
+ * truncated run must never be able to overwrite a published fixture. Checked in
+ * `parseArgs`, before the artifact check, so a bad `--out` is a usage error on
+ * every machine rather than only where the engine bundle happens to be present.
+ */
+const isInsideCorpus = (target) => {
+  const fromCorpus = path.relative(FIXTURES_ROOT, target);
+  return !fromCorpus.startsWith("..") && !path.isAbsolute(fromCorpus);
+};
 const resolveOutPath = (options) =>
   options.out === null
     ? path.join(RAW_ROOT, `${options.scenario}.jsonl`)
@@ -229,7 +257,13 @@ function answerApproval(ws, msg, behavior, record) {
     runtime: msg.runtime,
     payload: { kind: "approval_response", request_id: msg.request_id, decision },
   };
-  ws.send(JSON.stringify(reply));
+  try {
+    ws.send(JSON.stringify(reply));
+  } catch {
+    // The socket died between the frame and the answer; the settle window sees
+    // it, and a thrown error here would escape the message listener unhandled.
+    return;
+  }
   record("c2s", reply);
 }
 
@@ -453,7 +487,14 @@ function scrub(text, token, tokenPath) {
 async function resolvePlaceholders(value, responseOf) {
   if (typeof value === "string") {
     const match = /^\{\{([^.}]+)\.(.+)\}\}$/.exec(value);
-    if (match === null) return value;
+    if (match === null) {
+      // Only a whole-string placeholder is resolved: "run: {{r-2.agent.id}}"
+      // would otherwise travel to the engine verbatim and record a command that
+      // nobody meant to send.
+      if (value.includes("{{"))
+        throw new Error(`placeholder must be the whole string, not embedded: ${value}`);
+      return value;
+    }
     let current = await responseOf(match[1]);
     for (const key of match[2].split("."))
       current = current === undefined || current === null ? undefined : current[key];
@@ -509,9 +550,24 @@ async function runRecording(options) {
   };
   const run = await createRunRoot();
   seedProviderAuth(run.rootDir, options.providerAuth);
-  const fd = openSync(outPath, "w");
+  // Written aside and renamed only on a clean settle: a killed run must not be
+  // able to leave a half file, nor destroy the recording it was replacing.
+  const partialPath = `${outPath}.partial`;
+  const fd = openSync(partialPath, "w");
   let ws = null;
   let recording = true;
+  // A signal skips `finally` entirely, so it gets its own synchronous cleanup:
+  // the run root holds the provider credentials when --provider-auth was used.
+  const signals = ["SIGINT", "SIGTERM", "SIGBREAK"];
+  const onSignal = (signal) => {
+    state.error = `interrupted by ${signal}`;
+    recording = false;
+    quietly(() => state.engine && state.engine.child.kill("SIGTERM"));
+    quietly(() => closeSync(fd));
+    quietly(() => removeTreePointwise(run.rootDir));
+    process.exit(signal === "SIGINT" ? 130 : 143);
+  };
+  for (const signal of signals) process.on(signal, onSignal);
   let lastActivityAt = Date.now();
   const record = (dir, msg) => {
     if (!recording) return;
@@ -579,20 +635,33 @@ async function runRecording(options) {
     state.error = (error && error.message) || String(error);
   } finally {
     recording = false;
+    for (const signal of signals) process.off(signal, onSignal);
     if (ws !== null) await closeSocket(ws);
     if (state.engine !== null) state.stop = await stopEngine(state.engine);
     if (state.tokenPath !== null) await unlink(state.tokenPath).catch(() => undefined);
     state.cleanup = await cleanupTemp(run.rootDir);
     closeSync(fd);
   }
-  const ok =
+  // "idle" is the only settle that means the turn finished; "timeout" and
+  // "socket-closed" are how a truncated session looks, and they used to pass.
+  let ok =
     state.error === null &&
+    state.settle === "idle" &&
     state.stop !== null &&
     state.stop.exited &&
     state.cleanup.failureCount === 0;
+  if (ok) {
+    try {
+      renameSync(partialPath, outPath);
+    } catch (error) {
+      state.error = `cannot finalize ${outPath}: ${(error && error.message) || error}`;
+      ok = false;
+    }
+  }
+  const finishedPath = ok ? outPath : `${partialPath} (incomplete)`;
   const ms = (value) => `${Math.round(value === null ? -1 : value)}ms`;
   out(
-    `recording: ${outPath}\nscenario: ${options.scenario}  lines: ${1 + stats.s2c + stats.c2s}  s2c: ${stats.s2c}  c2s: ${stats.c2s}\n`,
+    `recording: ${finishedPath}\nscenario: ${options.scenario}  lines: ${1 + stats.s2c + stats.c2s}  s2c: ${stats.s2c}  c2s: ${stats.c2s}\n`,
   );
   out(
     `timings: spawn->url ${ms(state.spawnToUrlMs)}, socket ${ms(state.socketToOpenMs)}, session ${ms(state.sessionMs)}, stop ${ms(state.stop === null ? null : state.stop.ms)}  settle: ${state.settle === null ? "n/a" : state.settle}\n`,

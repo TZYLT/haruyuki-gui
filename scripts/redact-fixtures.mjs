@@ -32,6 +32,12 @@
  *     The gate rejects every email address, including alice@example.com, so a
  *     literal address cannot survive publication; see fixtures/README.md.
  *   - "Bearer ...", a 64-hex token, "sk-..." -> <redacted-token>
+ *   - the machine name (os.hostname(), %COMPUTERNAME%) -> synthetic-host
+ *     The engine echoes it as `device_status.connection_name`, and it also shows
+ *     up inside tool output; a machine name identifies where a session ran, so
+ *     both the field and any stray mention become the reserved placeholder the
+ *     gate accepts. The `connection_name` field is rewritten whole, so a name
+ *     like `TZYLT-PC` cannot survive as a partially replaced value.
  *   - non-synthetic `request_id` -> synthetic-<slug>; a `perm-<toolCallId>`
  *     approval id becomes synthetic-perm-<slugified toolCallId>.
  *     One map per file keeps request/response linkage: the same original id
@@ -52,8 +58,17 @@ import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-/** Marker the pass writes when `--redaction` is omitted. */
-const DEFAULT_REDACTION = "r1";
+/**
+ * Marker the pass writes when `--redaction` is omitted.
+ *
+ * "r2" is the current revision: it adds the device-name rule to "r1" (the first
+ * pass). Re-running the pass with no flag therefore reproduces the committed
+ * corpus; a "r1" file is valid but predates the device-name rule.
+ */
+const DEFAULT_REDACTION = "r2";
+
+/** The only device name the corpus may carry; `check-fixtures.mjs` enforces it. */
+const SYNTHETIC_HOSTNAME = "synthetic-host";
 
 /** Synthetic roots the gate accepts. */
 const SYNTHETIC_WINDOWS_ROOT = "C:/work";
@@ -98,6 +113,7 @@ const COUNT_LABELS = [
   ["redaction-username", "username"],
   ["redaction-email", "email"],
   ["redaction-token", "token"],
+  ["redaction-host", "host"],
   ["redaction-request-id", "requestId"],
   ["redaction-request-id-kept", "requestIdKept"],
 ];
@@ -156,9 +172,10 @@ function main() {
 
   const requestIds = planRequestIds(documents);
   const namePatterns = buildNamePatterns();
+  const hostPatterns = buildHostPatterns();
   const counts = createCounts();
   const perLine = [];
-  const context = { requestIds, namePatterns };
+  const context = { requestIds, namePatterns, hostPatterns };
 
   const redactedDocuments = documents.map((document, index) => {
     const lineCounts = createCounts();
@@ -448,7 +465,7 @@ function slugify(value) {
  *
  * @param {unknown} node current value
  * @param {string} key key the value sits under, "" at the top
- * @param {{ requestIds: Map<string, string>, namePatterns: RegExp[] }} context shared context
+ * @param {{ requestIds: Map<string, string>, namePatterns: RegExp[], hostPatterns: RegExp[] }} context shared context
  * @param {ReturnType<typeof createCounts>} counts per-line counters
  * @returns {unknown}
  */
@@ -466,6 +483,14 @@ function redactDocument(node, key, context, counts) {
       counts.requestId += 1;
 
       return mapped;
+    }
+
+    // The field the engine fills with the machine name. Replaced whole rather
+    // than by substring, so a compound name cannot survive half-redacted.
+    if (key === "connection_name") {
+      counts.host += 1;
+
+      return SYNTHETIC_HOSTNAME;
     }
 
     return redactString(node, context, counts);
@@ -499,7 +524,7 @@ function redactDocument(node, key, context, counts) {
  * nothing else, so running the pass on its own output is a no-op.
  *
  * @param {string} value decoded string
- * @param {{ namePatterns: RegExp[] }} context shared context
+ * @param {{ namePatterns: RegExp[], hostPatterns: RegExp[] }} context shared context
  * @param {ReturnType<typeof createCounts>} counts per-line counters
  * @returns {string}
  */
@@ -508,9 +533,59 @@ function redactString(value, context, counts) {
 
   text = redactTokens(text, counts);
   text = redactEmails(text, counts);
+  // Before the user name: a machine name often contains it (`ADMINI-PC`), and
+  // the longer value has to win the race or it would be left as `user-PC`.
+  text = redactHostNames(text, context.hostPatterns, counts);
   text = redactUserNames(text, context.namePatterns, counts);
 
   return redactAbsolutePaths(text, counts);
+}
+
+/**
+ * Replace every mention of this machine's name with the reserved placeholder.
+ *
+ * @param {string} text candidate string
+ * @param {RegExp[]} hostPatterns case-insensitive, word-bounded matchers
+ * @param {{ host: number }} counts per-rule counters
+ * @returns {string} redacted string
+ */
+function redactHostNames(text, hostPatterns, counts) {
+  let result = text;
+
+  for (const pattern of hostPatterns) {
+    result = result.replace(pattern, () => {
+      counts.host += 1;
+
+      return SYNTHETIC_HOSTNAME;
+    });
+  }
+
+  return result;
+}
+
+/**
+ * @returns {RegExp[]} word-bounded, case-insensitive matchers for this machine
+ */
+function buildHostPatterns() {
+  /** @type {Set<string>} */
+  const names = new Set();
+
+  considerName(names, readHostName());
+  considerName(names, process.env.COMPUTERNAME);
+
+  return [...names]
+    .filter((name) => name.length >= 4)
+    .sort()
+    .map((name) => new RegExp(`(?<![A-Za-z0-9_])${escapeRegExp(name)}(?![A-Za-z0-9_])`, "gi"));
+}
+
+/** @returns {string | undefined} */
+function readHostName() {
+  try {
+    return os.hostname();
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -784,6 +859,7 @@ function createCounts() {
     username: 0,
     email: 0,
     token: 0,
+    host: 0,
     requestId: 0,
     requestIdKept: 0,
   };
@@ -817,6 +893,7 @@ function reportSummary(options, lineCount, counts, perLine, mappedRequestIds) {
     `redaction-username=${counts.username}`,
     `redaction-email=${counts.email}`,
     `redaction-token=${counts.token}`,
+    `redaction-host=${counts.host}`,
     `redaction-request-id=${counts.requestId}`,
     `redaction-request-id-kept=${counts.requestIdKept}`,
   ];

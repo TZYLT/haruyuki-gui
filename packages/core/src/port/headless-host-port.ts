@@ -36,7 +36,7 @@
  */
 
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -135,14 +135,16 @@ export type HeadlessHostPortOptions = {
   bundlePath: string;
   engineHome?: string;
   tokenDir?: string;
-  pickQueue?: string[];
+  pickQueue?: Array<string | string[]>;
   allowedRoots?: string[];
   secureSeed?: Record<string, string>;
 };
 
 /**
- * The headless port plus the two test-only additions , so the corpus-A3 section
- * 3.4.1).
+ * The headless port plus its two implementation-specific additions. They are
+ * this implementation. They are test-facing, but they are part of the exported
+ * type because `@haruyuki/core` re-exports this module: a test that reaches for
+ * `dispose` must not need a deep import.
  *
  * `dispose` exists because a plain node process has no OS shutdown event to hang
  * `onShutdown` callbacks on: the test or probe that built the port is the thing
@@ -182,21 +184,34 @@ export type HeadlessHostPort = HostPort & {
 export async function createHeadlessHostPort(
   options: HeadlessHostPortOptions,
 ): Promise<HeadlessHostPort> {
+  const createdHome = options.engineHome === undefined;
   const engineHome = await resolveEngineHome(options.engineHome);
-  const tempDir = resolveTokenDir(engineHome, options.tokenDir);
+  let paths: HostPortStartup["paths"];
 
-  const paths: HostPortStartup["paths"] = {
-    userData: join(engineHome, USER_DATA_DIR),
-    logs: join(engineHome, LOGS_DIR),
-    cache: join(engineHome, CACHE_DIR),
-    temp: tempDir,
-  };
+  try {
+    const tempDir = resolveTokenDir(engineHome, options.tokenDir);
 
-  await Promise.all(
-    [paths.userData, paths.logs, paths.cache, paths.temp].map((dir) =>
-      mkdir(dir, { recursive: true }),
-    ),
-  );
+    paths = {
+      userData: join(engineHome, USER_DATA_DIR),
+      logs: join(engineHome, LOGS_DIR),
+      cache: join(engineHome, CACHE_DIR),
+      temp: tempDir,
+    };
+
+    await Promise.all(
+      [paths.userData, paths.logs, paths.cache, paths.temp].map((dir) =>
+        mkdir(dir, { recursive: true }),
+      ),
+    );
+  } catch (error) {
+    // A home this factory created has no owner once construction fails, and the
+    // caller never learns its path from a rejection, so it can never clean up.
+    if (createdHome) {
+      await rm(engineHome, { recursive: true, force: true }).catch(() => undefined);
+    }
+
+    throw error;
+  }
 
   const watchdogPath = watchdogPathForNodeOptions();
 
@@ -261,7 +276,11 @@ export async function createHeadlessHostPort(
         // so the engine child is preloaded with the watchdog and nothing else.
         env: {
           ...environmentWithoutUndefined(),
-          [ENGINE_HOME_ENV]: engineHome,
+          // The engine home is `paths.userData`, not the directory that happens
+          // to hold the four paths: a desktop shell cannot do the latter (its
+          // logs, cache and temp do not share a parent with userData), and
+          // `cwd` is this same root, so the engine writes one tree.
+          [ENGINE_HOME_ENV]: paths.userData,
           NODE_OPTIONS: `--require "${watchdogPath}"`,
         },
         argvPrefix: [...ENGINE_ARGV_PREFIX],
@@ -331,20 +350,26 @@ export async function createHeadlessHostPort(
       return { ok: true };
     },
 
-    async pickPaths(_opts) {
+    async pickPaths(opts) {
       // Every call counts, including a cancelled one: the counter records how
       // many dialogs the core opened, which is what a test asserts about
       // behaviour, while the return value records the outcome.
       calls.pickPaths += 1;
 
-      // One queued answer per call, whatever `kind`/`multiple` say. The queue is
-      // the whole deterministic answer of a headless host, so a caller that wants
-      // two paths in one `multiple: true` call queues one entry per call
-      // instead. An empty queue is the documented cancellation, which is `[]`
-      // and not an error .
+      // One queued answer per call. An entry may be a single path or a list, so a
+      // `multiple: true` call can return several; a single-value call truncates,
+      // the way a real dialog honours the properties it was opened with. An empty
+      // queue is the documented cancellation, which is `[]` and not an error
+      // .
       const picked = pickQueue.shift();
 
-      return picked === undefined ? [] : [picked];
+      if (picked === undefined) {
+        return [];
+      }
+
+      const answer = typeof picked === "string" ? [picked] : picked;
+
+      return opts.multiple === true ? answer : answer.slice(0, 1);
     },
 
     async resolveLocalResource(absPath) {
@@ -458,7 +483,9 @@ function resolveTokenDir(engineHome: string, tokenDir: string | undefined): stri
   const absolute = resolve(engineHome, tokenDir);
   const fromHome = relative(engineHome, absolute);
 
-  if (fromHome.startsWith("..") || isAbsolute(fromHome)) {
+  // Mirror `isInsideRoot`: a sibling named "..tokens" is inside, only ".." and
+  // "../..." are outside. A bare `startsWith("..")` would reject that name.
+  if (fromHome === ".." || fromHome.startsWith(`..${sep}`) || isAbsolute(fromHome)) {
     throw new Error(`tokenDir must stay inside engineHome: ${absolute} is outside ${engineHome}`);
   }
 

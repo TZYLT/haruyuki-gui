@@ -204,8 +204,10 @@ describe("observeThrough", () => {
       const observation = await observeThrough(double, [good, bad], CLOCK);
 
       expect(observation.frames).toEqual([good]);
-      // `rawOf` cannot serialise a cycle, so the text is not JSON at all.
-      expect(observation.rejected).toEqual([{ raw: "[object Object]", reason: "not-json" }]);
+      // A structural rejection has no text, so `rejected` stays empty: the
+      // invented `"[object Object]"` used to make two different frames look the
+      // same, and it made the result depend on whether a sink was attached.
+      expect(observation.rejected).toEqual([]);
       expect(observation.transportRejections).toHaveLength(1);
       expect(observation.transportRejections?.[0]?.reason).toContain("not JSON-serialisable");
 
@@ -213,7 +215,6 @@ describe("observeThrough", () => {
       const report = compareObservations(clean, observation);
 
       expect(report.equal).toBe(false);
-      expect(report.diffs.some((diff) => diff.startsWith("rejected[0]"))).toBe(true);
       expect(report.diffs.some((diff) => diff.startsWith("transportRejections[0]"))).toBe(true);
     } finally {
       double.close();

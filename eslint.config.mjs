@@ -379,4 +379,26 @@ export default [
       "haruyuki-i18n/no-user-facing-en": "error",
     },
   },
+
+  // One file, one reason, and it is the reason the rule cannot serve.
+  //
+  // `bootstrap-error.ts` renders the page shown when the shell failed to start. Among
+  // the failures it reports is "the settings file could not be read", which is where the
+  // locale comes from -- so at the moment this page is needed, the catalogue may be
+  // unavailable and `t()` may be exactly what threw. A page that fetched a translation
+  // key would be a page that renders nothing in the case it exists for.
+  //
+  // The text is therefore bilingual in the source: two languages, labelled, so a reader
+  // gets one of them without the page guessing. That is not a translation mechanism, and
+  // routing it through the catalogue would only look like one.
+  //
+  // Kept as a single narrow entry rather than a general exemption for "bootstrap code",
+  // which would cover the next file somebody puts there.
+  {
+    files: ["apps/desktop/src/main/bootstrap-error.ts"],
+    rules: {
+      "haruyuki-i18n/no-cjk-in-source": "off",
+      "haruyuki-i18n/no-user-facing-en": "off",
+    },
+  },
 ];

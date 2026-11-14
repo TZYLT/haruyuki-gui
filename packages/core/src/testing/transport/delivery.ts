@@ -262,7 +262,9 @@ function isFaithfulCopy(original: unknown, copy: unknown): boolean {
   }
 
   if (typeof original === "number" || typeof original === "string") {
-    return original === copy;
+    // `Object.is`, not `===`: JSON turns -0 into 0 and `-0 === 0` is true, so a
+    // strict comparison would call that round trip faithful.
+    return Object.is(original, copy);
   }
 
   if (typeof original === "boolean") {
@@ -283,7 +285,19 @@ function isFaithfulCopy(original: unknown, copy: unknown): boolean {
       return false;
     }
 
-    return original.every((entry, index) => isFaithfulCopy(entry, copy[index]));
+    for (let index = 0; index < original.length; index += 1) {
+      // `every` skips holes, and JSON fills them with null: a sparse array would
+      // pass as a faithful copy of `[null, ...]` without this check.
+      if (index in original !== index in copy) {
+        return false;
+      }
+
+      if (!isFaithfulCopy(original[index], copy[index])) {
+        return false;
+      }
+    }
+
+    return true;
   }
 
   if (!isRecord(original) || !isRecord(copy)) {

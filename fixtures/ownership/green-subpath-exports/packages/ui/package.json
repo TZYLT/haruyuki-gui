@@ -1,0 +1,9 @@
+{
+  "name": "@haruyuki/ui",
+  "private": true,
+  "exports": {
+    ".": "./src/index.ts",
+    "./examples": "./src/examples/index.ts",
+    "./i18n/core": "./src/i18n/core.ts"
+  }
+}

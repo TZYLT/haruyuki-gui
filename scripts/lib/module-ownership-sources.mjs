@@ -321,7 +321,7 @@ export function resolveDependency(root, importer, specifier, workspace) {
     const bases =
       subpath === ""
         ? packageEntryBases(workspacePackage)
-        : [path.posix.normalize(`${workspacePackage.dir}/${subpath}`)];
+        : packageSubpathBases(workspacePackage, subpath);
 
     for (const candidate of bases) {
       const file = probeFile(root, candidate);
@@ -512,6 +512,50 @@ function packageEntryBases(workspacePackage) {
 
   bases.push(path.posix.join(workspacePackage.dir, "src/index"));
   bases.push(path.posix.join(workspacePackage.dir, "index"));
+
+  return bases.map((base) => path.posix.normalize(base));
+}
+
+/**
+ * Candidate targets for a subpath import, e.g. `@haruyuki/ui/i18n/core`.
+ *
+ * The `exports` map is consulted first, because it is the package's own statement of
+ * where a subpath lives. Joining the subpath onto the package directory was the original
+ * behaviour and it is wrong for any package whose layout does not mirror its subpaths:
+ * `./i18n/core` maps to `./src/i18n/core.ts`, and the join produced `ui/i18n/core`.
+ *
+ * That failure was not silent -- the gate reported the import as unresolved and refused
+ * to run blind -- but it reported it against the source file that used the subpath,
+ * which is the one place the problem was not.
+ *
+ * @param {WorkspacePackage} workspacePackage
+ * @param {string} subpath specifier with the package name removed, no leading slash
+ * @returns {string[]} repo-relative posix candidates, in priority order
+ */
+function packageSubpathBases(workspacePackage, subpath) {
+  const bases = [];
+  const exportsField = workspacePackage.manifest.exports;
+  const key = `./${subpath}`;
+
+  if (isRecord(exportsField)) {
+    const target = exportsField[key];
+
+    if (typeof target === "string") {
+      bases.push(path.posix.join(workspacePackage.dir, target));
+    } else if (isRecord(target)) {
+      // Conditions are opaque here; any declared target is a better guess than the
+      // subpath join, and `probeFile` rejects the ones that do not exist.
+      for (const value of Object.values(target)) {
+        if (typeof value === "string") {
+          bases.push(path.posix.join(workspacePackage.dir, value));
+        }
+      }
+    }
+  }
+
+  // The join, kept as a fallback: a package that mirrors its layout still resolves, and
+  // a subpath that is only reachable by joining still gets a chance.
+  bases.push(path.posix.join(workspacePackage.dir, subpath));
 
   return bases.map((base) => path.posix.normalize(base));
 }

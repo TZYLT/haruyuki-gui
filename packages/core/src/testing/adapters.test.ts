@@ -108,7 +108,8 @@ type Fixture = {
   bundlePath: string;
   insideFile: string;
   outsideFile: string;
-  pickedAnswers: string[];
+  /** One answer per `pickPaths` call; a list is a `multiple: true` answer. */
+  pickedAnswers: Array<string | string[]>;
   droppedFilePath: string;
   droppedContent: string;
   port: TraceablePort;
@@ -137,7 +138,8 @@ type SequenceResult = {
     spawnDetached: boolean | undefined;
     spawnBundleIsAbsolute: boolean;
     spawnCwdIsUserData: boolean;
-    spawnEnvHomeIsAbsolute: boolean;
+    spawnEnvHomeIsUserData: boolean;
+    spawnEnvInheritsPath: boolean;
     secureSeeded: string | undefined;
     secureMissingCode: string;
     secureOverwrite: string | undefined;
@@ -178,8 +180,15 @@ describe("headless, desktop and VSCode adapters agree", () => {
     // Each adapter handed back the answers it was queued with, at its own path
     // content: the call sequence is identical, the file names are not.
     for (const kind of ["headless", "desktop", "vscode"] as const) {
-      expect(results[kind].specific.pickFirstAnswer).toEqual([fixtures[kind].pickedAnswers[0]]);
-      expect(results[kind].specific.pickSecondAnswer).toEqual([fixtures[kind].pickedAnswers[1]]);
+      const [firstAnswer, secondAnswer] = fixtures[kind].pickedAnswers;
+
+      expect(firstAnswer).toBeDefined();
+      expect(secondAnswer).toBeDefined();
+      expect(results[kind].specific.pickFirstAnswer).toEqual(asList(firstAnswer));
+      // The second call asks for `multiple: true`, so a list answer survives
+      // whole; before this the parity test asked for multiple and asserted one.
+      expect(results[kind].specific.pickSecondAnswer).toEqual(asList(secondAnswer));
+      expect(results[kind].specific.pickSecondAnswer.length).toBe(2);
     }
 
     // Spot-check the meaningful entries rather than trusting the object diff
@@ -188,7 +197,10 @@ describe("headless, desktop and VSCode adapters agree", () => {
     expect(results.headless.shared.spawnFields).toEqual([...SPAWN_SPEC_FIELDS].sort());
     expect(results.headless.shared.spawnStdio).toBe("pipe");
     expect(results.headless.shared.spawnCwdIsUserData).toBe(true);
-    expect(results.headless.shared.spawnEnvHomeIsAbsolute).toBe(true);
+    expect(results.headless.shared.spawnEnvHomeIsUserData).toBe(true);
+    // A complete environment: the double hands the caller an env it can spawn
+    // with, so `PATH` and the rest of the host's environment are present.
+    expect(results.headless.shared.spawnEnvInheritsPath).toBe(true);
     expect(results.headless.shared.secureSeeded).toBe("seeded-value");
     expect(results.headless.shared.secureOverwrite).toBe("v2");
     expect(results.headless.shared.externalAcceptedHttp).toBe(true);
@@ -303,7 +315,12 @@ describe("headless, desktop and VSCode adapters agree", () => {
     expect(results.vscode.specific.spawnExe).toBe("node");
 
     expect(results.desktop.specific.spawnElectronRunAsNode).toBe("1");
-    expect(results.vscode.specific.spawnElectronRunAsNode).toBeUndefined();
+    // VSCode never adds the flag. It inherits the parent environment like every
+    // other shell, so the assertion is about "not set by this port", not about
+    // "absent" - on a host that already sets it, absent would be a CI fact.
+    expect(results.vscode.specific.spawnElectronRunAsNode).toBe(
+      process.env["ELECTRON_RUN_AS_NODE"],
+    );
 
     // The headless spec carries a complete copy of the parent environment, so
     // the flag is inherited verbatim rather than added: on this host-process
@@ -426,6 +443,15 @@ async function createAll(): Promise<{ fixtures: AllFixtures; results: AllResults
  * every adapter except the adapter's own path content (each root differs) and
  * the dropped-file payload, which is where the shells differ by design.
  */
+/** @param value a queued pick answer @returns always a list */
+function asList(value: string | string[] | undefined): string[] {
+  if (value === undefined) {
+    return [];
+  }
+
+  return typeof value === "string" ? [value] : value;
+}
+
 async function runSequence(fixture: Fixture): Promise<SequenceResult> {
   const { port } = fixture;
 
@@ -495,7 +521,8 @@ async function runSequence(fixture: Fixture): Promise<SequenceResult> {
       spawnDetached: spec?.detached,
       spawnBundleIsAbsolute: spec !== undefined && path.isAbsolute(spec.bundlePath),
       spawnCwdIsUserData: spec !== undefined && spec.cwd === port.paths.userData,
-      spawnEnvHomeIsAbsolute: envHome !== undefined && path.isAbsolute(envHome),
+      spawnEnvHomeIsUserData: envHome === port.paths.userData,
+      spawnEnvInheritsPath: spec !== undefined && spec.env["PATH"] === process.env["PATH"],
       secureSeeded: readValue(seeded),
       secureMissingCode: readCode(missing),
       secureOverwrite: readValue(overwritten),
@@ -532,7 +559,10 @@ async function createHeadlessFixture(): Promise<Fixture> {
   const root = await makeRoot();
   const engineHome = path.join(root, "engine-home");
   const bundlePath = prepareBundle(root);
-  const pickedAnswers = [path.join(root, "pick-1.txt"), path.join(root, "pick-2.txt")];
+  const pickedAnswers = [
+    path.join(root, "pick-1.txt"),
+    [path.join(root, "pick-2.txt"), path.join(root, "pick-3.txt")],
+  ];
 
   const port = await createHeadlessHostPort({
     bundlePath,
@@ -559,7 +589,10 @@ async function createHeadlessFixture(): Promise<Fixture> {
 async function createDesktopFixture(): Promise<Fixture> {
   const root = await makeRoot();
   const bundlePath = prepareBundle(root);
-  const pickedAnswers = [path.join(root, "pick-1.txt"), path.join(root, "pick-2.txt")];
+  const pickedAnswers = [
+    path.join(root, "pick-1.txt"),
+    [path.join(root, "pick-2.txt"), path.join(root, "pick-3.txt")],
+  ];
 
   const paths: HostPortStartup["paths"] = {
     userData: path.join(root, "desktop", "userData"),
@@ -593,7 +626,10 @@ async function createDesktopFixture(): Promise<Fixture> {
 async function createVscodeFixture(): Promise<Fixture> {
   const root = await makeRoot();
   const bundlePath = prepareBundle(root);
-  const pickedAnswers = [path.join(root, "pick-1.txt"), path.join(root, "pick-2.txt")];
+  const pickedAnswers = [
+    path.join(root, "pick-1.txt"),
+    [path.join(root, "pick-2.txt"), path.join(root, "pick-3.txt")],
+  ];
   const storageRoot = path.join(root, "vscode", "globalStorage");
 
   const port = await createVscodeHostPort({

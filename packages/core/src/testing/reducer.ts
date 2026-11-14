@@ -74,11 +74,34 @@ export function reduce(frames: readonly BridgeFrame[]): ReducedState {
     } else if (frame.ch === "bulk") {
       bulk.push(frame);
     } else if (frame.t.startsWith(STATE_PREFIX)) {
-      folded[frame.t.slice(STATE_PREFIX.length)] = frame.body;
+      assignState(folded, frame.t.slice(STATE_PREFIX.length), frame.body);
     } else {
       stream.push(frame);
     }
   }
 
   return { control, stream, bulk, state: folded };
+}
+
+/**
+ * Set one own state key.
+ *
+ * `folded[key] = value` is not enough: a frame named `state.__proto__` writes the
+ * prototype instead of a property, so the frame vanishes from `Object.keys` and
+ * its body ends up on the prototype chain - a mutation of the reducer's own
+ * output, not data. `snapshot.ts` guards the same key for the same reason.
+ */
+function assignState(state: Record<string, unknown>, key: string, value: unknown): void {
+  if (key === "__proto__") {
+    Object.defineProperty(state, key, {
+      value,
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    });
+
+    return;
+  }
+
+  state[key] = value;
 }

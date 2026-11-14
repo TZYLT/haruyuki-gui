@@ -156,6 +156,19 @@ describe("reduce", () => {
     expect(first.state).toEqual({ queue: { pending: 0 } });
   });
 
+  it("keeps state.__proto__ as data instead of writing the prototype", () => {
+    // `folded["__proto__"] = body` would set the prototype: the frame then has no
+    // own key, disappears from Object.keys and from the JSON view, and the body
+    // lands on the prototype chain of the reducer's own output.
+    const folded = reduce([frame("stream", 1, "state.__proto__", { pending: 1 })] as BridgeFrame[]);
+
+    // An object literal `{ __proto__: ... }` would set a prototype too, so the
+    // assertions are about the keys and the prototype, not about a literal.
+    expect(Object.keys(folded.state)).toEqual(["__proto__"]);
+    expect(Object.getPrototypeOf(folded.state)).toBe(Object.prototype);
+    expect(folded.state["__proto__"]).toEqual({ pending: 1 });
+  });
+
   it("is pure: frozen input is accepted and the same input folds identically", () => {
     const frames = frozen([
       frame("control", 1, "bridge.ready"),

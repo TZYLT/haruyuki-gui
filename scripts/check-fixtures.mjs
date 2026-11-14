@@ -51,6 +51,7 @@
  *     redaction-email      an email address
  *     redaction-token      "Bearer <token>" or a 64-hex token-like string
  *     redaction-request-id a `request_id` outside SYNTHETIC_REQUEST_ID
+ *     redaction-host       a `connection_name` that is not SYNTHETIC_HOSTNAME
  *   The `version-align` WARN line is not a rule: it is advisory output and
  *   never contributes to the exit code.
  *
@@ -65,6 +66,14 @@
  *   produced. Paths may start with C:/work or /tmp/x; `request_id`s may be
  *   `r-<n>`, `req-<n>` or `synthetic-<slug>` (the frozen header example uses
  *   `"request_id": "r-1"`). Everything else must be replaced.
+ *
+ *   One field is not a path and not a request id: `device_status.connection_name`,
+ *   the only place the engine echoes the machine name back (records measured
+ *   2026-11-14 carry it verbatim). A machine name identifies the machine it was
+ *   recorded on, so the corpus value is always `synthetic-host`. The rule is an
+ *   allow-list rather than a deny-list of local host names on purpose: a deny-list
+ *   would make the verdict depend on the machine running the gate, and a short
+ *   common word used as a host name would start flagging innocent prose.
  *
  *   The user-name deny-list is built from `os.userInfo().username` plus
  *   `%USERNAME%` / `$USER` when set, and is never echoed in output - a gate log
@@ -112,6 +121,13 @@ const SYNTHETIC_PATH_ROOTS = ["c:/work", "/tmp/x"];
 const SYNTHETIC_REQUEST_ID = /^(?:r|req)-\d{1,6}$|^synthetic-[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 /**
+ * The only device name the corpus may carry. `device_status.connection_name` is
+ * the engine echoing the machine name, which identifies where a recording came
+ * from; the redaction pass replaces it with this value (scripts/redact-fixtures.mjs).
+ */
+const SYNTHETIC_HOSTNAME = "synthetic-host";
+
+/**
  * Absolute-path detectors, applied to decoded JSON strings - never to raw JSON
  * text, where a Windows path arrives as `C:\\work` and the escaping would hide
  * the root. The lookbehinds keep them out of `https://` URLs and ratios.
@@ -140,6 +156,7 @@ const REDACTION_MESSAGES = {
   "redaction-email": "line contains an email address",
   "redaction-token": "line contains a bearer token, a 64-hex token or a provider API key",
   "redaction-request-id": "request_id must be synthetic (r-<n>, req-<n> or synthetic-<slug>)",
+  "redaction-host": 'device name must be "synthetic-host"',
 };
 
 /** Help text. Kept in one place so `--help` and the header cannot drift. */
@@ -509,6 +526,13 @@ function checkContent(relative, lineNumber, node, violations, context) {
   inspectNode(node, "", (key, text) => {
     if (key === "request_id" && !SYNTHETIC_REQUEST_ID.test(text)) {
       fired.add("redaction-request-id");
+    }
+
+    // A key check, not a value check: the device name is the one field whose
+    // shape cannot tell a real machine from a synthetic one, so the only safe
+    // value is the reserved placeholder.
+    if (key === "connection_name" && text !== SYNTHETIC_HOSTNAME) {
+      fired.add("redaction-host");
     }
 
     for (const rule of detectRules(text, context.namePatterns)) {

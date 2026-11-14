@@ -44,20 +44,24 @@ Per-class flags that matter:
   `compaction_prepare` is sent. Every other class is fine at `--gap 300`.
 - `--idle 8000` for every class that includes a model turn; `terminal` and
   `memory` settle faster but the same value is harmless.
+- `--auto-approve allow` for `approval`: the permission id is `perm-<toolCallId>`
+  and only exists once the turn has started, so the recorder answers the
+  `control_request` itself. Without the flag the same list stops at the pending
+  request, and the recording then has no `turn_finished`.
 - The default `--timeout 20000` is a listening window that starts after the last
   send, not a limit on the whole run; `compaction` takes about 39 s of wall time.
 
 ## What each class proves
 
-| Class          | Status                  | Signature frames in the recording                                                                                                                                                                                                                                                  | Paid | Measured cost |
-| -------------- | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- | ------------- |
-| `terminal`     | driven                  | `terminal_spawned` -> `terminal_output` (raw, no envelope) -> `terminal_exited` with `exitCode: 0`                                                                                                                                                                                 | no   | 0             |
-| `memory`       | driven                  | `list_memory_response`, `read_memory_file_response`, `write_memory_file_response`, plus `memory_updated` (no envelope)                                                                                                                                                             | no   | 0             |
-| `user-message` | driven                  | `input_accepted` -> `stream_delta assistant_message` -> `stream_delta usage_statistics` -> `stream_delta stop_reason: end_turn` -> `turn_finished`                                                                                                                                 | yes  | $0.00034      |
-| `tool-call`    | driven                  | `stream_delta approval_request_message` (carries `tool_call`) -> `approval_classification_end` (auto-allowed) -> `client_tool_start` -> `stream_delta tool_return_message` (`status: success`, `a3-tool-ok`) -> `stop_reason: end_turn`                                            | yes  | $0.00062      |
-| `approval`     | blocked at the decision | `update_device_status` with `current_permission_mode: "strict"` -> `approval_request_message` -> `stop_reason: requires_approval` -> `approval_classification_end` with the tool call id in `user_input_tool_call_ids` -> `control_request` with `request_id: "perm-<toolCallId>"` | yes  | $0.00042      |
-| `subagent`     | driven                  | `launch_subagent_response` (`success: true`, `task_id`) -> seven `update_subagent_state` frames with a non-empty `subagents` array -> `stop_reason: end_turn`                                                                                                                      | yes  | $0.00327      |
-| `compaction`   | driven                  | seed turn `stop_reason: end_turn` -> `compaction_prepare_response` with `success: true`, a real `prepare_id` and a `topic_report`                                                                                                                                                  | yes  | $0.00035      |
+| Class          | Status                   | Signature frames in the recording                                                                                                                                                                                                                                                                                                                  | Paid | Measured cost |
+| -------------- | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- | ------------- |
+| `terminal`     | driven                   | `terminal_spawned` -> `terminal_output` (raw, no envelope) -> `terminal_exited` with `exitCode: 0`                                                                                                                                                                                                                                                 | no   | 0             |
+| `memory`       | driven                   | `list_memory_response`, `read_memory_file_response`, `write_memory_file_response`, plus `memory_updated` (no envelope)                                                                                                                                                                                                                             | no   | 0             |
+| `user-message` | driven                   | `input_accepted` -> `stream_delta assistant_message` -> `stream_delta usage_statistics` -> `stream_delta stop_reason: end_turn` -> `turn_finished`                                                                                                                                                                                                 | yes  | $0.00034      |
+| `tool-call`    | driven                   | `stream_delta approval_request_message` (carries `tool_call`) -> `approval_classification_end` (auto-allowed) -> `client_tool_start` -> `stream_delta tool_return_message` (`status: success`, `a3-tool-ok`) -> `stop_reason: end_turn`                                                                                                            | yes  | $0.00062      |
+| `approval`     | driven (recorder allows) | `update_device_status` with `current_permission_mode: "strict"` -> `approval_request_message` -> `stop_reason: requires_approval` -> `approval_classification_end` -> `control_request` with `request_id: "perm-<toolCallId>"` -> c2s `input.payload.kind: "approval_response"` -> `client_tool_start` -> `tool_return_message` -> `turn_finished` | yes  | $0.00042      |
+| `subagent`     | driven                   | `launch_subagent_response` (`success: true`, `task_id`) -> seven `update_subagent_state` frames with a non-empty `subagents` array -> `stop_reason: end_turn`                                                                                                                                                                                      | yes  | $0.00327      |
+| `compaction`   | driven                   | seed turn `stop_reason: end_turn` -> `compaction_prepare_response` with `success: true`, a real `prepare_id` and a `topic_report`                                                                                                                                                                                                                  | yes  | $0.00035      |
 
 Two notes on what the frames actually are:
 
@@ -65,14 +69,14 @@ Two notes on what the frames actually are:
   inside `approval_request_message.tool_call`, is classified automatically
   (`auto_allowed_tool_call_ids`), runs as a client tool, and comes back as a
   `tool_return_message`. That is the real 0.6.0 shape, not a missing frame.
-- `approval` records the request half only. The decision is sent as
-  `input.payload.kind: "approval_response"` with `payload.request_id` equal to the
-  `perm-<toolCallId>` value, and that id is created by the model provider during
-  the turn. A static command list cannot name it, and `record.mjs` deliberately
-  does not react to frames, so the `allow`/`deny` half needs a reactive driver.
-  The recording still ends on its expected terminal event (`stop_reason:
-requires_approval` plus the pending `control_request`); it has no
-  `turn_finished`.
+- `approval` covers the whole round trip because the recorder answers the
+  request: `--auto-approve allow` replies to the `control_request` with
+  `input.payload.kind: "approval_response"`, `payload.request_id` equal to the
+  `perm-<toolCallId>` value. That id is created by the model during the turn, so
+  no static command list can name it; this is the one frame-derived reply the
+  recorder makes. The committed recording therefore ends at `turn_finished`, and
+  a run without the flag is a different (pending) recording, not a refresh of
+  this one.
 - `compaction` stops after `compaction_prepare` on purpose. `compaction_commit`
   needs the `prepare_id`, which the recorder can fill in as
   `{{r-4.prepare_id}}` now that prepare is known to succeed, but committing a

@@ -123,7 +123,10 @@ describe("getRuntimeSpawnSpec", () => {
     // the engine's descendants with it. Windows has no such group; there the
     // stop path forces `taskkill /T /F` instead.
     expect(spec.detached).toBe(process.platform !== "win32");
-    expect(spec.env.HARUYUKI_HOME).toBe(engineHome);
+    // The engine home is the user-data directory, which is also `cwd`: a shell
+    // whose four paths come from different platform answers (a desktop app's
+    // logs/cache/temp do) cannot offer a parent that holds all four.
+    expect(spec.env.HARUYUKI_HOME).toBe(spec.cwd);
 
     const nodeOptions = spec.env.NODE_OPTIONS;
 

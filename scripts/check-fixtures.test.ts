@@ -360,6 +360,29 @@ describe("redaction rules", () => {
     expect(run.output).not.toContain(LOCAL_NAME);
   });
 
+  it("rejects a device name other than the synthetic one", () => {
+    // The engine echoes the machine name in `device_status.connection_name`
+    // (records from 2026-11-14 carry it verbatim). A machine name says where a
+    // recording was made, so the only accepted value is the placeholder.
+    const run = runGate(
+      treeWithRow(wireRow({ device_status: { connection_name: "DESKTOP-9F3KQ2" } })),
+    );
+
+    expect(run.status, run.output).toBe(1);
+    expect(countRule(run.output, "redaction-host")).toBe(1);
+    // The gate log is public too: the device name must not be echoed.
+    expect(run.output).not.toContain("DESKTOP-9F3KQ2");
+  });
+
+  it("accepts the synthetic device name", () => {
+    const run = runGate(
+      treeWithRow(wireRow({ device_status: { connection_name: "synthetic-host" } })),
+    );
+
+    expect(run.status, run.output).toBe(0);
+    expect(run.output).toContain("PASS");
+  });
+
   it("accepts the synthetic roots and request ids", () => {
     const run = runGate(cleanCorpus());
 

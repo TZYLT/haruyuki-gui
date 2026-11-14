@@ -10,8 +10,9 @@
  * - `./engine`: the engine facade, its frozen state/error types and the
  *   classification helpers .
  * - `./port`: the `HostPortStartup` startup subset, frozen as ``HostPortStartup` v1` by
- *   docs/13-B1 section 4, plus the headless implementation that proves the
- *   contract is implementable without Electron.
+ *   docs/13-B1 section 4 and extended to the nine-item `nine-item contract` by docs/18-A3
+ *   section 3.4.1, plus the headless implementation that proves the contract is
+ *   implementable without Electron.
  * - `./bridge`: the frame producer (`FZ-1 v1`, docs/21 C5) -- the serializer
  *   guard, the sequencer, the bounded queue, the pager, the batching window,
  *   the handshake and the sender that assembles them. The renderer's consumer

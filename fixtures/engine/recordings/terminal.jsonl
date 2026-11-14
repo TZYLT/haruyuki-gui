@@ -1,4 +1,4 @@
-{"kind":"wire","schemaVersion":1,"engine":{"version":"0.6.0","commit":"1641a4f"},"scenario":"terminal","redaction":"r1","clock":"real","recordedAt":"2026-11-14T12:56:58.462Z"}
+{"kind":"wire","schemaVersion":1,"engine":{"version":"0.6.0","commit":"1641a4f"},"scenario":"terminal","redaction":"r2","clock":"real","recordedAt":"2026-11-14T12:56:58.462Z"}
 {"dir":"c2s","at":1,"msg":{"type":"app_server_info","request_id":"r-1"}}
 {"dir":"s2c","at":31,"msg":{"type":"app_server_info_response","request_id":"r-1","success":true,"backend":"local","letta_code_version":"0.6.0","protocol_version":1,"capabilities":{"agent_management":true,"conversation_management":true,"memory_management":true,"runtime_start":true,"agent_free_conversations":true,"launch_subagent":true,"runtime_workspace_sandbox":true,"runtime_external_tools_update":true,"structured_outputs":false,"split_channels":false}}}
 {"dir":"c2s","at":303,"msg":{"type":"terminal_spawn","terminal_id":"a3-term-1","cols":80,"rows":24}}

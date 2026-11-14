@@ -210,6 +210,43 @@ describe("check-module-ownership: source extension set (P2-02)", () => {
   });
 });
 
+describe("check-module-ownership: subpath exports (D1)", () => {
+  it("resolves a subpath import through the package's exports map", () => {
+    // The resolver used to join the subpath onto the package directory, so
+    // `@haruyuki/ui/i18n/core` became `packages/ui/i18n/core` and never resolved.
+    // The gate reported it against the importing file, which is the one place the
+    // problem was not -- so the diagnosis pointed at the consumer of a working
+    // specifier rather than at the resolver.
+    const run = runOwnershipGate("green-subpath-exports");
+
+    expect(run.status, run.output).toBe(0);
+  });
+
+  it("still reports a subpath the package does not declare", () => {
+    // A subpath that is neither exported nor layout-mirrored must stay unresolved:
+    // making every subpath resolve would make the gate blind, which is the failure it
+    // exists to prevent.
+    const tree = makeTree({
+      "packages/ui/package.json": JSON.stringify({
+        name: "@haruyuki/ui",
+        exports: { ".": "./src/index.ts" },
+      }),
+      "packages/ui/src/index.ts": 'export const A = "a" as const;\n',
+      "packages/app/package.json": JSON.stringify({ name: "@haruyuki/app" }),
+      "packages/app/src/consumer.ts": 'import { X } from "@haruyuki/ui/not-exported";\n',
+      "scripts/module-ownership.json": JSON.stringify({
+        modules: [],
+        barrels: { forbid: true, allow: [] },
+      }),
+    });
+    const result = spawnSync(process.execPath, [GATE, "--root", tree], { encoding: "utf8" });
+    const output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
+
+    expect(result.status, output).toBe(1);
+    expect(output).toContain("@haruyuki/ui/not-exported");
+  });
+});
+
 describe("check-module-ownership: resolved paths are canonical before matching (P2-01)", () => {
   it("fails when a protected directory is imported with different letter case", () => {
     const run = runOwnershipGate("red-ownership-case");

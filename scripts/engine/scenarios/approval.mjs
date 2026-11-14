@@ -1,19 +1,20 @@
 #!/usr/bin/env node
 /**
  * approval - the permission class: set the device to `strict`, then make the
- * model call a tool so the engine emits a `control_request` and blocks.
+ * model call a tool so the engine stops at a `control_request` and waits.
  *
- * What this list can and cannot prove: a static command list cannot answer the
- * request, because the permission request id is `perm-<toolCallId>` and the tool
- * call id only exists after the turn starts. So the recording ends with the
- * `control_request` pending (signature frames: `update_device_status` showing
- * `current_permission_mode: "strict"` plus `control_request`). Sending the
- * `allow` decision needs a recorder that reacts to frames, which `record.mjs`
- * deliberately is not , so the corpus 2.6 notes 2).
+ * A static command list cannot answer that request: the permission id is
+ * `perm-<toolCallId>` and the tool call id only exists once the turn has started.
+ * The `decision` half therefore comes from the recorder's
+ * `--auto-approve allow`, which reacts to the frame (the one place a recording
+ * needs to), and the committed recording covers the whole round
+ * trip: `control_request` -> c2s `approval_response` -> `client_tool_start` ->
+ * `tool_return_message` -> `turn_finished`. Without the flag the same list stops
+ * at the pending `control_request`.
  */
 export const name = "approval";
 export const description =
-  "Strict permission mode then a Bash tool call; proves the control_request gate (allow needs a reactive driver).";
+  "Strict permission mode then a Bash tool call; the recorder answers the control_request itself (--auto-approve allow), so the recording covers request, decision and tool return.";
 export const commands = [
   { type: "app_server_info", request_id: "r-1" },
   {

@@ -138,12 +138,23 @@ export async function observeThrough(
   const rejected: ObservationRejection[] = [];
   const sink = rejectionLogOf(double);
 
-  /** Record one rejection, classifying only text that truly is not JSON. */
-  const record = (rejection: TransportRejection): void => {
+  /**
+   * Record one rejection, and classify only a *text* source as `rejected`.
+   *
+   * The frozen entry is `{ raw, reason: "not-json" }`: it describes a text frame
+   * that could not be parsed. An object frame rejected for its structure has no
+   * text at all - its `raw` is a stand-in such as `"[object Object]"` - and
+   * putting that in `rejected` invented a payload no shell ever sent and made two
+   * different frames indistinguishable. Such a rejection lives only in
+   * `transportRejections`, which carries the real reason; `rejected` stays empty
+   * for a transport that only ever hands over objects, and fills up for a textual
+   * one (the raw-wire observation).
+   */
+  const record = (rejection: TransportRejection, source: unknown): void => {
     transportRejections.push(rejection);
 
-    if (!isJsonText(rejection.raw)) {
-      rejected.push({ raw: rejection.raw, reason: "not-json" });
+    if (typeof source === "string" && !isJsonText(source)) {
+      rejected.push({ raw: source, reason: "not-json" });
     }
   };
 
@@ -158,12 +169,12 @@ export async function observeThrough(
       try {
         double.post(frame);
       } catch (error) {
-        record({ raw: rawOf(frame), reason: `post threw: ${detailOf(error)}` });
+        record({ raw: rawOf(frame), reason: `post threw: ${detailOf(error)}` }, frame);
       }
 
       if (sink !== undefined) {
         for (const rejection of sink.slice(seen)) {
-          record(rejection);
+          record(rejection, frame);
         }
       }
     }
