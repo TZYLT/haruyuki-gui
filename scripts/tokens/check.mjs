@@ -64,6 +64,25 @@ const MIN_TEXT_RATIO = 4.5;
 const MIN_NON_TEXT_RATIO = 3;
 
 /**
+ * What counts as a colour the gate can measure.
+ *
+ * Checked before the luminance maths rather than inside it: `Number.parseInt`
+ * returns `NaN` for an unparseable channel, and every comparison against `NaN`
+ * is false, so an unparseable colour used to pass every contrast rule silently.
+ */
+const HEX_PATTERN = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
+
+/**
+ * The repository's test-file convention, anchored at the end of the path.
+ *
+ * `relative.includes(".test.")` -- the previous test -- also skipped a file named
+ * `states.test.helper.ts`, which is production code with an unlucky name. A
+ * skipped file is invisible to T2 and T5, so the test has to be about the
+ * suffix, not about a substring somewhere in the path.
+ */
+const TEST_FILE_PATTERN = /\.test\.tsx?$/;
+
+/**
  * Read a file as UTF-8.
  *
  * @param {string} absolute absolute path
@@ -145,7 +164,12 @@ function themeSlots(palettesSource, scalesSource) {
     if (match[1] !== undefined) shared.add(match[1]);
   }
 
-  /** Exported palette names to the theme key they belong to. */
+  /**
+   * Exported palette names to the theme key they belong to.
+   *
+   * The four names are the contract, but the scan below also looks for *other*
+   * exported palettes so a fifth one is reported instead of ignored.
+   */
   const nameToTheme = new Map([
     ["LIGHT_NORMAL", "light/normal"],
     ["LIGHT_HIGH", "light/high"],
@@ -155,7 +179,11 @@ function themeSlots(palettesSource, scalesSource) {
 
   const themes = new Map();
 
-  for (const [exportName, themeKey] of nameToTheme) {
+  /**
+   * @param {string} exportName exported palette constant
+   * @param {string} themeKey theme key it maps to
+   */
+  const readPalette = (exportName, themeKey) => {
     const patterns = [
       new RegExp(`export const ${exportName}\\s*(?::\\s*Palette)?\\s*=\\s*\\{([\\s\\S]*?)\\n\\};`),
       new RegExp(`export const ${exportName}\\s*=\\s*\\{([\\s\\S]*?)\\n\\};`),
@@ -165,15 +193,31 @@ function themeSlots(palettesSource, scalesSource) {
     // A missing palette is a T3 violation, not a broken gate: the script itself
     // is fine, the tree is wrong. Reporting it here lets the caller collect it
     // with the other T3 findings instead of aborting with exit 2.
-    if (body === undefined) continue;
+    if (body === undefined) return;
 
-    const slots = new Set(shared);
+    const found = new Set(shared);
 
     for (const match of body.matchAll(/"(--ui-[A-Za-z0-9-]+)"\s*:/g)) {
-      if (match[1] !== undefined) slots.add(match[1]);
+      if (match[1] !== undefined) found.add(match[1]);
     }
 
-    themes.set(themeKey, slots);
+    themes.set(themeKey, found);
+  };
+
+  for (const [exportName, themeKey] of nameToTheme) readPalette(exportName, themeKey);
+
+  // Everything else that is exported as a Palette.
+  //
+  // Without this pass the "theme is not one of the four combinations" branch
+  // below was unreachable: `themes` could only ever hold the four keys the map
+  // above produces, so a fifth palette (`SEPIA_NORMAL`) was silently ignored
+  // while the check that exists to catch it looked like it was doing its job.
+  for (const match of palettesSource.matchAll(/export const ([A-Z][A-Z0-9_]*)\s*:\s*Palette\s*=/g)) {
+    const exportName = match[1];
+
+    if (exportName === undefined || nameToTheme.has(exportName)) continue;
+
+    readPalette(exportName, exportName.toLowerCase().replaceAll("_", "/"));
   }
 
   return themes;
@@ -352,11 +396,32 @@ function collectViolations(args) {
    * @param {string} rule rule id
    */
   function requireContrast(key, foreground, background, minimum, rule) {
+    pairsUsed.add(foreground);
+    pairsUsed.add(background);
+
     const values = palettes[key];
     const fg = values?.get(foreground);
     const bg = values?.get(background);
 
+    // A pair whose *slots* are absent is T1's finding, not T4's: T1 already says
+    // "this theme does not define this slot", and reporting it here too would
+    // make one missing value produce four violations in every theme.
+    //
+    // But a colour that is present and cannot be *parsed* is a different thing
+    // and is now a violation. The first version returned in both cases, and
+    // `NaN < 4.5` is false, so `neutral-1: "#zzzzzz"` produced a silent pass on
+    // every contrast pair it appeared in.
     if (fg === undefined || bg === undefined) return;
+
+    if (!HEX_PATTERN.test(fg) || !HEX_PATTERN.test(bg)) {
+      violations.push({
+        file: palettesFile,
+        rule,
+        message: `${key}: cannot measure ${foreground} (${fg}) on ${background} (${bg}) -- not a hex colour`,
+      });
+
+      return;
+    }
 
     const ratio = contrast(fg, bg);
 
@@ -369,6 +434,18 @@ function collectViolations(args) {
     }
   }
 
+  /**
+   * Every slot the contrast pairs below name, so a typo in the gate's own table
+   * is caught rather than silently skipped.
+   *
+   * This is the failure mode the pair list invites: a pair written against
+   * `--ui-color-acent-1` would never match a palette key, would hit the
+   * "absent slot" return above, and would therefore check nothing while looking
+   * like a check. Asserting the names against the declared slot inventory turns
+   * that into a gate bug that announces itself.
+   */
+  const pairsUsed = new Set();
+
   for (const key of Object.keys(palettes)) {
     for (const surface of surfaces) {
       requireContrast(key, "--ui-color-neutral-1", surface, MIN_TEXT_RATIO, "T4");
@@ -377,6 +454,26 @@ function collectViolations(args) {
     }
 
     requireContrast(key, "--ui-color-accent-1", "--ui-color-surface-1", MIN_TEXT_RATIO, "T4");
+
+    // The pairs a *filled* control renders. These were missing, and they are the
+    // ones that were actually broken: static-1 is the label on the primary,
+    // primary-hover and danger buttons, and in the dark themes it was white on a
+    // light accent (2.33:1) and a light danger (1.70:1). Nothing here could see
+    // it, because the only static-pair check lived in the unit test and took
+    // `Math.max(static-1, static-2)`.
+    for (const fill of ["--ui-color-accent-1", "--ui-color-accent-2", "--ui-color-danger-1"]) {
+      requireContrast(key, "--ui-color-static-1", fill, MIN_TEXT_RATIO, "T4");
+    }
+
+    // The switch thumb against both of its tracks.
+    requireContrast(key, "--ui-color-static-1", "--ui-color-neutral-3", MIN_NON_TEXT_RATIO, "T4");
+
+    // The danger button's hover inverts: danger-1 text on the danger-2 fill.
+    requireContrast(key, "--ui-color-danger-1", "--ui-color-danger-2", MIN_TEXT_RATIO, "T4");
+
+    // The accent chip and the selected option in a popup.
+    requireContrast(key, "--ui-color-accent-1", "--ui-color-accent-3", MIN_TEXT_RATIO, "T4");
+    requireContrast(key, "--ui-color-accent-1", "--ui-color-surface-2", MIN_TEXT_RATIO, "T4");
 
     for (const family of STATUS_FAMILIES) {
       requireContrast(
@@ -390,37 +487,186 @@ function collectViolations(args) {
     }
   }
 
+  // A pair naming a slot that does not exist checks nothing. T1 would not catch
+  // it either: T1 compares declared slots against palettes, and this is the
+  // gate's own table being wrong. Checked against the union of all four palettes
+  // rather than one, so a slot that is missing from a single theme stays T1's
+  // finding instead of being reported twice.
+  const knownPaletteSlots = new Set();
+
+  for (const values of Object.values(palettes)) {
+    for (const slot of values.keys()) knownPaletteSlots.add(slot);
+  }
+
+  for (const slot of pairsUsed) {
+    if (!knownPaletteSlots.has(slot)) {
+      violations.push({
+        file: palettesFile,
+        rule: "T4",
+        message: `the contrast table names ${slot}, which no palette defines -- that pair checks nothing`,
+      });
+    }
+  }
+
   // ---- T2: no component names a colour.
+  //
+  // A whole-file scan of executable text, not a "keyword followed by a quoted
+  // string" pattern. The narrow version could only see JSX style objects like
+  // `style={{ color: "#f00" }}`; every one of this package's component colours
+  // lives inside a **CSS template literal**, so the rule was blind to the file
+  // that it existed to police. It also missed a named colour, a literal buried
+  // mid-line after a `//` in a URL, and a `var(--ui-x, #fallback)` fallback.
+  //
+  // Comments are still allowed to name a colour while explaining why we do not
+  // write one, so they are stripped first -- line comments, block comments and
+  // JSDoc continuation lines.
+  // Every colour that can actually reach a stylesheet: hex in any of its three
+  // lengths, and the three functional forms. Named colours are deliberately
+  // **not** matched -- `nowrap`, `darken`, `unset` and a dozen other identifiers
+  // contain a colour word, and a rule that fires on `white-space: nowrap` is a
+  // rule people learn to ignore. The requirement names hex and the functional
+  // forms, which is also what a palette is written in.
   const colourLiteral = /#[0-9a-fA-F]{3,8}\b|\b(?:rgba?|hsla?)\s*\(/;
-  const stylePattern =
-    /(?:^|[^A-Za-z])(?:color|background|backgroundColor|borderColor|fill|stroke)\s*[:=]\s*["'`]([^"'`]*)["'`]/g;
+  const VAR_FALLBACK = /var\(\s*--ui-[A-Za-z0-9-]+\s*,\s*([^)]*)\)/g;
+
+  /**
+   * Strip comments while leaving string and template literals intact.
+   *
+   * A line-wise `replace(/\/\/.*$/)` would also eat the rest of a CSS line that
+   * contains `//` inside a string, and a regex over the whole file would eat a
+   * `/*` that appears inside a template literal. This walks the text and tracks
+   * which construct it is in, which is the only way to keep the two apart.
+   *
+   * CSS comments inside a template literal are stripped too. That case is not
+   * hypothetical: every component's rules live in a template literal, and a CSS
+   * comment that explains "the old value was #ff0000" is a comment, not a colour.
+   *
+   * @param {string} source file text
+   * @returns {string[]} lines with comments blanked out
+   */
+  function codeLines(source) {
+    let out = "";
+    let state = "code"; // code | line | block | single | double | template | cssBlock
+    let escaped = false;
+
+    for (let i = 0; i < source.length; i += 1) {
+      const char = source[i];
+      const next = source[i + 1];
+
+      if (state === "line") {
+        if (char === "\n") {
+          state = "code";
+          out += char;
+        }
+        continue;
+      }
+
+      if (state === "block" || state === "cssBlock") {
+        if (char === "*" && next === "/") {
+          state = state === "cssBlock" ? "template" : "code";
+          i += 1;
+        } else if (char === "\n") {
+          out += char;
+        }
+        continue;
+      }
+
+      if (state === "single" || state === "double") {
+        out += char;
+        if (escaped) {
+          escaped = false;
+        } else if (char === "\\") {
+          escaped = true;
+        } else if (
+          (state === "single" && char === "'") ||
+          (state === "double" && char === '"')
+        ) {
+          state = "code";
+        }
+        continue;
+      }
+
+      if (state === "template") {
+        // `\${` opens real code inside the literal; everything else is text that
+        // the stylesheet will see. CSS comments are dropped, interpolation is
+        // kept so a colour smuggled into an expression is still found.
+        if (char === "\\") {
+          out += char;
+          if (next !== undefined) {
+            out += next;
+            i += 1;
+          }
+          continue;
+        }
+
+        if (char === "/" && next === "*") {
+          state = "cssBlock";
+          i += 1;
+          continue;
+        }
+
+        out += char;
+
+        if (char === "`") {
+          state = "code";
+        }
+
+        continue;
+      }
+
+      if (char === "/" && next === "/") {
+        state = "line";
+        i += 1;
+        continue;
+      }
+
+      if (char === "/" && next === "*") {
+        state = "block";
+        i += 1;
+        continue;
+      }
+
+      if (char === "'") state = "single";
+      else if (char === '"') state = "double";
+      else if (char === "`") state = "template";
+
+      out += char;
+    }
+
+    return out.split(/\r?\n/);
+  }
 
   for (const directory of CONSUMER_DIRS) {
     for (const relative of listFiles(args.root, directory, [".ts", ".tsx"])) {
-      if (relative.includes(".test.")) continue;
+      if (TEST_FILE_PATTERN.test(relative)) continue;
 
       const source = read(path.join(args.root, relative));
-      const lines = source.split(/\r?\n/);
+      const lines = codeLines(source);
 
       lines.forEach((line, index) => {
-        // A comment may name a colour while explaining why we do not; only code
-        // counts.
-        const code = line.replace(/\/\/.*$/, "").replace(/\/\*.*?\*\//g, "");
+        if (colourLiteral.test(line)) {
+          violations.push({
+            file: relative,
+            line: index + 1,
+            rule: "T2",
+            message: "colour literal in a component; use var(--ui-...) so the theme can reach it",
+          });
 
-        if (/^\s*\*/.test(code)) return;
+          return;
+        }
 
-        for (const match of code.matchAll(stylePattern)) {
-          const value = match[1] ?? "";
+        // A fallback inside a token reference is still a hard-coded colour, and
+        // it is the more dangerous kind: it only shows up when the token is
+        // absent, which is exactly the case nobody looks at.
+        for (const match of line.matchAll(VAR_FALLBACK)) {
+          const fallback = match[1] ?? "";
 
-          // A value that is a `var(--ui-...)` reference is exactly what we want.
-          if (value.startsWith("var(--ui-")) continue;
-
-          if (colourLiteral.test(value)) {
+          if (colourLiteral.test(fallback)) {
             violations.push({
               file: relative,
               line: index + 1,
               rule: "T2",
-              message: "colour literal in a component; use var(--ui-...) so the theme can reach it",
+              message: "colour literal as a var() fallback; it hides exactly the case it should surface",
             });
           }
         }
@@ -439,7 +685,7 @@ function collectViolations(args) {
 
   for (const directory of CONSUMER_DIRS) {
     for (const relative of listFiles(args.root, directory, [".ts", ".tsx"])) {
-      if (relative.includes(".test.")) continue;
+      if (TEST_FILE_PATTERN.test(relative)) continue;
 
       const source = read(path.join(args.root, relative));
       const lines = source.split(/\r?\n/);
@@ -467,37 +713,100 @@ function collectViolations(args) {
   // the live region rendered as visible text above the placeholder bars. No test
   // caught it because the live region itself was correct -- only its styling was
   // missing, and there is no assertion for "this element is styled at all".
+  //
+  // Two holes in the first version, both closed here:
+  //
+  // 1. It only read `className="literal"` and ``className={`literal`}``. Every
+  //    component in this package actually writes `className={classes}` or
+  //    ``className={`${classes}__body`}``, and the second form was skipped whole
+  //    by the `includes("$")` guard -- so the eleven derived sub-classes
+  //    (`__trigger`, `__popup`, `__backdrop`, `__body`, ...) were never checked.
+  // 2. It silently did nothing when `styles.ts` was absent. A missing stylesheet
+  //    is not "nothing to check", it is "every class is unstyled", so it now
+  //    fails loudly instead of reporting a clean tree.
   const stylesheetFile = `packages/ui/src/components/styles.ts`;
   const stylesheetPath = path.join(args.root, stylesheetFile);
 
-  if (existsSync(stylesheetPath)) {
+  if (!existsSync(stylesheetPath)) {
+    violations.push({
+      file: stylesheetFile,
+      rule: "T6",
+      message: `cannot judge class coverage: ${stylesheetFile} does not exist, so no ui- class has a rule`,
+    });
+  } else {
     const stylesheet = read(stylesheetPath);
-    const classPattern = /className=(?:"([^"]+)"|\{`([^`]+)`\})/g;
-    const templatePattern = /\$\{[^}]*\}/g;
+
+    /**
+     * Every `className=` value, in any of the three shapes this package uses.
+     *
+     * `className={clsx("a", "b")}` and a bare identifier are matched by the
+     * third alternative: the values are picked up when the string literals are
+     * scanned separately, so only the literal list needs to be complete.
+     */
+    const classPattern = /className=(?:"([^"]+)"|\{`([^`]+)`\}|\{([^}]*)\})/g;
+
+    /**
+     * The base class of a component.
+     *
+     * Derived names are written `${BASE}__part`, and the root is `classes`.
+     * Components declare `const BASE = "ui-foo"` (the prefix for parts) next to
+     * `const classes = ...` (the root, which may carry a caller class). Reading
+     * `BASE` is what makes the derived names checkable at all.
+     *
+     * @param {string} source component source
+     * @returns {string | null} the base class, or null when it is not literal
+     */
+    function baseClassOf(source) {
+      const direct = source.match(/const BASE = "([^"]+)"/);
+
+      if (direct?.[1] !== undefined) return direct[1];
+
+      // Older components still derive from `classes` with no caller class in the
+      // string, so that shape has to keep working.
+      const legacy = source.match(/const classes = className === undefined \? "([^"]+)"/);
+
+      return legacy?.[1] ?? null;
+    }
 
     for (const directory of CONSUMER_DIRS) {
       for (const relative of listFiles(args.root, directory, [".tsx"])) {
-        if (relative.includes(".test.")) continue;
+        if (TEST_FILE_PATTERN.test(relative)) continue;
 
         const source = read(path.join(args.root, relative));
+        const base = baseClassOf(source);
 
         for (const match of source.matchAll(classPattern)) {
-          const literal = match[1] ?? (match[2] ?? "").replace(templatePattern, " ");
+          const raw = match[1] ?? match[2] ?? match[3] ?? "";
 
-          for (const token of literal.split(/\s+/)) {
-            if (!token.startsWith("ui-")) continue;
-            // A modifier assembled at runtime (`${classes}__popup`) is covered by
-            // the class it is derived from; only fully literal names are checked.
-            if (token.includes("$")) continue;
+          for (const piece of raw.split(/\s+/)) {
+            if (piece === "") continue;
+
+            // The three shapes that reach the DOM:
+            //   "ui-tag"                 a literal
+            //   `${classes}__trigger`    a derived name
+            //   classes                  the base itself, which is the *root*
+            //                            class every component actually uses
+            const resolved =
+              piece === "classes" || piece === "BASE"
+                ? base
+                : piece.includes("${classes}") || piece.includes("${BASE}")
+                  ? base === null
+                    ? null
+                    : piece.replace(/\$\{classes\}/g, base).replace(/\$\{BASE\}/g, base)
+                  : piece;
+
+            if (resolved === null) continue;
+            if (!resolved.startsWith("ui-")) continue;
+            if (resolved.includes("$")) continue;
 
             // Matched with a boundary, not a bare substring: `.ui-x` is a prefix
             // of `.ui-x-extra`, and a substring test would call a renamed class
             // present. That false pass is what the first version did.
-            if (!hasClassRule(stylesheet, token)) {
+            if (!hasClassRule(stylesheet, resolved)) {
               violations.push({
                 file: relative,
                 rule: "T6",
-                message: `${token} is used but has no rule in ${stylesheetFile}`,
+                message: `${resolved} is used but has no rule in ${stylesheetFile}`,
               });
             }
           }

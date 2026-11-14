@@ -138,20 +138,45 @@ describe("palette contrast", () => {
     }
   });
 
-  it("keeps a label readable on an accent fill in every theme", () => {
-    // static-1 is the light label and static-2 the dark one; which one is used
-    // depends on the theme, so both are checked and the better pair wins.
+  it("keeps a label readable on a filled control in every theme", () => {
+    // `static-1` is what a filled control puts its label in: the primary button
+    // (on `accent-1`), its hover state (on `accent-2`) and the danger button (on
+    // `danger-1`). It is asserted **as used**, not as "whichever of static-1 and
+    // static-2 happens to pass": the previous version took
+    // `Math.max(ratio(static-1), ratio(static-2))`, which cannot fail for any
+    // palette, and it therefore reported green while the dark themes rendered
+    // white label on light blue at 2.33:1.
     for (const key of Object.keys(THEMES)) {
       const tokens = paletteOf(key);
-      const accent = tokens["--ui-color-accent-1"] as string;
-      const best = Math.max(
-        contrastRatio(tokens["--ui-color-static-1"] as string, accent),
-        contrastRatio(tokens["--ui-color-static-2"] as string, accent),
-      );
+      const label = tokens["--ui-color-static-1"] as string;
 
-      expect(best, `static foreground on accent in ${key}`).toBeGreaterThanOrEqual(
-        MIN_RATIO_BODY_TEXT,
-      );
+      for (const fill of ["--ui-color-accent-1", "--ui-color-accent-2", "--ui-color-danger-1"]) {
+        const ratio = contrastRatio(label, tokens[fill] as string);
+
+        expect(ratio, `static-1 on ${fill} in ${key}`).toBeGreaterThanOrEqual(MIN_RATIO_BODY_TEXT);
+      }
+    }
+  });
+
+  it("keeps the switch thumb visible against both of its tracks", () => {
+    // The thumb is `static-1`; the track is `neutral-3` when off and `accent-1`
+    // when on. A thumb that matches its track is a switch that does not show its
+    // state, so this is the non-text threshold rather than a text one for the
+    // off state -- but the on state has to beat the text threshold too, because
+    // the same colour is the label of a filled button.
+    for (const key of Object.keys(THEMES)) {
+      const tokens = paletteOf(key);
+      const thumb = tokens["--ui-color-static-1"] as string;
+
+      expect(
+        contrastRatio(thumb, tokens["--ui-color-neutral-3"] as string),
+        `thumb on the off track in ${key}`,
+      ).toBeGreaterThanOrEqual(MIN_RATIO_LARGE_TEXT_OR_ICON);
+
+      expect(
+        contrastRatio(thumb, tokens["--ui-color-accent-1"] as string),
+        `thumb on the on track in ${key}`,
+      ).toBeGreaterThanOrEqual(MIN_RATIO_LARGE_TEXT_OR_ICON);
     }
   });
 
@@ -220,6 +245,12 @@ describe("palette contrast", () => {
   });
 
   it("uses opaque hex for every colour slot", () => {
+    // The two overlay slots are the documented exception: they are translucent
+    // *by definition* -- a scrim that is opaque is a black rectangle, and a
+    // shadow that is opaque is a drop of paint. Every other colour slot has to
+    // be an opaque hex so the contrast maths can measure it at all.
+    const TRANSLUCENT = new Set(["--ui-color-scrim", "--ui-color-shadow"]);
+
     for (const attrs of THEME_COMBINATIONS) {
       const tokens = paletteOf(themeKey(attrs));
 
@@ -230,6 +261,15 @@ describe("palette contrast", () => {
           !name.startsWith("--ui-math-") &&
           !name.startsWith("--ui-diff-")
         ) {
+          continue;
+        }
+
+        if (TRANSLUCENT.has(name)) {
+          // An overlay still has to be *parseable*: `rgb(r g b / a)` with a
+          // percentage alpha, so a theme cannot quietly set it to `none`.
+          expect(value, `${name} in ${themeKey(attrs)} must be a translucent rgb()`).toMatch(
+            /^rgb\(\d+ \d+ \d+ \/ \d{1,3}%\)$/,
+          );
           continue;
         }
 

@@ -133,10 +133,20 @@ const RADIUS: ScaleTokens = {
  *
  * The gaps are wide on purpose: a host page or a third-party popover can sit
  * between two of our layers without a collision.
+ *
+ * `dropdown` sits **above** `overlay` rather than below it. The intuitive order
+ * -- a dropdown inside a dialog should be under the next overlay -- is wrong for
+ * the way both are built here: every floating surface is portalled to the
+ * document body, so a select inside a dialog and the dialog itself are siblings,
+ * and only their z-index decides which is on top. Measured in Edge: a select
+ * opened inside a dialog rendered at 1000 under a dialog at 1100, so its list
+ * appeared *behind* the dialog it belonged to and could not be clicked. Nesting
+ * does not help because the portals are flat, so the scale has to encode "a
+ * transient popup outranks the surface that spawned it".
  */
 const Z: ScaleTokens = {
   "--ui-z-base": "0",
-  "--ui-z-dropdown": "1000",
+  "--ui-z-dropdown": "1150",
   "--ui-z-overlay": "1100",
   "--ui-z-toast": "1200",
   "--ui-z-tooltip": "1300",

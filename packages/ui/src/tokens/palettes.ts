@@ -36,6 +36,8 @@ export interface Palette {
   "--ui-color-neutral-3": string;
   "--ui-color-static-1": string;
   "--ui-color-static-2": string;
+  "--ui-color-scrim": string;
+  "--ui-color-shadow": string;
   "--ui-color-accent-1": string;
   "--ui-color-accent-2": string;
   "--ui-color-accent-3": string;
@@ -73,6 +75,8 @@ export const LIGHT_NORMAL: Palette = {
   "--ui-color-neutral-3": "#868e99",
   "--ui-color-static-1": "#ffffff",
   "--ui-color-static-2": "#1c1f23",
+  "--ui-color-scrim": "rgb(0 0 0 / 40%)",
+  "--ui-color-shadow": "rgb(0 0 0 / 12%)",
   "--ui-color-accent-1": "#1a5fd0",
   "--ui-color-accent-2": "#1550b0",
   "--ui-color-accent-3": "#e8f0fd",
@@ -110,6 +114,8 @@ export const LIGHT_HIGH: Palette = {
   "--ui-color-neutral-3": "#5c646e",
   "--ui-color-static-1": "#ffffff",
   "--ui-color-static-2": "#000000",
+  "--ui-color-scrim": "rgb(0 0 0 / 60%)",
+  "--ui-color-shadow": "rgb(0 0 0 / 28%)",
   "--ui-color-accent-1": "#0b3ea8",
   "--ui-color-accent-2": "#082f80",
   "--ui-color-accent-3": "#dbe8fb",
@@ -145,8 +151,10 @@ export const DARK_NORMAL: Palette = {
   "--ui-color-neutral-1": "#eef1f5",
   "--ui-color-neutral-2": "#a7b0bc",
   "--ui-color-neutral-3": "#6c7684",
-  "--ui-color-static-1": "#ffffff",
+  "--ui-color-static-1": "#121417",
   "--ui-color-static-2": "#16181c",
+  "--ui-color-scrim": "rgb(0 0 0 / 55%)",
+  "--ui-color-shadow": "rgb(0 0 0 / 45%)",
   "--ui-color-accent-1": "#79aaff",
   "--ui-color-accent-2": "#9dbeff",
   "--ui-color-accent-3": "#1c2c47",
@@ -182,8 +190,10 @@ export const DARK_HIGH: Palette = {
   "--ui-color-neutral-1": "#ffffff",
   "--ui-color-neutral-2": "#c9d1da",
   "--ui-color-neutral-3": "#8b95a2",
-  "--ui-color-static-1": "#ffffff",
+  "--ui-color-static-1": "#0b0d10",
   "--ui-color-static-2": "#000000",
+  "--ui-color-scrim": "rgb(0 0 0 / 72%)",
+  "--ui-color-shadow": "rgb(0 0 0 / 60%)",
   "--ui-color-accent-1": "#a8c8ff",
   "--ui-color-accent-2": "#c7dbff",
   "--ui-color-accent-3": "#17233a",

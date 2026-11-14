@@ -47,13 +47,39 @@ export const NEUTRAL_SLOTS = [
 ] as const;
 
 /**
- * Static colours: the two slots that deliberately do **not** follow the theme.
+ * Static colours: the two slots that do not follow the **accent hue**.
  *
- * - 1 the foreground to use on an accent fill, so a button label stays readable
- *   in all four combinations without the button knowing which one is active
+ * - 1 the foreground to use on a filled control (accent, danger, and the
+ *   switch's thumb), so a label stays readable without the control knowing
+ *   which theme is active
  * - 2 the inverse of the page, for inverted chips and tooltips
+ *
+ * `static-1` used to be `#ffffff` in all four themes, on the reasoning that a
+ * filled control is always dark enough for white. That is false in the dark
+ * themes, where `accent-1` is a *light* blue (`#79aaff`) and `danger-1` a light
+ * red: white on either measured 2.33:1 and 1.70:1, well under the 4.5:1 the
+ * requirement asks for. It is now the theme's own near-black in the dark themes,
+ * which measures 7.91:1 and 11.46:1. The slot still does not follow the accent
+ * *hue* -- it is the same label colour whatever the accent becomes -- but it is
+ * no longer claimed to be identical across modes, because "identical across
+ * modes" was the property that was wrong.
  */
 export const STATIC_SLOTS = ["--ui-color-static-1", "--ui-color-static-2"] as const;
+
+/**
+ * Overlay colours: the two translucent layers a floating surface needs.
+ *
+ * - `scrim` the dimmer behind a modal dialog
+ * - `shadow` the drop shadow under a popup
+ *
+ * Both are translucent black in every theme today, but they are slots rather
+ * than literals because a literal is invisible to the theme system: the
+ * stylesheet previously wrote `rgb(0 0 0 / 12%)` and `rgb(0 0 0 / 40%)` inline,
+ * so a high-contrast theme could not strengthen the scrim, and the "colours live
+ * only in the palette" rule had an exception nobody had written down. Keeping
+ * them here also lets a host map them to its own surface elevation.
+ */
+export const OVERLAY_SLOTS = ["--ui-color-scrim", "--ui-color-shadow"] as const;
 
 /** Accent steps. 1 is the base, 2 the hover fill, 3 the subtle background. */
 export const ACCENT_SLOTS = [
@@ -81,6 +107,7 @@ export const COLOR_SLOTS: readonly string[] = [
   ...STATIC_SLOTS,
   ...ACCENT_SLOTS,
   ...STATUS_SLOTS,
+  ...OVERLAY_SLOTS,
 ];
 
 /**
@@ -168,7 +195,6 @@ export const Z_SLOTS: readonly string[] = [
   "--ui-z-toast",
   "--ui-z-tooltip",
 ];
-
 /** Three durations and two easings. */
 export const MOTION_SLOTS: readonly string[] = [
   "--ui-motion-duration-1",
@@ -213,6 +239,7 @@ export type TokenName =
   | (typeof STATIC_SLOTS)[number]
   | (typeof ACCENT_SLOTS)[number]
   | (typeof STATUS_SLOTS)[number]
+  | (typeof OVERLAY_SLOTS)[number]
   | (typeof SPACE_SLOTS)[number]
   | (typeof FONT_FAMILY_SLOTS)[number]
   | (typeof FONT_SIZE_SLOTS)[number]
@@ -238,8 +265,7 @@ export type ThemeTokens = Record<TokenName, string>;
  */
 export const ALL_TOKEN_SLOTS: readonly string[] = [
   ...COLOR_SLOTS,
-  ...SPACE_SLOTS,
-  ...FONT_FAMILY_SLOTS,
+  ...SPACE_SLOTS,  ...FONT_FAMILY_SLOTS,
   ...FONT_SIZE_SLOTS,
   ...FONT_WEIGHT_SLOTS,
   ...FONT_LINE_HEIGHT_SLOTS,
