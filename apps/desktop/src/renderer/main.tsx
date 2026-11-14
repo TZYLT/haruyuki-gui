@@ -21,6 +21,8 @@ import { createRoot } from "react-dom/client";
 import { LocaleProvider, applyTheme, type ThemeAttrs } from "@haruyuki/ui";
 import { SamplePage } from "@haruyuki/ui/examples";
 
+import { ErrorBoundary, RendererErrorPage } from "./error-page.js";
+
 /**
  * What the preload exposes.
  *
@@ -90,7 +92,11 @@ function Shell(): ReactElement {
 
   return (
     <LocaleProvider locale={locale}>
-      <SamplePage locale={locale} />
+      <ErrorBoundary
+        fallback={(error, reset) => <RendererErrorPage error={error} onRetry={reset} />}
+      >
+        <SamplePage locale={locale} />
+      </ErrorBoundary>
     </LocaleProvider>
   );
 }

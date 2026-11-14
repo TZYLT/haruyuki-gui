@@ -31,6 +31,19 @@
 import { app, BrowserWindow, Menu, protocol, session, shell } from "electron";
 import path from "node:path";
 
+/**
+ * This file's directory at runtime.
+ *
+ * `import.meta.dirname` is the obvious spelling and it does not survive the build: the
+ * main process compiles to CommonJS, where `import.meta` becomes `{}`, so the two paths
+ * derived from it below would both silently become `undefined`-joined nonsense. The
+ * failure is a window that loads nothing, with no error naming the cause.
+ *
+ * `__dirname` is the CommonJS equivalent and is correct here precisely because this file
+ * is built as CommonJS.
+ */
+const HERE = __dirname;
+
 import { bootstrapErrorHtml } from "./bootstrap-error.js";
 import { APP_HOST, APP_SCHEME, APP_PRIVILEGES, createProtocolHandler } from "./protocol.js";
 import { CSP, headersFor, shouldApplyFallbackCsp } from "./csp.js";
@@ -190,7 +203,7 @@ async function createWindow(allowedDevtools: boolean, locale: string): Promise<B
     webPreferences: {
       // The preload is the only bridge. `nodeIntegration: false` plus `sandbox: true`
       // is what makes the three-member shape the whole attack surface.
-      preload: path.join(import.meta.dirname, "../preload/preload.js"),
+      preload: path.join(HERE, "../preload/preload.js"),
       contextIsolation: true,
       sandbox: true,
       nodeIntegration: false,
@@ -293,7 +306,7 @@ async function main(): Promise<void> {
 
   await app.whenReady();
 
-  const allowRoot = path.join(import.meta.dirname, "../renderer");
+  const allowRoot = path.join(HERE, "../renderer");
 
   protocol.handle(APP_SCHEME, createProtocolHandler({ allowRoot, headersFor }));
 
