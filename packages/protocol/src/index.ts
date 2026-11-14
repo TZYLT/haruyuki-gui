@@ -28,5 +28,11 @@ export type {
 /**
  * The frame layer: the envelope every channel shares, plus the
  * append-only frame type table that `scripts/check-frame.mjs` scans.
+ *
+ * Re-exported from the defining modules rather than through a `frame/index.ts`
+ * barrel. This repository forbids pure forwarding modules below a package root
+ * (`scripts/module-ownership.json`): they hide the real dependency edge and
+ * make a cycle invisible. `contract/` above follows the same rule.
  */
-export * from "./frame/index.js";
+export * from "./frame/frame.js";
+export * from "./frame/frame-types.js";

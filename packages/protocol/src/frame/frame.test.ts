@@ -20,16 +20,10 @@
 
 import { describe, expect, it } from "vitest";
 
-import { FRAME_PROTOCOL_VERSION, FRAME_TYPES } from "./index.js";
-import type {
-  BulkFrame,
-  ControlFrame,
-  Frame,
-  FrameChannel,
-  FrameCoalescing,
-  FrameTypeSpec,
-  KnownFrameType,
-} from "./index.js";
+import { FRAME_PROTOCOL_VERSION } from "./frame.js";
+import { FRAME_TYPES } from "./frame-types.js";
+import type { BulkFrame, ControlFrame, Frame, FrameChannel } from "./frame.js";
+import type { FrameCoalescing, FrameTypeSpec, KnownFrameType } from "./frame-types.js";
 
 /** The three legal channels, in contract order. */
 const CHANNELS = ["control", "stream", "bulk"] as const;
