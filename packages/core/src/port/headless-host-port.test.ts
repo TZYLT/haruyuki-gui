@@ -72,6 +72,69 @@ describe("headless host port: nine-item contract", () => {
     expect(Object.keys(port.paths).sort()).toEqual(["cache", "logs", "temp", "userData"]);
   });
 
+  it("accepts a token directory whose name starts with two dots", async () => {
+    const root = await makeRoot();
+    const engineHome = path.join(root, "engine-home");
+    const bundlePath = path.join(root, "engine.mjs");
+
+    writeFileSync(bundlePath, "// fake engine bundle\n");
+
+    const port = await createHeadlessHostPort({ bundlePath, engineHome, tokenDir: "..tokens" });
+
+    // "..tokens" is a child of the home, not the parent. A bare
+    // `startsWith("..")` read the name as an escape and refused a valid
+    // configuration, while `isInsideRoot` in the same file already used the
+    // separator-aware form.
+    expect(port.paths.temp).toBe(path.join(engineHome, "..tokens"));
+    expect(statSync(port.paths.temp).isDirectory()).toBe(true);
+  });
+
+  it("rejects a token directory that leaves the engine home", async () => {
+    const root = await makeRoot();
+    const engineHome = path.join(root, "engine-home");
+    const bundlePath = path.join(root, "engine.mjs");
+
+    writeFileSync(bundlePath, "// fake engine bundle\n");
+
+    for (const tokenDir of ["..", "../outside", path.join(root, "sibling")]) {
+      await expect(createHeadlessHostPort({ bundlePath, engineHome, tokenDir })).rejects.toThrow(
+        /inside engineHome/,
+      );
+    }
+  });
+
+  it("removes the disposable engine home when construction fails", async () => {
+    const parent = await makeRoot();
+    const bundlePath = path.join(parent, "engine.mjs");
+    const saved = ["TMP", "TEMP", "TMPDIR"].map((key) => [key, process.env[key]] as const);
+
+    writeFileSync(bundlePath, "// fake engine bundle\n");
+
+    // `mkdtemp` follows os.tmpdir(), which reads TMP/TEMP/TMPDIR: pointing them
+    // at a known directory is the only way to observe a leaked home.
+    for (const [key] of saved) {
+      process.env[key] = parent;
+    }
+
+    try {
+      await expect(createHeadlessHostPort({ bundlePath, tokenDir: "../escape" })).rejects.toThrow(
+        /inside engineHome/,
+      );
+
+      // The home the factory made must not outlive the rejection: the caller
+      // never learns its path, so nothing else could ever remove it.
+      expect(await readdir(parent)).toEqual(["engine.mjs"]);
+    } finally {
+      for (const [key, value] of saved) {
+        if (value === undefined) {
+          delete process.env[key];
+        } else {
+          process.env[key] = value;
+        }
+      }
+    }
+  });
+
   it("keeps the startup subset intact: four false capabilities and a usable spec", async () => {
     const { bundlePath, engineHome, port } = await createFixture();
 

@@ -10,8 +10,9 @@
  * - `./engine`: the engine facade, its frozen state/error types and the
  *   classification helpers .
  * - `./port`: the `HostPortStartup` startup subset, frozen as ``HostPortStartup` v1` by
- *   docs/13-B1 section 4, plus the headless implementation that proves the
- *   contract is implementable without Electron.
+ *   docs/13-B1 section 4 and extended to the nine-item `nine-item contract` by docs/18-A3
+ *   section 3.4.1, plus the headless implementation that proves the contract is
+ *   implementable without Electron.
  *
  * The placeholder constant stays: it is the package's self-identity, and removing
  * it would break the "not a barrel" shape this file has to keep (see

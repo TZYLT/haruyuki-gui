@@ -36,7 +36,7 @@
  */
 
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -141,8 +141,10 @@ export type HeadlessHostPortOptions = {
 };
 
 /**
- * The headless port plus the two test-only additions , so the corpus-A3 section
- * 3.4.1).
+ * The headless port plus its two implementation-specific additions. They are
+ * this implementation. They are test-facing, but they are part of the exported
+ * type because `@haruyuki/core` re-exports this module: a test that reaches for
+ * `dispose` must not need a deep import.
  *
  * `dispose` exists because a plain node process has no OS shutdown event to hang
  * `onShutdown` callbacks on: the test or probe that built the port is the thing
@@ -182,21 +184,34 @@ export type HeadlessHostPort = HostPort & {
 export async function createHeadlessHostPort(
   options: HeadlessHostPortOptions,
 ): Promise<HeadlessHostPort> {
+  const createdHome = options.engineHome === undefined;
   const engineHome = await resolveEngineHome(options.engineHome);
-  const tempDir = resolveTokenDir(engineHome, options.tokenDir);
+  let paths: HostPortStartup["paths"];
 
-  const paths: HostPortStartup["paths"] = {
-    userData: join(engineHome, USER_DATA_DIR),
-    logs: join(engineHome, LOGS_DIR),
-    cache: join(engineHome, CACHE_DIR),
-    temp: tempDir,
-  };
+  try {
+    const tempDir = resolveTokenDir(engineHome, options.tokenDir);
 
-  await Promise.all(
-    [paths.userData, paths.logs, paths.cache, paths.temp].map((dir) =>
-      mkdir(dir, { recursive: true }),
-    ),
-  );
+    paths = {
+      userData: join(engineHome, USER_DATA_DIR),
+      logs: join(engineHome, LOGS_DIR),
+      cache: join(engineHome, CACHE_DIR),
+      temp: tempDir,
+    };
+
+    await Promise.all(
+      [paths.userData, paths.logs, paths.cache, paths.temp].map((dir) =>
+        mkdir(dir, { recursive: true }),
+      ),
+    );
+  } catch (error) {
+    // A home this factory created has no owner once construction fails, and the
+    // caller never learns its path from a rejection, so it can never clean up.
+    if (createdHome) {
+      await rm(engineHome, { recursive: true, force: true }).catch(() => undefined);
+    }
+
+    throw error;
+  }
 
   const watchdogPath = watchdogPathForNodeOptions();
 
@@ -458,7 +473,9 @@ function resolveTokenDir(engineHome: string, tokenDir: string | undefined): stri
   const absolute = resolve(engineHome, tokenDir);
   const fromHome = relative(engineHome, absolute);
 
-  if (fromHome.startsWith("..") || isAbsolute(fromHome)) {
+  // Mirror `isInsideRoot`: a sibling named "..tokens" is inside, only ".." and
+  // "../..." are outside. A bare `startsWith("..")` would reject that name.
+  if (fromHome === ".." || fromHome.startsWith(`..${sep}`) || isAbsolute(fromHome)) {
     throw new Error(`tokenDir must stay inside engineHome: ${absolute} is outside ${engineHome}`);
   }
 
