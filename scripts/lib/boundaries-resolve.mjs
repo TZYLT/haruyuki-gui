@@ -403,6 +403,50 @@ function isInside(root, target) {
 }
 
 /**
+ * Whether a repo-relative posix path is a test file.
+ *
+ * This is the repository's test-file convention, and it lives here rather than
+ * in a second place because two gates must agree on it: the boundary gate
+ * applies the R6 exemption (below), and `vitest` collects tests by the same
+ * shape. A path that one calls a test and the other does not is either an
+ * unenforced exemption or a test file nobody runs.
+ *
+ * It is deliberately an extension test on the whole path, not a directory
+ * test: a colocated `foo.test.ts` next to `foo.ts` is the shape the renderer
+ * already uses.
+ *
+ * @param {string} repoRelative Repo-relative posix path.
+ * @returns {boolean}
+ */
+export function isTestFilePath(repoRelative) {
+  return /\.test\.tsx?$/.test(repoRelative);
+}
+
+/**
+ * Whether a value-import from `from` to `to` is exempt because the importing
+ * file is a test.
+ *
+ * The exemption exists for exactly one edge. A test in the renderer has to
+ * construct the real collaborators it exercises - a double, a fixture loader,
+ * a sender - and those live in `core`. Writing them again inside the test
+ * package would be a second implementation of the thing under test, and
+ * `import type` cannot call anything, so the test could only assert against a
+ * mock of itself.
+ *
+ * Every other restricted edge stays restricted in tests. In particular this
+ * never relaxes R7 (renderer -> protocol values): the frame-type table reaches
+ * the renderer by injection from the host, so no test needs to import it.
+ *
+ * @param {string} repoRelativeImporter Repo-relative posix path of the importer.
+ * @param {string | null} from Importing package name, or null outside the matrix.
+ * @param {string} to Imported package name.
+ * @returns {boolean}
+ */
+export function isTestFileValueImportExempt(repoRelativeImporter, from, to) {
+  return from === "ui" && to === "core" && isTestFilePath(repoRelativeImporter);
+}
+
+/**
  * Fold one path for comparison when the file system is case-insensitive.
  * On POSIX the value is returned unchanged, so `Core` and `core` stay distinct.
  *

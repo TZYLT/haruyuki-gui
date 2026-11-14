@@ -64,6 +64,7 @@ const SEGMENT_SCRIPTS = [
   "tokens/check.mjs",
   "i18n/check.mjs",
   "check-fixtures.mjs",
+  "check-frame.mjs",
 ];
 
 /** Mirrors GATE_SELF_TEST_FILES in verify.mjs; see the note above. */
@@ -77,6 +78,7 @@ const GATE_SELF_TEST_FILES = [
   "tokens/check.test.ts",
   "i18n/check.test.ts",
   "lint/i18n-messages.test.ts",
+  "check-frame.test.ts",
 ];
 
 /** Default-mode segment labels, in the documented order. */
@@ -89,6 +91,7 @@ const DEFAULT_LABELS = [
   "tokens",
   "i18n",
   "fixtures",
+  "frame",
   "test",
 ];
 
@@ -350,8 +353,8 @@ describe("verify aggregator: segment assembly", () => {
     const run = cachedRun("default", () => runVerify(tree));
 
     expect(run.status, run.output).toBe(0);
-    expect(run.output).toContain("verify: 9 segments, mode default");
-    expectHeadingsInOrder(run, DEFAULT_LABELS, 9);
+    expect(run.output).toContain("verify: 10 segments, mode default");
+    expectHeadingsInOrder(run, DEFAULT_LABELS, 10);
 
     // The gate scripts themselves ran in segment order, not just the printer.
     const gateLog = readFileSync(tree.logFile, "utf8");
@@ -360,8 +363,8 @@ describe("verify aggregator: segment assembly", () => {
     expect(gateLog.indexOf("check-contract.mjs")).toBeGreaterThan(
       gateLog.indexOf("check-boundaries.mjs"),
     );
-    expect(run.output).toContain("[3/9] boundaries  PASS");
-    expect(run.output).toContain("[5/9] contract  PASS");
+    expect(run.output).toContain("[3/10] boundaries  PASS");
+    expect(run.output).toContain("[5/10] contract  PASS");
   });
 
   it("appends the three --full segments in the documented order", () => {
@@ -369,9 +372,9 @@ describe("verify aggregator: segment assembly", () => {
     const run = cachedRun("full", () => runVerify(tree, ["--full"]));
 
     expect(run.status, run.output).toBe(0);
-    expect(run.output).toContain("verify: 12 segments, mode full");
-    expectHeadingsInOrder(run, [...DEFAULT_LABELS, ...FULL_LABELS], 12);
-    expect(run.output).toContain("[12/12] module ownership  PASS");
+    expect(run.output).toContain("verify: 13 segments, mode full");
+    expectHeadingsInOrder(run, [...DEFAULT_LABELS, ...FULL_LABELS], 13);
+    expect(run.output).toContain("[13/13] module ownership  PASS");
   });
 
   it("derives a segment reference from the assembled list, not a literal (P3-03)", () => {
@@ -383,10 +386,10 @@ describe("verify aggregator: segment assembly", () => {
     const run = peekRun("default");
 
     expect(run).toBeDefined();
-    expect(run?.output).toContain("rendered under test in segment 9");
+    expect(run?.output).toContain("rendered under test in segment 10");
     // The placeholder itself must not survive into the output.
     expect(run?.output).not.toContain("{segment:");
-    expect(run?.output).toContain("[9/9] test");
+    expect(run?.output).toContain("[10/10] test");
   });
 });
 
@@ -515,7 +518,7 @@ describe("verify aggregator: fail closed", () => {
     expect(run.status, run.output).toBe(2);
     expect(run.stderr).toContain("required file not found: scripts/check-cycles.mjs");
     expect(run.stderr).toContain('needed by segment "cycles"');
-    expect(run.stdout).not.toContain("[1/10]");
+    expect(run.stdout).not.toContain("[1/");
   });
 
   it("produces only the three contract exit codes 0, 1 and 2", () => {
@@ -542,12 +545,12 @@ describe("verify aggregator: behaviour", () => {
     );
 
     expect(run.status, run.output).toBe(1);
-    expectHeadingsInOrder(run, DEFAULT_LABELS, 9);
-    expect(run.output).toContain("[3/9] boundaries  FAIL");
+    expectHeadingsInOrder(run, DEFAULT_LABELS, 10);
+    expect(run.output).toContain("[3/10] boundaries  FAIL");
     // Later segments still ran, including the one after the failure.
-    expect(run.output).toContain("[5/9] contract  PASS");
-    expect(run.output).toContain("[9/9] test  PASS");
-    expect(run.output).toContain("verify: 1 of 9 segments FAILED");
+    expect(run.output).toContain("[5/10] contract  PASS");
+    expect(run.output).toContain("[10/10] test  PASS");
+    expect(run.output).toContain("verify: 1 of 10 segments FAILED");
     expect(run.output).toContain("FAILED: boundaries");
     // The failing segment's captured output is replayed as the debugging payload.
     expect(run.output).toContain("stub gate output: check-boundaries.mjs");

@@ -417,3 +417,76 @@ describe("check-boundaries: matrix drift guard (P1-7)", () => {
     );
   });
 });
+
+describe("check-boundaries: R6 test-file exemption (C5-Q14)", () => {
+  /** A tree where the renderer imports core both from a test and from production. */
+  function exemptionTree(): string {
+    const root = mkdtempSync(path.join(os.tmpdir(), "haruyuki-boundaries-r6-exempt-"));
+
+    createdRoots.push(root);
+
+    writeTree(root, {
+      "packages/protocol/src/index.ts": 'export const protocol = "protocol";\n',
+      "packages/core/src/index.ts": 'export const core = "core";\n',
+      // Green: a test may construct the real core collaborators it exercises.
+      "packages/ui/src/bridge/store.test.ts":
+        'import { core } from "@haruyuki/core";\n' + "export const x = core;\n",
+      // Red: the same import one file over, in production code, stays forbidden.
+      "packages/ui/src/bridge/store.ts":
+        'import { core } from "@haruyuki/core";\n' + "export const x = core;\n",
+    });
+
+    return root;
+  }
+
+  it("exempts a test file but keeps the same import forbidden in production code", () => {
+    const run = runGateAt(exemptionTree());
+
+    expect(run.status, run.output).toBe(1);
+    // The exemption is per file, not per package: exactly one violation, from
+    // the production file. A package-wide exemption would report zero here.
+    expect(reportedRuleIds(run.output)).toEqual(["R6"]);
+    expect(run.output).toContain("store.ts");
+    expect(run.output).not.toContain("store.test.ts");
+  });
+
+  it("does not extend the exemption to R7", () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "haruyuki-boundaries-r7-test-"));
+
+    createdRoots.push(root);
+
+    writeTree(root, {
+      "packages/protocol/src/index.ts": 'export const protocol = "protocol";\n',
+      "packages/core/src/index.ts": 'export const core = "core";\n',
+      // R7 is deliberately not exempted: the frame-type table reaches the
+      // renderer by injection, so no test needs to value-import protocol.
+      "packages/ui/src/bridge/table.test.ts":
+        'import { protocol } from "@haruyuki/protocol";\n' + "export const y = protocol;\n",
+    });
+
+    const run = runGateAt(root);
+
+    expect(run.status, run.output).toBe(1);
+    expect(reportedRuleIds(run.output)).toEqual(["R7"]);
+  });
+
+  it("still rejects a non-test file whose name merely contains 'test'", () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "haruyuki-boundaries-r6-trap-"));
+
+    createdRoots.push(root);
+
+    writeTree(root, {
+      "packages/protocol/src/index.ts": 'export const protocol = "protocol";\n',
+      "packages/core/src/index.ts": 'export const core = "core";\n',
+      // `latest.ts` and `contest.ts` end in "test" as a substring but are not
+      // test files; a `contains "test"` rule would let both through.
+      "packages/ui/src/bridge/latest.ts":
+        'import { core } from "@haruyuki/core";\n' + "export const a = core;\n",
+    });
+
+    const run = runGateAt(root);
+
+    expect(run.status, run.output).toBe(1);
+    expect(reportedRuleIds(run.output)).toEqual(["R6"]);
+  });
+});

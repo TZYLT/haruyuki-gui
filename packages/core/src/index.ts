@@ -13,6 +13,10 @@
  *   docs/13-B1 section 4 and extended to the nine-item `nine-item contract` by docs/18-A3
  *   section 3.4.1, plus the headless implementation that proves the contract is
  *   implementable without Electron.
+ * - `./bridge`: the frame producer (`FZ-1 v1`, docs/21 C5) -- the serializer
+ *   guard, the sequencer, the bounded queue, the pager, the batching window,
+ *   the handshake and the sender that assembles them. The renderer's consumer
+ *   half lives in `@haruyuki/ui/bridge`.
  *
  * The placeholder constant stays: it is the package's self-identity, and removing
  * it would break the "not a barrel" shape this file has to keep (see
@@ -20,6 +24,7 @@
  */
 export const CORE_PACKAGE_NAME = "@haruyuki/core" as const;
 
+export * from "./bridge/index.js";
 export * from "./engine";
 export * from "./port/host-port";
 export * from "./port/headless-host-port";

@@ -103,6 +103,70 @@ const HOST_API_PATTERNS = ["/electron", "/electron/*", "/vscode"];
 const VSCODE_HOST_API_PATTERNS = ["/vscode"];
 const ELECTRON_HOST_API_PATTERNS = ["/electron", "/electron/*"];
 
+/**
+ * R6: the renderer may only type-import the core package.
+ *
+ * Named rather than inlined because a test file gets the same rule with this
+ * one entry removed (see the R6 exemption block below). Two copies of the
+ * pattern list would drift, and the drift would silently widen or narrow the
+ * exemption instead of failing.
+ */
+const R6_UI_CORE_PATTERNS = ["@haruyuki/core", "@haruyuki/core/*", "@haruyuki/core/**"];
+
+/**
+ * The import patterns that apply to the renderer, optionally without R6.
+ *
+ * Returns a fresh array on every call: the two config objects below are
+ * independent, and flat config rewrites `no-restricted-imports` wholesale for
+ * the last object that matches a file, so a shared mutable array would make
+ * one block's edit silently change the other's meaning.
+ *
+ * @param {{ r6: boolean }} options whether to include the R6 entry
+ * @returns {object[]}
+ */
+function uiImportPatterns({ r6 }) {
+  const patterns = [
+    {
+      group: NODE_BUILTIN_PATTERNS,
+      message:
+        "R4: @haruyuki/ui is the renderer and must not import Node builtins (node:* or bare names such as fs/path/child_process); keep I/O in @haruyuki/core",
+    },
+    {
+      group: HOST_API_PATTERNS,
+      message:
+        "R5: @haruyuki/ui is the renderer and must not import host APIs (electron / electron/* / vscode); talk to the host through the protocol instead",
+    },
+    {
+      group: ["@haruyuki/protocol", "@haruyuki/protocol/*", "@haruyuki/protocol/**"],
+      allowTypeImports: true,
+      message:
+        "R7: @haruyuki/ui may only 'import type' from @haruyuki/protocol; value imports are forbidden",
+    },
+    {
+      group: [
+        "@haruyuki/desktop",
+        "@haruyuki/desktop/*",
+        "@haruyuki/desktop/**",
+        "@haruyuki/vscode",
+        "@haruyuki/vscode/*",
+        "@haruyuki/vscode/**",
+      ],
+      message:
+        "R11: @haruyuki/ui must not import the app shells @haruyuki/desktop or @haruyuki/vscode (type imports included); the dependency edge points the other way",
+    },
+  ];
+
+  if (r6) {
+    patterns.splice(2, 0, {
+      group: R6_UI_CORE_PATTERNS,
+      allowTypeImports: true,
+      message: "R6: @haruyuki/ui must not value-import @haruyuki/core; use 'import type' instead",
+    });
+  }
+
+  return patterns;
+}
+
 export default [
   {
     // `_research/` is exploration residue outside the workspace (and owns its
@@ -213,47 +277,27 @@ export default [
   {
     files: packageFiles("packages/ui"),
     rules: {
-      "no-restricted-imports": [
-        "error",
-        {
-          patterns: [
-            {
-              group: NODE_BUILTIN_PATTERNS,
-              message:
-                "R4: @haruyuki/ui is the renderer and must not import Node builtins (node:* or bare names such as fs/path/child_process); keep I/O in @haruyuki/core",
-            },
-            {
-              group: HOST_API_PATTERNS,
-              message:
-                "R5: @haruyuki/ui is the renderer and must not import host APIs (electron / electron/* / vscode); talk to the host through the protocol instead",
-            },
-            {
-              group: ["@haruyuki/core", "@haruyuki/core/*", "@haruyuki/core/**"],
-              allowTypeImports: true,
-              message:
-                "R6: @haruyuki/ui must not value-import @haruyuki/core; use 'import type' instead",
-            },
-            {
-              group: ["@haruyuki/protocol", "@haruyuki/protocol/*", "@haruyuki/protocol/**"],
-              allowTypeImports: true,
-              message:
-                "R7: @haruyuki/ui may only 'import type' from @haruyuki/protocol; value imports are forbidden",
-            },
-            {
-              group: [
-                "@haruyuki/desktop",
-                "@haruyuki/desktop/*",
-                "@haruyuki/desktop/**",
-                "@haruyuki/vscode",
-                "@haruyuki/vscode/*",
-                "@haruyuki/vscode/**",
-              ],
-              message:
-                "R11: @haruyuki/ui must not import the app shells @haruyuki/desktop or @haruyuki/vscode (type imports included); the dependency edge points the other way",
-            },
-          ],
-        },
-      ],
+      "no-restricted-imports": ["error", { patterns: uiImportPatterns({ r6: true }) }],
+    },
+  },
+  // R6 exemption for renderer tests.
+  //
+  // A test has to construct the real collaborators it exercises -- the frame
+  // store, a double, a fixture loader -- and those live in `core`. Rewriting
+  // them inside the renderer would be a second implementation of the thing
+  // under test, and `import type` cannot call anything, so the test could only
+  // assert against a mock of itself. The boundary gate applies the same
+  // exemption through `isTestFileValueImportExempt`; both halves must agree or
+  // the exemption is either unenforced (gate green, lint red) or wider than
+  // intended.
+  //
+  // Only R6 is removed here. R7 stays: the frame-type table reaches the
+  // renderer by injection from its host, so no renderer test needs to value-
+  // import `protocol`.
+  {
+    files: ["packages/ui/**/*.test.ts", "packages/ui/**/*.test.tsx"],
+    rules: {
+      "no-restricted-imports": ["error", { patterns: uiImportPatterns({ r6: false }) }],
     },
   },
 

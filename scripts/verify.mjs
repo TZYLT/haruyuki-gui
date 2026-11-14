@@ -149,6 +149,7 @@ const GATE_SELF_TEST_FILES = [
   "scripts/tokens/check.test.ts",
   "scripts/i18n/check.test.ts",
   "scripts/lint/i18n-messages.test.ts",
+  "scripts/check-frame.test.ts",
 ];
 
 /** Long form of the gate self-test heading; see the segment definition. */
@@ -408,6 +409,18 @@ function buildSegments(options) {
       // Redaction and the version-alignment warning live in the same script.
       label: "fixtures",
       command: () => gate("scripts/check-fixtures.mjs", options.verbose),
+    },
+    {
+      // Frame type registration (docs/21). Also text-only and cheap. Sits after
+      // the other gates so a violation is reported by the segment that names it
+      // rather than as a failing unit test, and before `test` for the same
+      // reason as every other gate above.
+      //
+      // Independent of `fixtures`: that segment grades a corpus file's shape,
+      // this one grades the source literals against the declared type table.
+      // Merging them would make a red result ambiguous.
+      label: "frame",
+      command: () => gate("scripts/check-frame.mjs", options.verbose),
     },
     {
       // One run, two outputs: the test verdicts and the coverage numbers.
