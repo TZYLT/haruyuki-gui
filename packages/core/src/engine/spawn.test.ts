@@ -39,7 +39,7 @@ const PRINTS_SOURCE =
   'process.stdout.write("spawn-stdout:" + process.env.SPAWN_TEST_MARKER + "\\n");' +
   'process.stderr.write("spawn-stderr\\n");';
 const POSIX_SIGTERM_SOURCE =
-  'process.on("SIGTERM", () => { process.exit(7); }); setInterval(() => {}, 1000);';
+  'process.on("SIGTERM", () => { process.exit(7); }); process.stdout.write("armed\\n"); setInterval(() => {}, 1000);';
 
 /** Children started by a test, force-cleaned after it. */
 const liveChildren = new Set<ChildProcess>();
@@ -227,6 +227,14 @@ describe("stopGraceful", () => {
     "lets a POSIX child exit through its own SIGTERM handler",
     async () => {
       const child = start(engineSpec(POSIX_SIGTERM_SOURCE));
+      // The handler is installed only after Node boots; signalling before the
+      // "armed" line lands would exercise the default SIGTERM disposition
+      // instead of the handler (a flake on slow hosts, seen on Linux first).
+      await new Promise<void>((resolve) => {
+        child.stdout!.once("data", () => {
+          resolve();
+        });
+      });
       const exit = nextExit(child, 10000);
 
       await stopGraceful(child);
