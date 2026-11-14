@@ -395,6 +395,33 @@ describe("replay injections", () => {
 
     expect(waits).toEqual([20, 20, 20]);
   });
+
+  it("keeps the first frame's offset instead of firing it at zero", async () => {
+    // The fixture clock is "ms since connect", so a first s2c at 40 is a frame the
+    // real client saw 40 ms in; replay fired it immediately and lost the offset.
+    const lines: FixtureLine[] = [
+      { dir: "s2c", at: 40, msg: { type: "app_server_info_response", success: true } },
+      { dir: "s2c", at: 60, msg: { type: "turn_finished" } },
+    ];
+    const { fixture } = await loadReplayFixture(fixtureText(lines));
+    const waits: number[] = [];
+    const clock: Clock = {
+      now: () => 0,
+      sleep: async (ms: number) => {
+        waits.push(ms);
+      },
+    };
+    const server = await startServer({
+      mode: "replay",
+      replay: { fixture, plan: { speed: 2 }, clock },
+    });
+    const client = openClient(server.url);
+
+    await client.opened;
+    await waitFor(() => server.emitted.length === 2, "the two s2c frames");
+
+    expect(waits).toEqual([80, 40]);
+  });
 });
 
 /* ------------------------------------------------------------------ */

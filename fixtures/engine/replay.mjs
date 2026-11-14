@@ -281,8 +281,12 @@ export function buildReplaySteps(fixture, plan = {}) {
   }
 
   // Emit only s2c lines, one step per emission, with the wait before each one.
+  // `previousAt` starts at 0, not at the first line's own `at`: the fixture clock
+  // is measured from connect, so the first frame has to wait for its own offset
+  // too. Treating it like any other line used to fire it at t=0 and lose that
+  // offset (measured: user-message at 2x ran 48 ms shorter than its last `at`).
   const emissions = [];
-  let previousAt = null;
+  let previousAt = 0;
 
   for (const source of order) {
     const line = lines[source - 1];
@@ -291,7 +295,7 @@ export function buildReplaySteps(fixture, plan = {}) {
 
     let delayMs = 0;
 
-    if (speed !== INSTANT && previousAt !== null && !coalesced.has(source)) {
+    if (speed !== INSTANT && !coalesced.has(source)) {
       delayMs = Math.max(0, Math.round((line.at - previousAt) * speed));
     }
 
