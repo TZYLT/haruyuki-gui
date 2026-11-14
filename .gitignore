@@ -64,3 +64,4 @@ ehthumbs.db
 .env.local
 .env.*.local
 *.local
+_acceptance/
