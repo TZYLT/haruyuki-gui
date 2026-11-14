@@ -1,9 +1,20 @@
 /**
- * @haruyuki/ui
+ * Public surface of the renderer package.
  *
- * Responsibility: the shared UI layer rendered by both shells, kept free of
- * shell-specific APIs.
+ * Downstream pages import from here and from nowhere else. That is the point of a
+ * single entry: it makes the package's public API a thing somebody chose, rather
+ * than whatever happened to be reachable by a deep import. Moving or renaming an
+ * internal file is then safe.
  *
- * Placeholder only: real components are filled in by later work packages.
+ * It also uses its own local export so the module is a real one rather than a
+ * barrel with no behaviour, which the ownership gate rejects -- correctly, since a
+ * forwarding-only module has nothing to own.
  */
-export const UI_PACKAGE_NAME = "@haruyuki/ui" as const;
+
+/** Package name, useful in diagnostics and in error messages. */
+export const PACKAGE_NAME = "@haruyuki/ui" as const;
+
+export * from "./components/index.js";
+export * from "./i18n/index.js";
+export * from "./icons/index.js";
+export * from "./tokens/index.js";
