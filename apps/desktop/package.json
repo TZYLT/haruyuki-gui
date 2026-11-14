@@ -15,7 +15,8 @@
     "start": "electron dist/main/main.cjs",
     "typecheck": "tsc --noEmit",
     "build:probe": "vite build --config vite.probe.mts",
-    "smoke:engine": "node scripts/smoke-engine.mjs"
+    "smoke:engine": "node scripts/smoke-engine.mjs",
+    "verify:gui-host": "node scripts/verify-gui-host.mjs"
   },
   "dependencies": {
     "@haruyuki/core": "workspace:*",

@@ -52,6 +52,7 @@ export default defineConfig({
         // Two probes, two entry points. Both are test artifacts and neither ships.
         "engine-probe": path.resolve(PACKAGE_DIR, "scripts/engine-probe.ts"),
         "coldstart-probe": path.resolve(PACKAGE_DIR, "scripts/coldstart-probe.ts"),
+        "gui-host-probe": path.resolve(PACKAGE_DIR, "scripts/gui-host-probe.ts"),
       },
       formats: ["cjs"],
       fileName: (_format, entryName) => `${entryName}.cjs`,

@@ -63,11 +63,12 @@ const REPO_ROOT = process.env["HARUYUKI_SMOKE_ROOT"];
 /** What the probe reports back. */
 interface ProbeResult {
   ready: boolean;
-  port?: number;
   portMs?: number;
   protocolVersion?: number;
   engineVersion?: string;
-  capabilities?: string[];
+  backend?: string;
+  socketState?: string;
+  degradationCount?: number;
   stopped?: boolean;
   stopMs?: number;
   state?: string;
@@ -75,24 +76,56 @@ interface ProbeResult {
 }
 
 /**
+ * Thrown by {@link report} to stop the calling code.
+ *
+ * A sentinel rather than a control-flow trick: `report` must not return, because every
+ * call site has more work after it that must not run (starting an engine with no bundle
+ * path, for instance). Throwing is how the function stays total while letting the exit
+ * happen on the next tick, after stdout has flushed.
+ */
+class Reported extends Error {
+  constructor() {
+    super("reported");
+    this.name = "Reported";
+  }
+}
+
+/**
  * Print the result line and quit.
  *
- * `app.exit` rather than `app.quit`: `quit` runs the full teardown and can be delayed
- * by a window or a protocol handler, and this process has neither.
+ * The write is flushed before `app.exit`. `app.exit` terminates the process immediately --
+ * it does not run the event loop's exit handlers -- so a `process.stdout.write` that has
+ * not reached the pipe is simply lost. That produced a probe which did all its work,
+ * exited 0 and printed nothing, which reads exactly like a crash.
+ *
+ * `app.quit()` is not the alternative: it runs full teardown, which this process has none
+ * of and which a message loop it does not need can delay.
  *
  * @param result what to report
  * @param code process exit code
+ * @throws {Reported} always, so the caller's remaining work does not run
  */
 function report(result: ProbeResult, code: number): never {
-  process.stdout.write(`RESULT ${JSON.stringify(result)}\n`);
-  app.exit(code);
+  process.stdout.write(`RESULT ${JSON.stringify(result)}\n`, () => {
+    // The callback runs once the chunk is handed to the OS, which is the point at which
+    // exiting stops losing it.
+    app.exit(code);
+  });
 
-  // `app.exit` does not return; TypeScript cannot know that.
-  throw new Error("unreachable");
+  throw new Reported();
 }
 
 /**
  * The spawn spec for the engine, matching what the host uses.
+ *
+ * The `argvPrefix` contract (from `packages/core/src/engine/engine.ts`): it carries
+ * `server` plus the engine options, and it **ends with the `--ws-token-file` option name**
+ * -- `Engine.start` appends the token file's PATH as the next element, so the secret never
+ * reaches argv.
+ *
+ * `--ws-auth capability-token` is required, not optional: with only `--ws-token-file` the
+ * engine exits with "websocket auth flags require `--ws-auth capability-token`". The first
+ * version of this probe omitted it, which is why the engine produced no stdout at all.
  *
  * @param root repository root
  * @param bundle the engine's entry file
@@ -101,10 +134,13 @@ function spawnSpec(root: string, bundle: string): EngineSpawnSpec {
   return {
     exePath: process.execPath,
     bundlePath: bundle,
-    argvPrefix: ["server"],
+    argvPrefix: ["server", "--ws-auth", "capability-token", "--ws-token-file"],
     cwd: root,
     env: {
       ...(process.env as Record<string, string>),
+      // The Electron binary doubles as Node when this is set. It is set on the child only,
+      // which is how the real host launches the engine -- this process must NOT have it,
+      // or the shell would be running as plain Node.
       ELECTRON_RUN_AS_NODE: "1",
     },
     stdio: "pipe",
@@ -115,6 +151,9 @@ function spawnSpec(root: string, bundle: string): EngineSpawnSpec {
 
 /**
  * Run the probe.
+ *
+ * The `Reported` sentinel unwinds out of here; anything else reaching the top is a real
+ * failure that has not been reported yet, so it is turned into one.
  */
 async function main(): Promise<void> {
   if (BUNDLE_PATH === undefined || REPO_ROOT === undefined) {
@@ -153,34 +192,36 @@ async function main(): Promise<void> {
     });
     const portMs = Date.now() - startedAt;
 
-    const url = engine.url;
-
-    if (typeof url !== "string" || url === "") {
-      report({ ready: true, error: "the facade reported ready with no url" }, 1);
-    }
-
-    const port = Number(new URL(url).port);
-    const capabilities = Object.keys(info.capabilities ?? {});
+    // The facade exposes no `url` accessor: the URL is discovered internally and handed to
+    // the socket. What it does expose is `appServerInfo`, which is what the handshake
+    // reported. So the assertions are built from that plus the state, not from a URL this
+    // process would have to re-derive.
+    const socketState = engine.socketState;
+    const degradations = engine.degradations;
 
     const stopAt = Date.now();
 
-    await engine.stop();
+    // `stopGraceful`, not `stop`: the facade's name for the orderly path, and the one that
+    // returns a promise. `kill` is the terminal alternative and is not what is being
+    // for -- the assertion is that a graceful stop works.
+    await engine.stopGraceful();
 
     const stopMs = Date.now() - stopAt;
 
-    // `stopped` is about the state transition, not the signal: a child that ignored
-    // SIGTERM and was killed still reached the terminal state, and that is what the
-    // assertion is for.
-    const stopped = engine.state === "stopped" || engine.state === "idle";
+    // `closed` is the terminal state after a graceful stop -- the state list is
+    // `idle | spawning | handshaking | ready | closing | closed | failed`, and there is no
+    // `stopped`. Asserting `stopped` was asserting a state the facade never had.
+    const stopped = engine.state === "closed";
 
     report(
       {
         ready: true,
-        port,
         portMs,
         protocolVersion: info.protocolVersion,
         engineVersion: info.engineVersion,
-        capabilities,
+        backend: info.backend,
+        socketState,
+        degradationCount: degradations.length,
         stopped,
         stopMs,
         state: engine.state,
@@ -202,4 +243,20 @@ async function main(): Promise<void> {
   }
 }
 
-void app.whenReady().then(main);
+void app
+  .whenReady()
+  .then(main)
+  .catch((error: unknown) => {
+    // `Reported` means a result was already written; the exit is scheduled and this catch
+    // has nothing to add. Anything else is an unreported failure, which still has to produce
+    // a RESULT line or the caller sees a silent exit.
+    if (error instanceof Reported) return;
+
+    process.stdout.write(
+      `RESULT ${JSON.stringify({
+        ready: false,
+        error: error instanceof Error ? error.message : String(error),
+      })}\n`,
+      () => app.exit(1),
+    );
+  });

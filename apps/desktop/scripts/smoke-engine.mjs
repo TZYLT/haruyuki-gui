@@ -6,8 +6,14 @@
  *
  *   - the engine reaches `ready` through `@haruyuki/core`, in a real Electron main
  *           main process, not through the acceptance script's own copy of the logic
- *   - the handshake reports `protocol_version = 1` and a non-empty capability set
+ *   - the handshake reports `protocol_version = 1` and an engine version
  *   - the process stops gracefully and the child is gone afterwards
+ *
+ * Note on what is NOT asserted: the requirement's wording mentions a "capability set",
+ * and `AppServerInfo` has no such field -- it carries `protocolVersion`, `engineVersion`,
+ * `backend` and `raw`. The assertion follows the type rather than the prose. If a
+ * capability set is genuinely part of the contract, it belongs in `AppServerInfo` and
+ * that is a change to `@haruyuki/core`, not to this script.
  *
  * Exit codes: 0 pass, 1 fail, 2 engine artifact missing (the same split the acceptance
  * script uses, so CI can tell "broken" from "not fetched").
@@ -259,35 +265,39 @@ async function main() {
     fail(`the engine did not reach ready: ${JSON.stringify(result.error ?? result.state)}`);
   }
 
-  if (typeof result.port !== "number" || result.port <= 0) {
-    fail(`the port was not reported as a positive number: ${JSON.stringify(result.port)}`);
-  }
-
+  // The facade exposes no `url` accessor -- discovery happens internally and the URL
+  // goes straight to the socket. So the timing is what this assertion can cover: it
+  // `start()` returning, which is the definition of ready (socket open AND
+  // `app_server_info` answered, per engine.ts).
   if (typeof result.portMs !== "number" || result.portMs <= 0) {
-    fail(`the port timing was not measured: ${JSON.stringify(result.portMs)}`);
+    fail(`the ready timing was not measured: ${JSON.stringify(result.portMs)}`);
   }
 
-  pass("engine reaches ready", `ready in ${result.portMs} ms on port ${String(result.port)}`);
+  if (result.socketState !== "open") {
+    fail(`the socket state is ${JSON.stringify(result.socketState)}, expected open`);
+  }
+
+  pass("engine reaches ready", `ready in ${result.portMs} ms, socketState=open`);
 
   // The handshake facts.
   if (result.protocolVersion !== 1) {
     fail(`protocol_version is ${JSON.stringify(result.protocolVersion)}, expected 1`);
   }
 
-  if (!Array.isArray(result.capabilities) || result.capabilities.length === 0) {
-    fail(`capabilities is empty or not an array: ${JSON.stringify(result.capabilities)}`);
+  if (typeof result.engineVersion !== "string" || result.engineVersion === "") {
+    fail(`engineVersion is ${JSON.stringify(result.engineVersion)}`);
   }
 
   pass(
     "handshake facts",
-    `protocol_version=1 engine=${String(result.engineVersion)} capabilities=${String(
-      result.capabilities.length,
+    `protocol_version=1 engine=${result.engineVersion} backend=${String(result.backend)} degradations=${String(
+      result.degradationCount,
     )}`,
   );
 
   // The process stopped and the child is gone.
   if (result.stopped !== true) {
-    fail(`the engine did not stop cleanly: ${JSON.stringify(result.stop)}`);
+    fail(`the engine did not stop cleanly: state=${JSON.stringify(result.state)}`);
   }
 
   pass("graceful stop", `stopped gracefully in ${String(result.stopMs)} ms`);
