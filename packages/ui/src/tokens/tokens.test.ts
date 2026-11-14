@@ -124,6 +124,32 @@ describe("runtime injection", () => {
     expect(document.querySelectorAll("#haruyuki-ui-tokens").length).toBe(1);
   });
 
+  it("applies the default theme when the document has none", () => {
+    // The failure this prevents is total and silent: every rule is scoped to
+    // [data-theme][data-contrast], so without the attributes no rule matches and
+    // every token reads as an empty string. Components render with browser
+    // default fonts and zero padding -- which looks like the CSS never loaded.
+    //
+    // Found in a real browser, because jsdom does not apply stylesheets at all:
+    // every unit test passed while the page was unstyled.
+    document.documentElement.removeAttribute(THEME_MODE_ATTRIBUTE);
+    document.documentElement.removeAttribute(THEME_CONTRAST_ATTRIBUTE);
+
+    installTokens(document);
+
+    expect(document.documentElement.getAttribute(THEME_MODE_ATTRIBUTE)).toBe("light");
+    expect(document.documentElement.getAttribute(THEME_CONTRAST_ATTRIBUTE)).toBe("normal");
+  });
+
+  it("does not overwrite a theme the host already chose", () => {
+    // A host that sets dark/high before installing must keep it; the default is
+    // only a floor, never an override.
+    applyTheme({ mode: "dark", contrast: "high" }, document);
+    installTokens(document);
+
+    expect(readTheme(document)).toEqual({ mode: "dark", contrast: "high" });
+  });
+
   it("restores the element after a host removes it", () => {
     installTokens(document).remove();
 

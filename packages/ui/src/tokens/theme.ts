@@ -164,6 +164,25 @@ export function installTokens(doc?: Document): HTMLStyleElement {
   style.textContent = themeCss();
   target.head.appendChild(style);
 
+  // Apply the default combination when the document does not already carry one.
+  //
+  // Without this the sheet installs but resolves to nothing: every rule is scoped
+  // to `[data-theme][data-contrast]`, so a document with neither attribute matches
+  // no rule and every token reads as an empty string. The failure is silent and
+  // total -- components render with browser default fonts and zero padding, which
+  // looks like "the CSS was never loaded" rather than "one attribute is missing".
+  // Found in a real browser; jsdom cannot see it because it does not apply
+  // stylesheets at all.
+  //
+  // A host that wants a different theme calls `applyTheme` afterwards, which
+  // overwrites these; a host that wants none of this can remove the attributes.
+  if (
+    !target.documentElement.hasAttribute(THEME_MODE_ATTRIBUTE) &&
+    !target.documentElement.hasAttribute(THEME_CONTRAST_ATTRIBUTE)
+  ) {
+    applyTheme(DEFAULT_THEME, target);
+  }
+
   return style;
 }
 
