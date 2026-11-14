@@ -31,16 +31,42 @@ No entry is required for:
 When unsure whether something ships, record it. A missing row is a compliance
 defect; a redundant row is only noise.
 
-## Inventory
+## Runtime dependencies of the renderer
+
+`packages/ui` is the renderer package. Everything below it is linked into the
+renderer bundle, so every entry here reaches a user and is listed individually --
+including transitive packages, because a bundled artifact contains them whether
+or not we declared them.
 
 | Package | Version | License | Source | Notes |
 | ------- | ------- | ------- | ------ | ----- |
-| _none yet_ | - | - | - | No third-party runtime code is bundled or distributed at P0. |
+| react | 19.3.1 | MIT | https://github.com/facebook/react | Component runtime. Peer of every renderer package. |
+| react-dom | 19.3.1 | MIT | https://github.com/facebook/react | DOM renderer. |
+| scheduler | 0.28.0 | MIT | https://github.com/facebook/react | Transitive of react-dom. |
+| @base-ui/react | 1.9.0 | MIT | https://github.com/mui/base-ui | Behavior primitives (dialog, select, switch, tabs, tooltip, progress, field, checkbox, input, form). Styling is first-party; this package ships behavior only. |
+| @base-ui/utils | 0.5.0 | MIT | https://github.com/mui/base-ui | Transitive of @base-ui/react. |
+| @floating-ui/react-dom | 2.1.9 | MIT | https://github.com/floating-ui/floating-ui | Popover and tooltip positioning. Transitive of @base-ui/react. |
+| @floating-ui/dom | 1.8.0 | MIT | https://github.com/floating-ui/floating-ui | Transitive of @floating-ui/react-dom. |
+| @floating-ui/core | 1.8.0 | MIT | https://github.com/floating-ui/floating-ui | Transitive of @floating-ui/dom. |
+| @floating-ui/utils | 0.2.12 | MIT | https://github.com/floating-ui/floating-ui | Transitive of @floating-ui/*. |
+| @babel/runtime | 7.29.14 | MIT | https://github.com/babel/babel | Helpers used by the compiled output of @base-ui/*. Transitive. |
+| use-sync-external-store | 1.7.0 | MIT | https://github.com/facebook/react | Transitive of @base-ui/react. |
+| reselect | 5.3.0 | MIT | https://github.com/reduxjs/reselect | Transitive of @base-ui/utils. |
+| csstype | 3.2.3 | MIT | https://github.com/frenic/csstype | Transitive type dependency of @types/react; erased at build time, listed because it ships in type declarations. |
+| intl-messageformat | 12.1.5 | BSD-3-Clause | https://github.com/formatjs/formatjs | Runtime ICU MessageFormat formatting. BSD-3-Clause requires the copyright notice and licence text to travel with a binary distribution -- see NOTICE. |
+| @formatjs/fast-memoize | 3.1.7 | MIT | https://github.com/formatjs/formatjs | Transitive of intl-messageformat. |
+| @formatjs/icu-messageformat-parser | 3.5.23 | MIT | https://github.com/formatjs/formatjs | ICU parse step. Used at build time to precompile message ASTs, and is a declared dependency of intl-messageformat, so it is listed rather than assumed absent from the artifact. |
+| lucide-react | 1.72.0 | ISC | https://github.com/lucide-icons/lucide | Icon path source. Only the icons actually imported are bundled; the licence covers the artwork as well as the code, so the attribution stays even though most of the package is tree-shaken away. **115 of its icons are derived from the Feather project and carry MIT instead of ISC** -- `search`, `trash-2`, `x`, `check`, `chevron-down`, `info`, `alert-triangle`, `calendar`, `plus`, `minus`, `download`, `upload`, `clock`, `lock` and `link` among them, so both notices are required. See NOTICE. |
 
 ## Dev-only dependencies (not shipped, therefore not listed above)
 
-All current dependencies are development-time only: ESLint, Prettier, TypeScript,
-typescript-eslint, Vitest, the Vitest coverage provider, madge, and `@types/node`.
-The authoritative versions live in `package.json` (`devDependencies`) and
-`pnpm-lock.yaml`. If any of these ever becomes part of a published artifact, it
-must be moved into the inventory table above.
+Lint, format, type-check, test and build tooling: ESLint, Prettier, TypeScript,
+typescript-eslint, Vitest, the Vitest coverage provider, madge, `@types/node`,
+`@types/react`, `@types/react-dom`, `jsdom`, `@testing-library/react` and
+`@testing-library/user-event`. The authoritative versions live in `package.json`
+(`devDependencies`) and `pnpm-lock.yaml`. If any of these ever becomes part of a
+published artifact, it must be moved into the inventory table above.
+
+Note on `@testing-library/react` and `jsdom`: they are test-only today. They stay
+on this side of the line as long as no shipped artifact imports them, which is
+checked by the package-boundary gate, not by convention.

@@ -71,8 +71,31 @@ const MAX_BUFFER_BYTES = 32 * 1024 * 1024;
 /** CSI escape sequences: colors, cursor moves, line clears. */
 const ANSI_PATTERN = /\u001B\[[0-9;?]*[A-Za-z]/g;
 
-/** The test-file convention of this repository. */
-const TEST_FILE_PATTERN = /\.test\.ts$/;
+/**
+ * The test-file convention of this repository.
+ *
+ * `.test.tsx` is included because component tests are TSX. This pattern is used
+ * for two jobs that must agree: discovering files to run, and recognising which
+ * vitest arguments are test files when checking that every segment input exists.
+ * A `.test.tsx` the runner never discovers is a test that silently never fails.
+ */
+const TEST_FILE_PATTERN = /\.test\.tsx?$/;
+
+/**
+ * Directories the test discovery never descends into. Same set every other gate
+ * skips: `fixtures` holds deliberately broken trees, `_research` and `docs` are
+ * not part of the workspace, and the rest are build or install output.
+ */
+const SKIPPED_TEST_DIRS = new Set([
+  "node_modules",
+  "dist",
+  "out",
+  "build",
+  "coverage",
+  "fixtures",
+  "_research",
+  "docs",
+]);
 
 /** Any byte that would break the ASCII-only output contract. */
 const NON_ASCII_PATTERN = /[^\u0000-\u007F]/g;
@@ -108,6 +131,9 @@ const GATE_SELF_TEST_FILES = [
   "scripts/file-size-ratchet.test.ts",
   "scripts/module-ownership.test.ts",
   "scripts/contract-gate.test.ts",
+  "scripts/tokens/check.test.ts",
+  "scripts/i18n/check.test.ts",
+  "scripts/lint/i18n-messages.test.ts",
 ];
 
 /** Long form of the gate self-test heading; see the segment definition. */
@@ -306,7 +332,7 @@ function segmentInputs(segment) {
 }
 
 /**
- * Describe the seven base segments (plus three under --full).
+ * Describe the eight base segments (plus three under --full).
  *
  * @param {VerifyOptions} options
  * @returns {Segment[]}
@@ -340,28 +366,49 @@ function buildSegments(options) {
       command: () => gate("scripts/check-contract.mjs", options.verbose),
     },
     {
+      // Runs after `contract` and before `test` so a token violation is reported
+      // by the segment that names it rather than as a failing unit test.
+      label: "tokens",
+      command: () => gate("scripts/tokens/check.mjs", options.verbose),
+      notes: [
+        // A real reference, not a fixture for the placeholder test: the token
+        // gate grades the palette the test segment renders against, so a reader
+        // who sees one fail wants to know where the other runs.
+        "the palette this grades is rendered under test in segment {segment:test}",
+      ],
+    },
+    {
+      // Catalogue completeness and consistency. Cheap and text-only, so it runs
+      // before the test segment where a failure would be harder to attribute.
+      label: "i18n",
+      command: () => gate("scripts/i18n/check.mjs", options.verbose),
+    },
+    {
+      // One run, two outputs: the test verdicts and the coverage numbers.
+      //
+      // These were two segments, and the second re-ran every test under
+      // instrumentation. That was not redundancy a reader could see -- `test`
+      // listed the unit files and `coverage` ran the whole suite again -- but it
+      // cost a full second pass, about 24 s of a 62 s run, and the run has a 60 s
+      // budget. Merging keeps both contracts and removes the second pass.
+      //
+      // Both contracts survive because they were always separate questions asked
+      // about the same run: a red test fails here, an uninformative coverage table
+      // does not.
       label: "test",
       skipReason:
         unitTestFiles.length === 0
           ? "no test files outside the gate self-test set; nothing to run"
           : undefined,
-      command: () => vitest(unitTestFiles),
-    },
-    {
-      label: "coverage",
-      command: () => ({
-        command: "pnpm",
-        args: ["exec", "vitest", "run", "--coverage", "--coverage.reporter=text"],
-      }),
-      // A number report is the whole contract of this segment: uncovered code
-      // never fails here, and a red test verdict belongs to the test segment,
-      // so a non-zero exit that still produced the table is not a coverage
-      // failure.
+      command: () => vitest(unitTestFiles, ["--coverage", "--coverage.reporter=text"]),
+      // A number report is the whole coverage contract: uncovered code never fails
+      // here, so a non-zero exit that still produced the table is not a coverage
+      // failure. A non-zero exit *with* a failing test verdict still fails, which is
+      // what the segment is for.
       evaluate: (run) => run.status === 0 || COVERAGE_REPORT_PATTERN.test(run.output),
       notes: [
-        "advisory only: no threshold, uncovered code never fails verify",
+        "coverage is advisory: no threshold, uncovered code never fails verify",
         "in-process coverage of scripts/ stays low because gates run as child processes",
-        "test verdicts belong to segment {segment:test}, not here",
       ],
     },
   ];
@@ -441,92 +488,78 @@ function gate(relative, verbose) {
  * @param {string[]} files Repo-relative posix test file paths.
  * @returns {Command}
  */
-function vitest(files) {
-  return { command: "pnpm", args: ["exec", "vitest", "run", ...files] };
+/**
+ * Build the vitest invocation for a set of test files.
+ *
+ * @param {string[]} files repo-relative test paths
+ * @param {string[]} [extraArgs] additional vitest flags
+ * @returns {{ command: string, args: string[] }}
+ */
+function vitest(files, extraArgs = []) {
+  return { command: "pnpm", args: ["exec", "vitest", "run", ...files, ...extraArgs] };
 }
 
 /**
- * Every unit test file in the repository, as repo-relative posix paths.
+ * Every test file in the repository below the roots that hold tests, as
+ * repo-relative posix paths.
  *
  * Two roots, because the repository keeps tests in two places and the `test`
- * segment must be the segment that runs them all:
+ * segment must be the one that runs them all:
  *
- * - `scripts/*.test.ts`, flat, next to the gate they exercise;
- * - `packages/<pkg>/src/**\/*.test.ts`, co-located with the source they cover.
+ * - `scripts/**`, recursively -- gate self-tests sit next to the gate they
+ *   exercise, and a gate may live in a subdirectory (`scripts/tokens/check.mjs`
+ *   has `scripts/tokens/check.test.ts`). A flat listing would have missed it,
+ *   which is the same class of bug as a test file nobody collects.
+ * - `packages/<pkg>/src/**`, co-located with the source they cover.
  *
- * The package tree is walked rather than globbed because this script has no
- * dependencies. `node_modules`, `dist` and dot-directories are skipped: a
- * dependency's own tests are not ours to run.
+ * The tree is walked rather than globbed because this script has no dependencies.
+ * `SKIPPED_TEST_DIRS` is skipped everywhere: the `fixtures` trees are deliberately
+ * broken and must never be collected as tests, and a nested worktree or a
+ * published copy is not this repository's source.
  *
- * Why this matters: the `coverage` segment does run everything, but it accepts a
- * non-zero exit as long as a coverage table was printed, so a failing package
- * test would only fail `verify` for as long as vitest keeps omitting the table on
- * failure. A gate that relies on that is a gate by accident.
+ * This segment is now the only one that runs the unit tests. It used to share that
+ * job with a separate coverage segment, which re-ran everything under
+ * instrumentation and accepted a non-zero exit as long as a table was printed --
+ * so a failing package test only failed verify for as long as vitest kept omitting
+ * the table on failure. That arrangement is gone; the verdict and the numbers now
+ * come from one run.
+
  *
  * @param {string} root Absolute posix repository root.
  * @returns {string[]}
  */
 function discoverTestFiles(root) {
-  const flat = readdirSync(path.join(root, "scripts"))
-    .filter((name) => TEST_FILE_PATTERN.test(name))
-    .sort()
-    .map((name) => `scripts/${name}`);
+  const roots = ["scripts", "packages"];
 
-  return [...flat, ...discoverPackageTestFiles(root)].sort();
-}
+  /**
+   * @param {string} relative Repo-relative posix directory.
+   * @returns {string[]}
+   */
+  function walk(relative) {
+    const absolute = path.join(root, relative);
 
-/**
- * Co-located test files below every `packages/<pkg>/src` tree.
- *
- * @param {string} root Absolute posix repository root.
- * @returns {string[]}
- */
-function discoverPackageTestFiles(root) {
-  const packagesDir = path.join(root, "packages");
+    if (!existsSync(absolute)) return [];
 
-  if (!existsSync(packagesDir)) {
-    return [];
+    const found = [];
+
+    for (const entry of readdirSync(absolute, { withFileTypes: true })) {
+      // A dot-directory is never our source, and `.git` alone would make the walk
+      // expensive. `node_modules` and `dist` are covered by the skip set.
+      if (entry.name.startsWith(".")) continue;
+
+      const child = `${relative}/${entry.name}`;
+
+      if (entry.isDirectory()) {
+        if (!SKIPPED_TEST_DIRS.has(entry.name)) found.push(...walk(child));
+      } else if (TEST_FILE_PATTERN.test(entry.name)) {
+        found.push(child);
+      }
+    }
+
+    return found;
   }
 
-  const found = [];
-
-  for (const name of readdirSync(packagesDir).sort()) {
-    const srcDir = path.join(packagesDir, name, "src");
-
-    if (!existsSync(srcDir)) {
-      continue;
-    }
-
-    walkTests(srcDir, `packages/${name}/src`, found);
-  }
-
-  return found;
-}
-
-/**
- * Depth-first walk collecting `*.test.ts` below `dir`.
- *
- * @param {string} dir Absolute directory to read.
- * @param {string} prefix Repo-relative posix prefix for the files found.
- * @param {string[]} found Accumulator.
- */
-function walkTests(dir, prefix, found) {
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    if (entry.name.startsWith(".") || entry.name === "node_modules" || entry.name === "dist") {
-      continue;
-    }
-
-    const relative = `${prefix}/${entry.name}`;
-
-    if (entry.isDirectory()) {
-      walkTests(path.join(dir, entry.name), relative, found);
-      continue;
-    }
-
-    if (TEST_FILE_PATTERN.test(entry.name)) {
-      found.push(relative);
-    }
-  }
+  return roots.flatMap(walk).sort();
 }
 
 /**

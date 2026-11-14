@@ -19,7 +19,14 @@
 
 import tseslint from "typescript-eslint";
 
-const MODULE_EXTENSIONS = "js,mjs,cjs,ts,mts,cts";
+import { rules as i18nRules } from "./scripts/lint/i18n-messages.mjs";
+
+// `tsx` is part of the module surface, not an exception: the renderer package
+// is where JSX lives, and a file extension that eslint silently skips is a file
+// where every rule in this config stops applying. The parser needs
+// `ecmaFeatures.jsx` as well (`TSX` cannot be parsed in plain TS mode), which is
+// set once in the shared block below.
+const MODULE_EXTENSIONS = "js,mjs,cjs,ts,mts,cts,tsx";
 
 /**
  * Build the `files` glob for one workspace package.
@@ -118,6 +125,22 @@ export default [
       parser: tseslint.parser,
       ecmaVersion: 2023,
       sourceType: "module",
+    },
+    rules: {},
+  },
+  // JSX/TSX block. JSX is syntax, not module resolution, so it is opted into
+  // here rather than by widening the extension glob: enabling `jsx` for every
+  // TS file would let `.ts` files contain JSX, which the TypeScript compiler
+  // rejects (`TS17004`).
+  {
+    files: ["**/*.tsx"],
+    languageOptions: {
+      parser: tseslint.parser,
+      ecmaVersion: 2023,
+      sourceType: "module",
+      parserOptions: {
+        ecmaFeatures: { jsx: true },
+      },
     },
     rules: {},
   },
@@ -282,6 +305,32 @@ export default [
           ],
         },
       ],
+    },
+  },
+
+  // Hard-coded user-facing text in the renderer.
+  //
+  // Scoped to the package that renders text for a user. Applying these to every
+  // package would flag the catalogue files themselves -- which are Chinese and
+  // English prose by definition -- and a rule that needs a dozen exceptions is a
+  // rule somebody eventually disables.
+  //
+  // `no-user-facing-en` requires two words to look like prose: a single English
+  // word is ambiguous enough (a class, a unit, a state constant) that flagging it
+  // would produce enough noise to get the rule turned off.
+  {
+    files: [
+      "packages/ui/src/components/**/*.{ts,tsx}",
+      "packages/ui/src/examples/**/*.{ts,tsx}",
+      "packages/ui/src/icons/**/*.{ts,tsx}",
+    ],
+    ignores: ["**/*.test.{ts,tsx}"],
+    plugins: {
+      "haruyuki-i18n": { rules: i18nRules },
+    },
+    rules: {
+      "haruyuki-i18n/no-cjk-in-source": "error",
+      "haruyuki-i18n/no-user-facing-en": "error",
     },
   },
 ];
