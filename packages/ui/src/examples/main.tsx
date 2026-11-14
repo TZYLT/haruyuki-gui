@@ -24,7 +24,9 @@ import { SamplePage } from "./SamplePage.js";
 
 declare global {
   // The check reads this to drive a locale change on a live page.
-  // eslint-disable-next-line no-var
+  // `var` is required for a `declare global` binding; the rule that would
+  // otherwise complain is not enabled for this file, which is why the
+  // `eslint-disable` that used to sit here had become a no-op.
   var __sampleSetLocale: ((locale: string) => void) | undefined;
 }
 

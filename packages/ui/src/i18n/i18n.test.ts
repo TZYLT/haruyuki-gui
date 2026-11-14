@@ -20,6 +20,7 @@ import {
   formatMessage,
   resetDiagnostics,
   resolveLocale,
+  setDevelopmentBuildForTesting,
 } from "./index.js";
 import { en } from "./locales/en.js";
 
@@ -83,6 +84,26 @@ describe("missing interpolation values", () => {
 
   it("names the missing argument in the error", () => {
     expect(() => formatMessage("en", "error.withCode", {})).toThrow(/code/);
+  });
+
+  it("renders the placeholder instead of throwing in a production build", () => {
+    // A production build renders `{name}` and counts it, because
+    // there is no developer watching to read a throw -- a thrown formatter blanks
+    // the whole surface.
+    //
+    // Only the development branch was tested, and the production branch was
+    // wrong: skipping our own `throw` was not enough, because
+    // `intl-messageformat` throws `MissingValueError` for an absent argument all
+    // by itself, so `formatMessage` still threw in exactly the build that must
+    // not.
+    setDevelopmentBuildForTesting(false);
+
+    try {
+      expect(formatMessage("en", "error.withCode", {})).toBe("An error occurred ({code})");
+      expect(diagnostics.missingParams).toBeGreaterThan(0);
+    } finally {
+      setDevelopmentBuildForTesting(undefined);
+    }
   });
 });
 
@@ -157,8 +178,19 @@ describe("translator", () => {
   });
 
   it("is a stable function per call, so it can be memoised", () => {
+    // `t(k) === t(k)` asserts that a pure string function returns the same string
+    // twice, which is true of every function and says nothing. What a caller
+    // memoising on `t` actually needs is that *formatting* is not redone: the
+    // compiled formatter is cached, so a repeat call must not compile again.
+    // Counted through the diagnostics counter that a missing key bumps -- a
+    // second call must not increment it twice.
     const t = createTranslator("en");
+    const before = diagnostics.missingKeys;
 
-    expect(t("common.action.save")).toBe(t("common.action.save"));
+    const first = t("common.action.save");
+    const second = t("common.action.save");
+
+    expect(second).toBe(first);
+    expect(diagnostics.missingKeys - before, "a known key never counts as missing").toBe(0);
   });
 });

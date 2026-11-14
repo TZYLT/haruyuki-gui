@@ -39,7 +39,13 @@ export function createTranslator(locale: string): {
   return translate;
 }
 
-export { CATALOGUES, diagnostics, formatMessage, resetDiagnostics } from "./format.js";
+export {
+  CATALOGUES,
+  diagnostics,
+  formatMessage,
+  resetDiagnostics,
+  setDevelopmentBuildForTesting,
+} from "./format.js";
 export type { DiagnosticCounters } from "./format.js";
 
 export { en } from "./locales/en.js";

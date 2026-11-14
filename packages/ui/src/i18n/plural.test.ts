@@ -104,9 +104,18 @@ describe("formatting follows the rule, not the message", () => {
 
   it("does not silently accept a Chinese message with a one branch", () => {
     // `.one` never fires in zh. It is not an error ICU rejects -- it is worse:
-    // dead code that renders nothing and that behaviour tests cannot see.
-    const zhWithOne = "{count, plural, one {已选 # 项} other {已选 # 项}}";
+    // it is dead code that a translator still fills in and a reviewer still
+    // approves.
+    //
+    // The assertion has to be about *which branch ran*, not about how the output
+    // compares to itself. The previous version was
+    // `format(zh, 1) === format(zh, 5).replace("5", "1")`, which holds for a
+    // message with a DEFINED `one` branch that says something different, and for
+    // any single-template message whatsoever -- it could not fail. Giving the two
+    // branches distinguishable text makes the branch visible in the output.
+    const zhWithOne = "{count, plural, one {ONE(#)} other {OTHER(#)}}";
 
-    expect(format(zhWithOne, "zh-CN", 1)).toBe(format(zhWithOne, "zh-CN", 5).replace("5", "1"));
+    expect(format(zhWithOne, "zh-CN", 1)).toBe("OTHER(1)");
+    expect(format(zhWithOne, "zh-CN", 5)).toBe("OTHER(5)");
   });
 });

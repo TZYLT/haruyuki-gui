@@ -36,11 +36,33 @@ export const CATALOGUES: Readonly<Record<Locale, LocaleMessages>> = {
  * Read from `import.meta.env` rather than `process.env`: the renderer never has
  * `process` (`types: []` enforces it, and the boundary gate rejects `node:*`), so
  * the bundler's compile-time flag is the only signal available.
+ *
+ * Read through a module-level field rather than inline so a test can drive the
+ * production branch. Vite replaces `import.meta.env.DEV` with a literal at build
+ * time, so an inline read cannot be redefined -- and the production branch was
+ * the broken one, which meant the branch that shipped was the branch with no
+ * test that could reach it.
  */
+let developmentBuildOverride: boolean | undefined;
+
 function isDevelopmentBuild(): boolean {
+  if (developmentBuildOverride !== undefined) {
+    return developmentBuildOverride;
+  }
+
   const env = (import.meta as { env?: { MODE?: string; DEV?: boolean } }).env;
 
   return env?.DEV === true || env?.MODE === "development";
+}
+
+/**
+ * Force the development/production branch, for tests.
+ *
+ * @param value `true` for the development branch, `false` for production, or
+ * `undefined` to restore the build flag
+ */
+export function setDevelopmentBuildForTesting(value: boolean | undefined): void {
+  developmentBuildOverride = value;
 }
 
 /** Counts a diagnostic so a test can assert it without reading the console. */
@@ -161,13 +183,23 @@ function formatterFor(locale: Locale, key: string): IntlMessageFormat {
     return cached;
   }
 
-  const message = lookup(locale, key) ?? lookup(FALLBACK_LOCALE, key);
+  const own = lookup(locale, key);
+  // `lookup` returning here means the message is coming from the fallback
+  // catalogue, and it has to be compiled **in the fallback locale**, not in the
+  // requested one. The two catalogues do not just translate text: they select
+  // plural branches. An ICU `plural` picks its branch by the locale's plural
+  // rules, so compiling an English message against `zh` rendered the English
+  // text with Chinese plural rules. It happens to differ only for languages whose
+  // rule set is not English's, which is exactly the case a translator introduces
+  // and nobody re-tests.
+  const compiledLocale = own === undefined ? FALLBACK_LOCALE : locale;
+  const message = own ?? lookup(FALLBACK_LOCALE, key);
 
   if (message === undefined) {
     throw new Error(`unknown message key: ${key}`);
   }
 
-  const formatter = new IntlMessageFormat(message, locale);
+  const formatter = new IntlMessageFormat(message, compiledLocale);
 
   compiled.set(cacheKey, formatter);
 
@@ -206,6 +238,28 @@ export function formatMessage(locale: Locale, key: MessageKey, values?: MessageV
     if (isDevelopmentBuild()) {
       throw new Error(`missing interpolation value(s) for "${key}": ${missing.join(", ")}`);
     }
+
+    // Production degrades to the literal placeholder rather than throwing.
+    //
+    // `intl-messageformat` throws `MissingValueError` for an absent argument, so
+    // skipping our own throw was not enough: the call on the last line threw
+    // anyway, which turned a missing optional value into a blank screen in the
+    // one build that has no developer watching. The requirement says the
+    // production build renders `{name}` and counts it, so the values are filled
+    // in with a placeholder *before* formatting and the count above is the
+    // diagnostic.
+    //
+    // A plural argument cannot take a string placeholder -- ICU would look for a
+    // matching plural branch and fall to `other`, which is the defined fallback
+    // anyway -- so it is supplied as a number that selects `other` for `en` and
+    // `zh` alike (any non-1 integer does).
+    const filled: MessageValues = { ...values };
+
+    for (const name of missing) {
+      filled[name] = `{${name}}`;
+    }
+
+    return formatter.format(filled as never) as string;
   }
 
   return formatter.format(values as never) as string;

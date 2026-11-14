@@ -34,6 +34,8 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
+import { TYPE, parse } from "@formatjs/icu-messageformat-parser";
+
 import { runGate } from "../lib/gate-cli.mjs";
 
 /** Where the catalogues live, repo-relative. */
@@ -168,34 +170,61 @@ function argumentsIn(message) {
 function icuProblem(message) {
   if (message.trim() === "") return "message is empty";
 
-  let depth = 0;
+  // Parsed with the real ICU grammar rather than counted in braces.
+  //
+  // Brace counting cannot tell an argument from an escaped literal: ICU allows
+  // `'{'` and `'}'` to mean the literal characters, so `Use '{' to open a block`
+  // is a valid message that a counter reads as an unbalanced opening brace. It
+  // also cannot see that `{a, plural, one {x}} {b, plural, other {y}}` is broken
+  // -- a scan for `\bother\s*\{` anywhere in the message is satisfied by the
+  // second argument's branch, so the first argument's missing `other` goes
+  // unreported until runtime, when `IntlMessageFormat` throws in the user's face.
+  // The parser is already a devDependency for the runtime format path, so using
+  // it here costs nothing and is exact.
+  let ast;
 
-  for (const char of message) {
-    if (char === "{") depth += 1;
-    if (char === "}") {
-      depth -= 1;
-      if (depth < 0) return "unbalanced closing brace";
+  try {
+    ast = parse(message);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+
+    // The parser already rejects a missing `other` clause by name. Translated
+    // into the vocabulary the rest of this gate uses, so the message reads like
+    // the rule it belongs to instead of like a parser stack.
+    if (reason.includes("MISSING_OTHER_CLAUSE")) {
+      return "plural has no other branch";
     }
+
+    return `invalid ICU: ${reason}`;
   }
 
-  if (depth !== 0) return "unbalanced opening brace";
+  // `plural` / `select` / `selectordinal` must carry an `other` branch. The
+  // parser accepts their absence; the formatter throws without it.
+  const checkBranches = (nodes) => {
+    for (const node of nodes) {
+      if (
+        node.type === TYPE.plural ||
+        node.type === TYPE.select ||
+        node.type === TYPE.selectordinal
+      ) {
+        const hasOther = node.options !== undefined && node.options.other !== undefined;
 
-  // `plural` and `select` require an `other` branch; ICU throws without it.
-  for (const match of message.matchAll(
-    /\{\s*[a-zA-Z][a-zA-Z0-9_]*\s*,\s*(plural|select|selectordinal)\s*,/g,
-  )) {
-    const kind = match[1] ?? "";
-    const tail = message.slice(match.index ?? 0);
+        if (!hasOther) {
+          return `${node.value} has no other branch`;
+        }
 
-    if (!/\bother\s*\{/.test(tail)) {
-      return `${kind} has no other branch`;
+        for (const option of Object.values(node.options)) {
+          const problem = checkBranches(option.value);
+
+          if (problem !== null) return problem;
+        }
+      }
     }
-  }
 
-  // An empty argument such as `{}` or `{ }` is not valid ICU.
-  if (/\{\s*\}/.test(message)) return "empty argument";
+    return null;
+  };
 
-  return null;
+  return checkBranches(ast);
 }
 
 /**
@@ -355,7 +384,21 @@ function collectViolations(args) {
     }
   }
 
-  if (sources.length > 0) {
+  // An empty consumer set must not read as "nothing is unused".
+  //
+  // The guard used to be `if (sources.length > 0)`, so a tree with no consumer
+  // directory at all skipped I6 entirely and reported PASS. That made the green
+  // fixture's green meaningless -- it has no `components/`, so the half of I6
+  // that checks "declared but never referenced" never ran -- and it meant a
+  // renamed directory silently disabled the rule. Exit 2 says "the gate could
+  // not judge", which is the truth.
+  if (sources.length === 0) {
+    violations.push({
+      file: LOCALES_DIR,
+      rule: "I6",
+      message: `no source files found in ${COMPONENT_DIRS.join(", ")}; cannot tell which keys are unused`,
+    });
+  } else {
     const referenced = new Map();
 
     for (const source of sources) {
