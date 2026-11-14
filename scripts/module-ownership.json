@@ -10,6 +10,6 @@
   "modules": [],
   "barrels": {
     "forbid": true,
-    "allow": []
+    "allow": ["packages/core/src/engine/index.ts"]
   }
 }
