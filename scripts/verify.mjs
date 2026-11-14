@@ -132,6 +132,8 @@ const GATE_SELF_TEST_FILES = [
   "scripts/module-ownership.test.ts",
   "scripts/contract-gate.test.ts",
   "scripts/tokens/check.test.ts",
+  "scripts/i18n/check.test.ts",
+  "scripts/lint/i18n-messages.test.ts",
 ];
 
 /** Long form of the gate self-test heading; see the segment definition. */
@@ -330,7 +332,7 @@ function segmentInputs(segment) {
 }
 
 /**
- * Describe the eight base segments (plus three under --full).
+ * Describe the nine base segments (plus three under --full).
  *
  * @param {VerifyOptions} options
  * @returns {Segment[]}
@@ -368,6 +370,12 @@ function buildSegments(options) {
       // by the segment that names it rather than as a failing unit test.
       label: "tokens",
       command: () => gate("scripts/tokens/check.mjs", options.verbose),
+    },
+    {
+      // Catalogue completeness and consistency. Cheap and text-only, so it runs
+      // before the test segment where a failure would be harder to attribute.
+      label: "i18n",
+      command: () => gate("scripts/i18n/check.mjs", options.verbose),
     },
     {
       label: "test",

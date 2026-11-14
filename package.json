@@ -23,6 +23,7 @@
     "contract:update": "node scripts/contract/cli.mjs update",
     "contract:check": "node scripts/contract/cli.mjs check",
     "tokens:check": "node scripts/tokens/check.mjs",
+    "i18n:check": "node scripts/i18n/check.mjs",
     "contract:diff": "node scripts/contract/cli.mjs diff",
     "contract:generate": "node scripts/contract/cli.mjs generate",
     "test": "vitest run",
