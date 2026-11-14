@@ -145,6 +145,7 @@ import {
   hostApiOf,
   isNodeBuiltin,
   isPathSpecifier,
+  isTestFileValueImportExempt,
   packageOfPath,
   packageOfSpecifier,
   resolvePathSpecifier,
@@ -388,6 +389,10 @@ function collectViolations({ root, flags }) {
 function checkSpecifier({ scanRoot, file, sourcePackage, stats, sourceLine, specifier, typeOnly }) {
   const violation = (rule, message) => [{ file, line: sourceLine, rule, message }];
 
+  // Test files may construct the real renderer-side collaborators.
+  // Computed once per specifier, not per edge: `file` is fixed here.
+  const testExempt = (to) => isTestFileValueImportExempt(file, sourcePackage, to);
+
   // 1. Path specifiers, including `file:` URLs, are resolved against the
   //    importing file's directory.
   const pathForm = pathFormOf(specifier);
@@ -434,7 +439,7 @@ function checkSpecifier({ scanRoot, file, sourcePackage, stats, sourceLine, spec
 
     countInternalEdge(stats, typeOnly);
 
-    const edge = evaluateEdge(sourcePackage, targetPackage, typeOnly);
+    const edge = evaluateEdge(sourcePackage, targetPackage, typeOnly, testExempt(targetPackage));
 
     return edge === null ? [] : violation(edge.rule, edge.message);
   }
@@ -455,7 +460,7 @@ function checkSpecifier({ scanRoot, file, sourcePackage, stats, sourceLine, spec
 
     countInternalEdge(stats, typeOnly);
 
-    const edge = evaluateEdge(sourcePackage, namedPackage, typeOnly);
+    const edge = evaluateEdge(sourcePackage, namedPackage, typeOnly, testExempt(namedPackage));
 
     return edge === null ? [] : violation(edge.rule, edge.message);
   }
@@ -504,7 +509,7 @@ function countInternalEdge(stats, typeOnly) {
  * @param {boolean} typeOnly Whether the import is type-only.
  * @returns {{ rule: string, message: string } | null} Null when allowed.
  */
-function evaluateEdge(from, to, typeOnly) {
+function evaluateEdge(from, to, typeOnly, exempt = false) {
   if (from === null || from === to) {
     return null;
   }
@@ -522,7 +527,7 @@ function evaluateEdge(from, to, typeOnly) {
     throw new Error(`no matrix cell for ${from} -> ${to}`);
   }
 
-  if (permission === "allow" || (permission === "type" && typeOnly)) {
+  if (permission === "allow" || (permission === "type" && typeOnly) || exempt) {
     return null;
   }
 
