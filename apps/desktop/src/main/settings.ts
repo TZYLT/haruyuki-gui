@@ -42,23 +42,43 @@ export interface WindowState {
   maximized: boolean;
 }
 
-/** Everything the shell persists. */
+/**
+ * Everything the shell persists.
+ *
+ * `locale` is `null` when the user has never chosen one. That null is load
+ * bearing, not a missing value: it is what tells the next launch to follow the
+ * operating system. The first version stored `"en"` as the default, which made
+ * `chooseLocale`'s system-locale branch unreachable -- every first launch on a
+ * Chinese machine opened in English, and the requirement that a first launch
+ * speak the system's language was quietly false.
+ */
 export interface ShellSettings {
   theme: ThemeMode;
   contrast: ContrastLevel;
-  locale: Locale;
+  /** The user's choice, or `null` to follow the OS locale. */
+  locale: Locale | null;
   window: WindowState | null;
 }
 
-/** Minimum size a restored window may have. Below this the user cannot reach the chrome. */
-export const MIN_WINDOW_WIDTH = 480;
-export const MIN_WINDOW_HEIGHT = 360;
+/**
+ * Minimum size a restored window may have. Below this the user cannot reach the chrome.
+ *
+ * These are the requirement's numbers (`D1-Q27`: 最小 1024×700), not a value
+ * invented here. The first version had 480×360, which nothing reconciled with
+ * the requirement and nothing tested -- the tests compared against the constant,
+ * so they pinned the mistake rather than catching it. `settings.test.ts` now
+ * asserts these literals, which is the only way a constant can disagree with a
+ * document and fail.
+ */
+export const MIN_WINDOW_WIDTH = 1024;
+export const MIN_WINDOW_HEIGHT = 700;
 
 /** The defaults: no window state, so the first launch centers the window. */
 export const DEFAULT_SETTINGS: ShellSettings = {
   theme: "light",
   contrast: "normal",
-  locale: FALLBACK_LOCALE,
+  // `null`, not the fallback locale: see {@link ShellSettings.locale}.
+  locale: null,
   window: null,
 };
 
@@ -79,6 +99,20 @@ function oneOf<T extends string>(allowed: readonly T[], value: unknown, fallback
   return typeof value === "string" && (allowed as readonly string[]).includes(value)
     ? (value as T)
     : fallback;
+}
+
+/**
+ * Parse a locale, keeping "never chosen" distinct from "chose English".
+ *
+ * A string that is not a shipped locale is a *choice that is no longer
+ * available* -- a locale dropped between versions, or a hand-edited file -- so it
+ * falls back to the fallback locale rather than reverting to the OS. Only a truly
+ * absent value means "ask the system".
+ */
+function parseLocale(value: unknown): Locale | null {
+  if (value === undefined || value === null) return null;
+
+  return oneOf(SUPPORTED_LOCALES, value, FALLBACK_LOCALE);
 }
 
 /** A finite number, or the fallback. `JSON.parse` can yield `null` and `NaN` cannot appear. */
@@ -138,7 +172,7 @@ export function parseSettings(raw: string): ShellSettings {
   return {
     theme: oneOf(THEME_MODES, record["theme"], DEFAULT_SETTINGS.theme),
     contrast: oneOf(CONTRAST_LEVELS, record["contrast"], DEFAULT_SETTINGS.contrast),
-    locale: oneOf(SUPPORTED_LOCALES, record["locale"], DEFAULT_SETTINGS.locale),
+    locale: parseLocale(record["locale"]),
     window: parseWindow(record["window"]),
   };
 }

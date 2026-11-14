@@ -38,14 +38,21 @@ export const APP_NAME = "Haruyuki";
 /**
  * Pick the locale for this launch.
  *
- * @param persisted the value from settings, already validated, or the fallback
+ * @param persisted the value from settings: a validated locale, or `null` when
+ *   the user has never chosen one
  * @param systemLocale the OS locale as Electron reports it (`app.getLocale()`)
  */
-export function chooseLocale(persisted: Locale, systemLocale: string): Locale {
-  // The persisted value was validated against the shipped set on read, so it wins. The
-  // check is repeated rather than trusted: a settings file edited by hand is re-read on
-  // every launch, and "validated earlier" is not a property this function can see.
-  if ((SUPPORTED_LOCALES as readonly string[]).includes(persisted)) return persisted;
+export function chooseLocale(persisted: Locale | null, systemLocale: string): Locale {
+  // A stored choice wins over the environment -- that is the one job this field
+  // has. `null` is not "unknown", it is "not chosen yet", and it is what lets a
+  // first launch speak the system's language instead of the fallback.
+  //
+  // The membership check is repeated rather than trusted: a settings file edited
+  // by hand is re-read on every launch, and "validated earlier" is not a property
+  // this function can see.
+  if (persisted !== null && (SUPPORTED_LOCALES as readonly string[]).includes(persisted)) {
+    return persisted;
+  }
 
   return resolveLocale(systemLocale) || FALLBACK_LOCALE;
 }

@@ -20,6 +20,39 @@ describe("settingsPath", () => {
   });
 });
 
+describe("the window minimum", () => {
+  it("matches the requirement's numbers, not a value of our own", () => {
+    // The regression this exists for: the constants said 480×360 while
+    // `D1-Q27` said 1024×700, and every test compared against the constants --
+    // so the suite agreed with the code and neither agreed with the document.
+    // Asserting the literals is what lets a document and a constant disagree and
+    // fail. Changing these numbers is a requirement change, not a refactor.
+    expect(MIN_WINDOW_WIDTH).toBe(1024);
+    expect(MIN_WINDOW_HEIGHT).toBe(700);
+  });
+
+  it("accepts a saved window exactly at the minimum", () => {
+    const parsed = parseSettings(
+      JSON.stringify({
+        window: { x: 0, y: 0, width: MIN_WINDOW_WIDTH, height: MIN_WINDOW_HEIGHT },
+      }),
+    );
+
+    expect(parsed.window).not.toBeNull();
+  });
+
+  it("refuses a saved window one pixel below the minimum on either axis", () => {
+    for (const [width, height] of [
+      [MIN_WINDOW_WIDTH - 1, MIN_WINDOW_HEIGHT],
+      [MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT - 1],
+    ]) {
+      const parsed = parseSettings(JSON.stringify({ window: { x: 0, y: 0, width, height } }));
+
+      expect(parsed.window, `${String(width)}x${String(height)}`).toBeNull();
+    }
+  });
+});
+
 describe("parseSettings", () => {
   it("returns the defaults for an empty file", () => {
     expect(parseSettings("")).toEqual(DEFAULT_SETTINGS);
@@ -63,22 +96,38 @@ describe("parseSettings", () => {
         theme: "neon",
         contrast: "high",
         locale: "en",
-        window: { x: 10, y: 20, width: 1000, height: 700, maximized: false },
+        window: { x: 10, y: 20, width: 1100, height: 700, maximized: false },
       }),
     );
 
     expect(settings.theme).toBe("light");
     expect(settings.contrast).toBe("high");
-    expect(settings.window).toEqual({ x: 10, y: 20, width: 1000, height: 700, maximized: false });
+    expect(settings.window).toEqual({ x: 10, y: 20, width: 1100, height: 700, maximized: false });
   });
 
   it("ignores an unsupported locale", () => {
     expect(parseSettings(JSON.stringify({ locale: "fr" })).locale).toBe("en");
   });
 
+  it("distinguishes 'never chose a locale' from 'chose English'", () => {
+    // Regression: both used to parse to `"en"`, so the launch-locale resolver
+    // could not tell a first launch from a deliberate choice and always kept
+    // English. A first launch on a Chinese machine therefore opened in English.
+    expect(parseSettings("").locale).toBeNull();
+    expect(parseSettings("{}").locale).toBeNull();
+    expect(parseSettings(JSON.stringify({ locale: null })).locale).toBeNull();
+    expect(parseSettings(JSON.stringify({ locale: "en" })).locale).toBe("en");
+  });
+
+  it("round-trips a settings document whose locale was never chosen", () => {
+    const parsed = parseSettings(serializeSettings(DEFAULT_SETTINGS));
+
+    expect(parsed.locale).toBeNull();
+  });
+
   it("treats a non-boolean maximized as false", () => {
     const settings = parseSettings(
-      JSON.stringify({ window: { x: 0, y: 0, width: 900, height: 700, maximized: "yes" } }),
+      JSON.stringify({ window: { x: 0, y: 0, width: 1280, height: 800, maximized: "yes" } }),
     );
 
     expect(settings.window?.maximized).toBe(false);
@@ -103,10 +152,10 @@ describe("parseSettings", () => {
   it("refuses a window with a missing or non-finite coordinate", () => {
     // All or nothing: a half-specified rectangle is not a window the user had.
     for (const window of [
-      { x: 0, width: 900, height: 700 },
-      { x: 0, y: null, width: 900, height: 700 },
-      { x: "0", y: 0, width: 900, height: 700 },
-      { x: 0, y: 0, width: 900 },
+      { x: 0, width: 1280, height: 800 },
+      { x: 0, y: null, width: 1280, height: 800 },
+      { x: "0", y: 0, width: 1280, height: 800 },
+      { x: 0, y: 0, width: 1280 },
     ]) {
       expect(parseSettings(JSON.stringify({ window })).window).toBeNull();
     }
@@ -134,7 +183,7 @@ describe("serializeSettings", () => {
       theme: "dark",
       contrast: "high",
       locale: "zh-CN",
-      window: { x: 12, y: 34, width: 1000, height: 700, maximized: false },
+      window: { x: 12, y: 34, width: 1280, height: 800, maximized: false },
     };
 
     expect(parseSettings(serializeSettings(original))).toEqual(original);
@@ -155,13 +204,13 @@ describe("serializeSettings", () => {
     // chose, and it accumulates drift on every save.
     const serialized = serializeSettings({
       ...DEFAULT_SETTINGS,
-      window: { x: 10.7, y: 20.2, width: 900.5, height: 700.4, maximized: false },
+      window: { x: 10.7, y: 20.2, width: 1024.5, height: 700.4, maximized: false },
     });
 
     expect(JSON.parse(serialized).window).toEqual({
       x: 11,
       y: 20,
-      width: 901,
+      width: 1025,
       height: 700,
       maximized: false,
     });
