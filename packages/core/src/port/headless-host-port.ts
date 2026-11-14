@@ -135,7 +135,7 @@ export type HeadlessHostPortOptions = {
   bundlePath: string;
   engineHome?: string;
   tokenDir?: string;
-  pickQueue?: string[];
+  pickQueue?: Array<string | string[]>;
   allowedRoots?: string[];
   secureSeed?: Record<string, string>;
 };
@@ -276,7 +276,11 @@ export async function createHeadlessHostPort(
         // so the engine child is preloaded with the watchdog and nothing else.
         env: {
           ...environmentWithoutUndefined(),
-          [ENGINE_HOME_ENV]: engineHome,
+          // The engine home is `paths.userData`, not the directory that happens
+          // to hold the four paths: a desktop shell cannot do the latter (its
+          // logs, cache and temp do not share a parent with userData), and
+          // `cwd` is this same root, so the engine writes one tree.
+          [ENGINE_HOME_ENV]: paths.userData,
           NODE_OPTIONS: `--require "${watchdogPath}"`,
         },
         argvPrefix: [...ENGINE_ARGV_PREFIX],
@@ -346,20 +350,26 @@ export async function createHeadlessHostPort(
       return { ok: true };
     },
 
-    async pickPaths(_opts) {
+    async pickPaths(opts) {
       // Every call counts, including a cancelled one: the counter records how
       // many dialogs the core opened, which is what a test asserts about
       // behaviour, while the return value records the outcome.
       calls.pickPaths += 1;
 
-      // One queued answer per call, whatever `kind`/`multiple` say. The queue is
-      // the whole deterministic answer of a headless host, so a caller that wants
-      // two paths in one `multiple: true` call queues one entry per call
-      // instead. An empty queue is the documented cancellation, which is `[]`
-      // and not an error .
+      // One queued answer per call. An entry may be a single path or a list, so a
+      // `multiple: true` call can return several; a single-value call truncates,
+      // the way a real dialog honours the properties it was opened with. An empty
+      // queue is the documented cancellation, which is `[]` and not an error
+      // .
       const picked = pickQueue.shift();
 
-      return picked === undefined ? [] : [picked];
+      if (picked === undefined) {
+        return [];
+      }
+
+      const answer = typeof picked === "string" ? [picked] : picked;
+
+      return opts.multiple === true ? answer : answer.slice(0, 1);
     },
 
     async resolveLocalResource(absPath) {

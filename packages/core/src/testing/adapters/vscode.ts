@@ -96,6 +96,27 @@ const TEMP_DIR = "temp";
  * headless port's trace so the parity suite compares "what the core asked for"
  * across the three adapters.
  */
+/**
+ * A complete child environment, with `undefined` entries dropped.
+ *
+ * `EngineSpawnSpec.env` is documented as complete - the caller passes it to the
+ * spawn without merging `process.env` again - so a double that hands over only
+ * its own variable describes a child with no `PATH` and no `TEMP`, which is not
+ * a thing a shell can spawn. The real shells fill this from their own
+ * environment; the double inherits the test process's.
+ */
+function completeEnvironment(): Record<string, string> {
+  const env: Record<string, string> = {};
+
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value !== undefined) {
+      env[key] = value;
+    }
+  }
+
+  return env;
+}
+
 export type VscodeHostPortCalls = {
   openExternal: string[];
   notify: { level: string; message: string }[];
@@ -123,7 +144,7 @@ export type VscodeHostPortOptions = {
   bundlePath: string;
   globalStorageUri: string;
   allowedRoots?: string[];
-  pickQueue?: string[];
+  pickQueue?: Array<string | string[]>;
   secureSeed?: Record<string, string>;
   nodePath?: string;
   droppedContent?: Record<string, string>;
@@ -214,8 +235,11 @@ export async function createVscodeHostPort(
         // VSCode answer.
         exePath: nodePath,
         env: {
-          // Only the contractual variable: the double must not inherit the
-          // machine's environment, or a test result would depend on the CI box.
+          // Complete, as `EngineSpawnSpec.env` requires: the caller spawns with
+          // this object and never merges `process.env` again.
+          ...completeEnvironment(),
+          // The isolation root is the user-data directory, the path a shell has
+          // on every platform (`context.globalStorageUri` on VSCode).
           [ENGINE_HOME_ENV]: paths.userData,
         },
         argvPrefix: [...ENGINE_ARGV_PREFIX],
@@ -271,13 +295,26 @@ export async function createVscodeHostPort(
       return { ok: true };
     },
 
-    async pickPaths(_opts) {
-      // Every call counts, including a cancelled one.
+    async pickPaths(opts) {
+      // Every call counts, including a cancelled one: the counter records how
+      // many dialogs the core opened, which is what a test asserts about
+      // behaviour, while the return value records the outcome.
       calls.pickPaths += 1;
 
+      // One queued answer per call. An entry may be a single path or a list, so a
+      // `multiple: true` call can return several; a single-value call truncates,
+      // the way a real dialog honours the properties it was opened with. An empty
+      // queue is the documented cancellation, which is `[]` and not an error
+      // .
       const picked = pickQueue.shift();
 
-      return picked === undefined ? [] : [picked];
+      if (picked === undefined) {
+        return [];
+      }
+
+      const answer = typeof picked === "string" ? [picked] : picked;
+
+      return opts.multiple === true ? answer : answer.slice(0, 1);
     },
 
     async resolveLocalResource(absPath) {

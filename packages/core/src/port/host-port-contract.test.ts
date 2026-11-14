@@ -245,9 +245,11 @@ describe("nine-item host port contract semantic table: headless host port", () =
       expect(typeof value).toBe("string");
     }
 
-    // The isolation root is the engine home: `paths.userData` is only one of
-    // its four children, and the engine writes all four under `HARUYUKI_HOME`.
-    expect(spec.env["HARUYUKI_HOME"]).toBe(engineHome);
+    // The isolation root is the user-data directory, the one path a desktop
+    // shell also has (`app.getPath("userData")`); its logs, cache and temp come
+    // from other answers and share no parent, so a parent-of-four reading could
+    // not be implemented by the real shells.
+    expect(spec.env["HARUYUKI_HOME"]).toBe(port.paths.userData);
     expect(spec.env["NODE_OPTIONS"]).toMatch(/^--require ".*watchdog\.cjs"$/);
   });
 
