@@ -201,17 +201,22 @@ async function createWindow(allowedDevtools: boolean, locale: string): Promise<B
     show: false,
     backgroundColor: "#ffffff",
     webPreferences: {
-      // The preload is the only bridge. `nodeIntegration: false` plus `sandbox: true`
-      // is what makes the three-member shape the whole attack surface.
-      preload: path.join(HERE, "../preload/preload.js"),
+      // The preload is the only bridge. `nodeIntegration: false` plus `sandbox: true` is
+      // what makes the three-member shape the whole attack surface.
+      //
+      // Sibling of this file, with the `.cjs` extension the build emits. The path has to
+      // match the build's output *filename*, not just its directory: a wrong preload path
+      // is the quietest failure in the shell -- Electron loads nothing, the bridge is
+      // `undefined` in the renderer, and nothing anywhere reports why.
+      preload: path.join(HERE, "preload.cjs"),
       contextIsolation: true,
       sandbox: true,
       nodeIntegration: false,
-      // The shell never uses a `<webview>`, and enabling the tag without a reason is
-      // how a page gets a second, weaker renderer inside it.
+      // The shell never uses a `<webview>`, and enabling the tag without a reason is how
+      // a page gets a second, weaker renderer inside it.
       webviewTag: false,
-      // Devtools are gated on the same condition as the menu item, so there is one
-      // answer to "can the user inspect this build".
+      // Devtools are gated on the same condition as the menu item, so there is one answer
+      // to "can the user inspect this build".
       devTools: allowedDevtools,
     },
   });
