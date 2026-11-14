@@ -14,6 +14,7 @@ import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import {
   closeSync,
+  copyFileSync,
   existsSync,
   mkdirSync,
   openSync,
@@ -55,6 +56,7 @@ const HELP_TEXT = `Real-engine wire recorder.
 Usage:
   node scripts/engine/record.mjs --scenario <name> --send <commands.json>
     [--out <file.jsonl>] [--idle <ms>] [--timeout <ms>] [--gap <ms>] [--keep-raw]
+    [--provider-auth <auth.json>]
 
   --scenario  scenario name; also the default output file name
   --send      JSON array of raw c2s commands, sent in order, one frame each;
@@ -66,6 +68,9 @@ Usage:
   --gap       pause between sent commands (default 80 ms; raise it when a
               command bootstraps a runtime that needs real work first)
   --keep-raw  accepted for forward compatibility; raw output stays under _research/
+  --provider-auth  provider credentials file copied into the run's throwaway home
+              (<auth.json>/providers/auth.json layout is reproduced verbatim); the
+              run root is deleted afterwards, so the caller's own home is never used
   --help      show this text
 
 Output starts with the frozen "wire" header, then one
@@ -108,8 +113,17 @@ function parseArgs(argv) {
     timeoutMs: DEFAULT_TIMEOUT_MS,
     gapMs: SEND_GAP_MS,
     keepRaw: false,
+    providerAuth: null,
   };
-  const valueFlags = ["--scenario", "--send", "--out", "--idle", "--timeout", "--gap"];
+  const valueFlags = [
+    "--scenario",
+    "--send",
+    "--out",
+    "--idle",
+    "--timeout",
+    "--gap",
+    "--provider-auth",
+  ];
   for (let index = 0; index < argv.length; index += 1) {
     const flag = argv[index];
     if (flag === "--help" || flag === "-h") options.help = true;
@@ -120,6 +134,7 @@ function parseArgs(argv) {
       if (flag === "--scenario") options.scenario = raw;
       else if (flag === "--send") options.send = raw;
       else if (flag === "--out") options.out = raw;
+      else if (flag === "--provider-auth") options.providerAuth = raw;
       else {
         const parsed = Number(raw);
         if (!Number.isInteger(parsed) || parsed <= 0) fail(`${flag} expects a positive integer`);
@@ -188,6 +203,22 @@ async function createRunRoot() {
   await mkdir(workDir);
   return { rootDir, workDir };
 }
+/**
+ * Copy a provider credential file into the throwaway home, if one was given.
+ *
+ * The engine reads provider auth from `<home>/lc-local-backend/providers/auth.json`, so
+ * seeding it there is the only way to record a real model turn without pointing the
+ * engine at the machine's own home. The file lands inside the run root, which the
+ * cleanup removes pointwise afterwards.
+ */
+function seedProviderAuth(rootDir, authPath) {
+  if (authPath === null || authPath === undefined) return;
+  if (!existsSync(authPath)) fail(`provider auth file not found: ${authPath}`);
+  const target = path.join(rootDir, "lc-local-backend", "providers");
+  mkdirSync(target, { recursive: true });
+  copyFileSync(authPath, path.join(target, "auth.json"));
+}
+
 const isolatedEnv = (rootDir) => ({
   ...process.env,
   HARUYUKI_HOME: rootDir,
@@ -440,6 +471,7 @@ async function runRecording(options) {
     error: null,
   };
   const run = await createRunRoot();
+  seedProviderAuth(run.rootDir, options.providerAuth);
   const fd = openSync(outPath, "w");
   let ws = null;
   let recording = true;

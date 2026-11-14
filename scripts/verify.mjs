@@ -405,8 +405,7 @@ function buildSegments(options) {
       // fixture should be named by the segment that owns it, not surface as a
       // confusing failure in the replay tests that read it.
       //
-      // Redaction is a separate pass over the same files and is not implied by a
-      // green run here.
+      // Redaction and the version-alignment warning live in the same script.
       label: "fixtures",
       command: () => gate("scripts/check-fixtures.mjs", options.verbose),
     },

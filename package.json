@@ -30,7 +30,8 @@
     "contract:diff": "node scripts/contract/cli.mjs diff",
     "contract:generate": "node scripts/contract/cli.mjs generate",
     "test": "vitest run",
-    "hooks:install": "node scripts/install-hooks.mjs"
+    "hooks:install": "node scripts/install-hooks.mjs",
+    "record": "node scripts/engine/record.mjs"
   },
   "devDependencies": {
     "@formatjs/icu-messageformat-parser": "3.5.23",
