@@ -49,6 +49,11 @@ export const en = {
   "error.network.unreachable": "The service is unreachable",
   "error.unexpected": "An unexpected error occurred",
   "error.withCode": "An error occurred ({code})",
+  "error.shell.resourceDenied": "The application could not load a file it is not allowed to read",
+  "error.shell.resourceMissing": "The application could not find a file it needs",
+  "error.shell.bridgeDenied": "The application asked for a capability it does not have",
+  "error.shell.settingsCorrupt": "Your settings could not be read, so defaults are in use",
+  "error.shell.engineUnavailable": "The engine did not start",
 
   // ------------------------------------------------------------------ a11y
   "a11y.action.delete": "Delete",

@@ -46,6 +46,12 @@ const COMPONENT_DIRS = [
   "packages/ui/src/components",
   "packages/ui/src/examples",
   "packages/ui/src/icons",
+  // The desktop shell renders catalogue keys too, and was outside this scan
+  // until the review found it. `apps/desktop/src/renderer/error-page.tsx` calls
+  // `t()` for real; a renamed key there would have been a runtime hole that this
+  // gate reported as clean. The I6 rule is only as good as its consumer list.
+  "apps/desktop/src/renderer",
+  "apps/desktop/src/shared",
 ];
 
 /** The catalogues under comparison. English is the reference. */
@@ -57,6 +63,14 @@ const KEY_PATTERN = /^[a-z][a-zA-Z0-9]*\.[a-z][a-zA-Z0-9]*(\.[a-z][a-zA-Z0-9]*){
 
 /** Frozen namespace set. */
 const NAMESPACES = new Set(["common", "component", "page", "error", "a11y"]);
+
+/**
+ * The shell's code-to-key table, which counts as a reference for I6.
+ *
+ * Named here rather than discovered, so moving the table breaks this gate loudly
+ * instead of silently turning five live keys into five "unused" reports.
+ */
+const SHELL_ERROR_TABLE = "apps/desktop/src/shared/shell-error.ts";
 
 /**
  * Read a file as UTF-8.
@@ -412,6 +426,27 @@ function collectViolations(args) {
 
         if (key === undefined) continue;
         if (!referenced.has(key)) referenced.set(key, source.file);
+      }
+    }
+
+    // The shell's error-code table is a reference mechanism the requirement names
+    // explicitly ("this table is the only source for the i18n mapping"), so the
+    // gate reads it. Without this, five keys that exist solely to be looked up by
+    // code are reported as dead weight -- and the obvious "fix" would be to
+    // duplicate them as literals at the call site, which is exactly the second
+    // spelling the requirement forbids.
+    //
+    // Narrow on purpose: one file, one table, one namespace. A general "any string
+    // that looks like a key counts as used" rule would let a key in a comment or a
+    // docstring keep a dead entry alive forever.
+    const shellErrorTable = path.join(args.root, SHELL_ERROR_TABLE);
+
+    if (existsSync(shellErrorTable)) {
+      for (const match of read(shellErrorTable).matchAll(/["'](error\.shell\.[a-zA-Z0-9]+)["']/g)) {
+        const key = match[1];
+
+        if (key === undefined) continue;
+        if (!referenced.has(key)) referenced.set(key, SHELL_ERROR_TABLE);
       }
     }
 
