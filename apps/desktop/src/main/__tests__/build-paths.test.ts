@@ -20,7 +20,7 @@
  * about an artifact they have not made yet.
  */
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -84,13 +84,24 @@ describe.skipIf(!BUILT)("the built tree matches what the shell asks for", () => 
 
     expect(html).not.toMatch(/<script(?![^>]*\bsrc=)[^>]*>/);
 
+    // The asset name carries a content hash, so it is discovered rather than
+    // written down. The previous version named one hash literally -- which meant
+    // that after any rebuild the read failed, the `|| ""` fallback made the
+    // assertion vacuously true, and the test passed while checking nothing. It
+    // was silently dead from the first rebuild onwards.
     const assets = path.join(DIST, "renderer", "assets");
-    const scripts = existsSync(assets)
-      ? readFileSync(path.join(assets, "index-CkOyJ6f4.js"), "utf8")
-      : "";
+    const bundles = readdirSync(assets).filter((name) => name.endsWith(".js"));
 
-    // The asset name carries a content hash, so the check is on any bundle present.
-    expect(scripts === "" || !scripts.includes("eval(")).toBe(true);
+    expect(bundles.length).toBeGreaterThan(0);
+
+    for (const name of bundles) {
+      const source = readFileSync(path.join(assets, name), "utf8");
+
+      expect(source.includes("eval("), name).toBe(false);
+      // `new Function` is the other way to reach the same capability, and
+      // `'unsafe-eval'`'s absence blocks it identically.
+      expect(source.includes("new Function("), name).toBe(false);
+    }
   });
 });
 

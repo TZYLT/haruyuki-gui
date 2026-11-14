@@ -210,3 +210,71 @@ describe("createLogger", () => {
     expect(LOG_LEVELS).toEqual(["debug", "info", "warn", "error"]);
   });
 });
+
+describe("an unwritable log directory", () => {
+  /**
+   * A path that cannot be a directory, because a *file* occupies it.
+   *
+   * Cheaper and more portable than permissions: `mkdir` on it fails with EEXIST on
+   * every platform and as every user, including root.
+   *
+   * @returns the unusable log directory
+   */
+  async function blockedDir(): Promise<string> {
+    const parent = await tempDir();
+    const file = path.join(parent, "occupied");
+    const { writeFile } = await import("node:fs/promises");
+
+    await writeFile(file, "");
+
+    return path.join(file, "logs");
+  }
+
+  it("sends the record to the fallback sink instead of losing it", async () => {
+    // The degradation is required, and the first version silently swallowed
+    // the error -- so an unwritable directory produced a shell that logged
+    // nowhere and looked healthy.
+    const sink: string[] = [];
+    const logger = createLogger({
+      logDir: await blockedDir(),
+      onUnwritable: (line) => sink.push(line),
+    });
+
+    logger.error("shell.boot.failed", { detail: "boom" });
+    await logger.flush();
+
+    expect(sink.length).toBeGreaterThan(0);
+    expect(sink.join("")).toContain("shell.boot.failed");
+  });
+
+  it("reports the failure once, not once per record", async () => {
+    // A full disk would otherwise bury the reason under its own symptoms.
+    const sink: string[] = [];
+    const logger = createLogger({
+      logDir: await blockedDir(),
+      onUnwritable: (line) => sink.push(line),
+    });
+
+    for (let i = 0; i < 20; i++) logger.info(`event.${i}`);
+    await logger.flush();
+
+    const diagnostics = sink.filter((line) => line.includes("log.unwritable"));
+
+    expect(diagnostics).toHaveLength(1);
+  });
+
+  it("does not throw at the caller", async () => {
+    // The record is lost either way; taking the process down with it is strictly
+    // worse than losing it.
+    const logger = createLogger({
+      logDir: await blockedDir(),
+      onUnwritable: () => undefined,
+    });
+
+    expect(() => {
+      logger.info("still.fine");
+    }).not.toThrow();
+
+    await expect(logger.flush()).resolves.toBeUndefined();
+  });
+});

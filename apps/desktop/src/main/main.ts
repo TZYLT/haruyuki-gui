@@ -44,8 +44,9 @@ import path from "node:path";
  */
 const HERE = __dirname;
 
-import { bootstrapErrorHtml } from "./bootstrap-error.js";
+import { bootstrapErrorHtml, type BootstrapFailure } from "./bootstrap-error.js";
 import { APP_HOST, APP_SCHEME, APP_PRIVILEGES, createProtocolHandler } from "./protocol.js";
+import { shellError } from "../shared/shell-error.js";
 import { CSP, headersFor, shouldApplyFallbackCsp } from "./csp.js";
 import { APP_NAME, chooseLocale } from "./i18n.js";
 import { buildMenuTemplate } from "./menu.js";
@@ -53,14 +54,25 @@ import { createLogger, type Logger } from "./log.js";
 import {
   DEFAULT_SETTINGS,
   isWindowVisible,
-  parseSettings,
+  MIN_WINDOW_HEIGHT,
+  MIN_WINDOW_WIDTH,
+  readSettings,
   serializeSettings,
+  SETTINGS_VERSION,
   settingsPath,
   type ShellSettings,
 } from "./settings.js";
 
 /** The escape hatch that lets a packaged build open the inspector. */
 const DEVTOOLS_ENV = "HARUYUKI_DEVTOOLS";
+
+/**
+ * How long a boot failure waits for its log line before exiting anyway.
+ *
+ * Long enough for a local append; short enough that a wedged disk does not turn a
+ * crash into a hang. The message is already on stderr by then.
+ */
+const BOOT_FLUSH_TIMEOUT_MS = 2000;
 
 /** The initial window size on a first launch, in DIP. */
 const DEFAULT_WIDTH = 1280;
@@ -76,30 +88,132 @@ let mainWindow: BrowserWindow | null = null;
 let settings: ShellSettings = DEFAULT_SETTINGS;
 
 /**
+ * Whether this build may write the settings file back.
+ *
+ * False when the file on disk declares a version this build does not know. Set by
+ * {@link loadSettings} and read by {@link saveSettings}; see `readSettings` for why
+ * the two decisions cannot be separated.
+ */
+let settingsWritable = true;
+
+/**
+ * The temporary file the failure page was written to, when one was.
+ *
+ * Held so the quit handler can delete it. A page rendered from memory would avoid
+ * the file, but `data:` crashes on this platform (`E-61`), so the file is the
+ * mechanism and its cleanup is part of the mechanism.
+ */
+let bootstrapPagePath: string | null = null;
+
+/**
+ * Put the bootstrap failure page in front of the user.
+ *
+ * The requirement names two error surfaces and this is the first one
+ * (`D1-Q37`): when `app://` itself cannot serve, there is no React, no
+ * catalogue and no token layer, so the page is an HTML string built by
+ * `bootstrap-error.ts`.
+ *
+ * It is loaded from a temporary file rather than a `data:` URL. That is not a
+ * preference: on this development machine a window pointed at `data:` dies with
+ * `0xC0000003` before painting (`E-61`), and a failure page that crashes is
+ * worse than the blank window it replaces. A file has no such interaction.
+ *
+ * Returns whether the page was actually shown, so the caller can decide between
+ * "leave it up" and "exit with a code"; a failure page that can be seen is a
+ * better outcome than a fast exit.
+ *
+ * @param failure what to report
+ * @param target an existing window to reuse, or `undefined` to make one
+ */
+async function showBootstrapError(
+  failure: BootstrapFailure,
+  target?: BrowserWindow,
+): Promise<boolean> {
+  const { writeFile } = await import("node:fs/promises");
+  const file = path.join(app.getPath("temp"), `haruyuki-bootstrap-${String(process.pid)}.html`);
+
+  try {
+    await writeFile(file, bootstrapErrorHtml(failure), "utf8");
+
+    // Remember it so the quit handler can remove it: one file per failed launch
+    // would otherwise accumulate in the user's temp directory forever.
+    bootstrapPagePath = file;
+
+    const window =
+      target ??
+      new BrowserWindow({
+        width: 900,
+        height: 560,
+        show: false,
+        // The same hardening as the shell window. This page is static text, but a
+        // second window with weaker settings is a second attack surface, and the
+        // rule would then have an exception nobody remembers.
+        webPreferences: {
+          contextIsolation: true,
+          sandbox: true,
+          nodeIntegration: false,
+          webviewTag: false,
+          devTools: false,
+        },
+      });
+
+    window.once("ready-to-show", () => window.show());
+    await window.loadFile(file);
+
+    return true;
+  } catch (error) {
+    logger?.error("shell.bootstrap-error.failed", { detail: String(error) });
+
+    return false;
+  }
+}
+
+/**
  * Report a failure that happened before the window could show a page.
  *
- * Writes to the log and exits with the platform's failure code. The alternative --
- * an unhandled rejection -- leaves a process with no window and no message.
+ * Writes to stderr and to the log, then tries to render the failure page. Exits
+ * with the platform's failure code only when the page could not be shown -- a
+ * visible explanation outranks a specific exit code, and the code is in the log
+ * either way.
+ *
+ * The log write is awaited before anything else happens. `app.exit()`
+ * terminates without draining anything, and the logger writes through a promise
+ * chain, so the first version of this function queued an error record and then
+ * killed the process before the record reached the file: the one line that
+ * explains a failed launch was the line most likely to be lost.
  *
  * @param event short stable identifier
  * @param detail human-readable detail
  */
-function failBoot(event: string, detail: string): never {
-  const logPath = logger === null ? undefined : path.join(app.getPath("logs"), "");
+async function failBoot(event: string, detail: string): Promise<void> {
+  process.stderr.write(`[haruyuki] ${event}: ${detail}\n`);
+
+  const logDir = logger === null ? undefined : app.getPath("logs");
+
+  if (logDir !== undefined) process.stderr.write(`[haruyuki] log: ${logDir}\n`);
 
   logger?.error(event, { detail });
 
-  // No window exists yet, so there is nothing to render into. Stderr is what a
-  // developer running from a terminal sees, and the log file is what a user can
-  // attach. Both, because they are read by different people.
-  process.stderr.write(`[haruyuki] ${event}: ${detail}\n`);
+  // A flush that never settles would turn "the app failed" into "the app hangs",
+  // so it is bounded. The record is best-effort by then; stderr already has it.
+  if (logger !== null) {
+    await Promise.race([
+      logger.flush(),
+      new Promise<void>((resolve) => {
+        setTimeout(resolve, BOOT_FLUSH_TIMEOUT_MS);
+      }),
+    ]);
+  }
 
-  if (logPath !== undefined) process.stderr.write(`[haruyuki] log: ${logPath}\n`);
+  const shown = await showBootstrapError({
+    event,
+    detail,
+    ...(logDir === undefined ? {} : { logPath: logDir }),
+  });
+
+  if (shown) return;
 
   app.exit(1);
-
-  // `app.exit` does not return, but TypeScript cannot know that.
-  throw new Error(detail);
 }
 
 /** Whether the inspector may be opened in this run. */
@@ -114,28 +228,79 @@ function devtoolsAllowed(): boolean {
  * also not fatal: the defaults are correct, and refusing to start because a settings
  * file is locked by another process would be a worse failure than forgetting the
  * window position.
+ *
+ * A file written by a newer build is read but never written back, so
+ * `settingsWritable` is captured here rather than decided at save time. The
+ * decision belongs where the version was seen: once the values are in memory the
+ * evidence is gone.
  */
 async function loadSettings(): Promise<ShellSettings> {
   const { readFile } = await import("node:fs/promises");
   const file = settingsPath(app.getPath("userData"));
 
+  let raw: string;
+
   try {
-    const raw = await readFile(file, "utf8");
-    const parsed = parseSettings(raw);
-
-    logger?.info("settings.loaded", { file, theme: parsed.theme, locale: parsed.locale });
-
-    return parsed;
+    raw = await readFile(file, "utf8");
   } catch {
+    // Not an error: this is a first launch, or the file was removed.
     logger?.info("settings.first-launch", { file });
+
+    settingsWritable = true;
 
     return { ...DEFAULT_SETTINGS };
   }
+
+  const read = readSettings(raw);
+
+  settingsWritable = read.writable;
+
+  // A file that exists but could not be understood is a different event from a
+  // first launch. Reporting both as "first launch" is how a settings file being
+  // written over by a half-crashed process goes unnoticed until someone wonders
+  // why their preferences never stick.
+  if (read.corrupt) {
+    logger?.warn("settings.corrupt", {
+      code: shellError("SHELL_SETTINGS_CORRUPT", `unparsable document: ${file}`).code,
+      detail: file,
+    });
+  }
+
+  if (!read.writable) {
+    // Warn, not error: the shell works, it just will not persist. The user
+    // needs to know the next launch will forget this session's window.
+    logger?.warn("settings.read-only", {
+      file,
+      foundVersion: read.foundVersion,
+      supportedVersion: SETTINGS_VERSION,
+    });
+  }
+
+  logger?.info("settings.loaded", {
+    file,
+    theme: read.settings.theme,
+    locale: read.settings.locale,
+    writable: read.writable,
+  });
+
+  return read.settings;
 }
 
-/** Persist the settings. Failures are logged, never surfaced: a settings file that
- * cannot be written must not close the window the user is working in. */
+/**
+ * Persist the settings. Failures are logged, never surfaced: a settings file that
+ * cannot be written must not close the window the user is working in.
+ *
+ * The write is skipped entirely when the file on disk is a newer format. Writing
+ * would drop the fields this build cannot represent, and the newer build would
+ * then find them gone -- a downgrade the user never asked for.
+ */
 async function saveSettings(next: ShellSettings): Promise<void> {
+  if (!settingsWritable) {
+    logger?.info("settings.write-skipped", { detail: "the file was written by a newer version" });
+
+    return;
+  }
+
   const { writeFile } = await import("node:fs/promises");
   const file = settingsPath(app.getPath("userData"));
 
@@ -192,6 +357,13 @@ async function createWindow(allowedDevtools: boolean, locale: string): Promise<B
   const window = new BrowserWindow({
     width: usable ? restored.width : DEFAULT_WIDTH,
     height: usable ? restored.height : DEFAULT_HEIGHT,
+    // The live clamp. `parseWindow` refuses a *saved* rectangle below the
+    // minimum, but that only guards the restore path; without these two the user
+    // can still drag the window down to nothing and the editor has no usable
+    // area left. `D1-Q27` states 1024×700 as a property of the window, so it
+    // belongs on the window as well as on the parser.
+    minWidth: MIN_WINDOW_WIDTH,
+    minHeight: MIN_WINDOW_HEIGHT,
     // `exactOptionalPropertyTypes` is on, so an explicit `undefined` is not the same
     // as an omitted key. Spreading a conditional is how the position is left out
     // entirely on a first launch, which lets the platform centre the window.
@@ -264,7 +436,43 @@ async function createWindow(allowedDevtools: boolean, locale: string): Promise<B
     locale,
   });
 
-  await window.loadURL(`${APP_SCHEME}://${APP_HOST}/index.html?${params.toString()}`);
+  const url = `${APP_SCHEME}://${APP_HOST}/index.html?${params.toString()}`;
+
+  // `loadURL` rejects on a net error but *resolves* on an HTTP error status, so
+  // a 404 from the protocol handler -- missing bundle, wrong allow root -- is a
+  // successful call that leaves a blank window. Watching `did-fail-load` and
+  // checking the served document afterwards are the two ways to notice, and only
+  // the second catches a 404. This is exactly that case: the window exists and
+  // shows nothing.
+  let loadFailure: string | null = null;
+
+  window.webContents.on("did-fail-load", (_event, code, description, failedUrl) => {
+    if (!failedUrl.startsWith(`${APP_SCHEME}://`)) return;
+
+    loadFailure = `did-fail-load ${String(code)} ${description}`;
+  });
+
+  try {
+    await window.loadURL(url);
+  } catch (error) {
+    loadFailure = error instanceof Error ? error.message : String(error);
+  }
+
+  // A successful load of a 404: the handler answered, so nothing threw, and the
+  // document is the empty body the handler returns for a miss.
+  if (loadFailure === null) {
+    const mounted = (await window.webContents
+      .executeJavaScript("document.getElementById('root') !== null", true)
+      .catch(() => false)) as boolean;
+
+    if (!mounted) loadFailure = `the document at ${url} has no #root`;
+  }
+
+  if (loadFailure !== null) {
+    logger?.error("shell.page.failed", { detail: loadFailure, url });
+
+    await showBootstrapError({ event: "shell.page.failed", detail: loadFailure }, window);
+  }
 
   return window;
 }
@@ -276,8 +484,6 @@ async function createWindow(allowedDevtools: boolean, locale: string): Promise<B
  * effects that matter to the process.
  */
 async function main(): Promise<void> {
-  const userData = app.getPath("userData");
-
   logger = createLogger({ logDir: app.getPath("logs"), minLevel: "info" });
   logger.info("shell.boot", {
     electron: process.versions.electron,
@@ -313,7 +519,23 @@ async function main(): Promise<void> {
 
   const allowRoot = path.join(HERE, "../renderer");
 
-  protocol.handle(APP_SCHEME, createProtocolHandler({ allowRoot, headersFor }));
+  protocol.handle(
+    APP_SCHEME,
+    createProtocolHandler({
+      allowRoot,
+      headersFor,
+      // A refusal must leave a trace. Without this the handler answers 403 or 404
+      // into the void, and a broken allow root looks exactly like a missing file:
+      // a blank window and nothing in the log.
+      onFailure: (error) => {
+        logger?.warn("protocol.refused", {
+          code: error.code,
+          messageKey: error.messageKey,
+          detail: error.detail,
+        });
+      },
+    }),
+  );
 
   // The fallback. `protocol.handle` already sets the policy on its own responses;
   // this catches anything the session loads that did not come through the handler.
@@ -368,15 +590,68 @@ async function main(): Promise<void> {
   });
 }
 
+/**
+ * Delete the failure page's temporary file, if one was written.
+ *
+ * Best effort and silent: it runs during shutdown, where there is no one to tell
+ * and nothing to fall back to. A leftover temp file is a nuisance, not a failure.
+ */
+async function removeBootstrapPage(): Promise<void> {
+  if (bootstrapPagePath === null) return;
+
+  const file = bootstrapPagePath;
+
+  bootstrapPagePath = null;
+
+  try {
+    const { rm } = await import("node:fs/promises");
+
+    await rm(file, { force: true });
+  } catch {
+    // Nothing to do; the OS clears temp directories.
+  }
+}
+
 app.on("window-all-closed", () => {
   // On macOS a closed window does not quit the app; everywhere else it does.
   if (process.platform !== "darwin") app.quit();
 });
 
-main().catch((error: unknown) => {
+// The last chance to get queued records onto disk. The logger serialises writes,
+// so a record issued on the way out is still in flight when the process ends;
+// without this the final events of every session -- the ones that say how it
+// ended -- are the ones most likely to be missing. `will-quit` because it can be
+// cancelled, and an async drain needs to hold the quit open to be worth anything.
+app.on("will-quit", (event) => {
+  // The guard is `logger !== null` rather than "is there anything to do", because
+  // this handler re-enters itself: it calls `app.quit()` once it is done, and the
+  // second entry must not preventDefault again forever.
+  if (logger === null) return;
+
+  const pending = logger;
+
+  logger = null;
+  event.preventDefault();
+
+  void pending
+    .flush()
+    .catch(() => {
+      // Nothing useful to do while exiting, and a throw here would replace the
+      // shutdown with a crash report about logging.
+    })
+    .then(removeBootstrapPage)
+    .then(() => {
+      app.quit();
+    });
+});
+
+void main().catch((error: unknown) => {
   const detail = error instanceof Error ? error.message : String(error);
 
-  failBoot("shell.boot.failed", detail);
+  // `failBoot` is async because it awaits the log flush. Nothing is left to
+  // await it *for* once the process is exiting, but an unhandled rejection here
+  // would print over the message it is trying to deliver.
+  void failBoot("shell.boot.failed", detail);
 });
 
 export { bootstrapErrorHtml };

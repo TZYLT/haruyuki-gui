@@ -5,8 +5,10 @@ import {
   DEFAULT_SETTINGS,
   MIN_WINDOW_HEIGHT,
   MIN_WINDOW_WIDTH,
+  SETTINGS_VERSION,
   isWindowVisible,
   parseSettings,
+  readSettings,
   serializeSettings,
   settingsPath,
   type ShellSettings,
@@ -17,6 +19,39 @@ describe("settingsPath", () => {
     const userData = process.platform === "win32" ? "C:\\Users\\x\\AppData" : "/home/x/.config";
 
     expect(settingsPath(userData)).toBe(path.join(userData, "shell-settings.json"));
+  });
+});
+
+describe("the window minimum", () => {
+  it("matches the requirement's numbers, not a value of our own", () => {
+    // The regression this exists for: the constants said 480×360 while
+    // `D1-Q27` said 1024×700, and every test compared against the constants --
+    // so the suite agreed with the code and neither agreed with the document.
+    // Asserting the literals is what lets a document and a constant disagree and
+    // fail. Changing these numbers is a requirement change, not a refactor.
+    expect(MIN_WINDOW_WIDTH).toBe(1024);
+    expect(MIN_WINDOW_HEIGHT).toBe(700);
+  });
+
+  it("accepts a saved window exactly at the minimum", () => {
+    const parsed = parseSettings(
+      JSON.stringify({
+        window: { x: 0, y: 0, width: MIN_WINDOW_WIDTH, height: MIN_WINDOW_HEIGHT },
+      }),
+    );
+
+    expect(parsed.window).not.toBeNull();
+  });
+
+  it("refuses a saved window one pixel below the minimum on either axis", () => {
+    for (const [width, height] of [
+      [MIN_WINDOW_WIDTH - 1, MIN_WINDOW_HEIGHT],
+      [MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT - 1],
+    ]) {
+      const parsed = parseSettings(JSON.stringify({ window: { x: 0, y: 0, width, height } }));
+
+      expect(parsed.window, `${String(width)}x${String(height)}`).toBeNull();
+    }
   });
 });
 
@@ -63,22 +98,38 @@ describe("parseSettings", () => {
         theme: "neon",
         contrast: "high",
         locale: "en",
-        window: { x: 10, y: 20, width: 1000, height: 700, maximized: false },
+        window: { x: 10, y: 20, width: 1100, height: 700, maximized: false },
       }),
     );
 
     expect(settings.theme).toBe("light");
     expect(settings.contrast).toBe("high");
-    expect(settings.window).toEqual({ x: 10, y: 20, width: 1000, height: 700, maximized: false });
+    expect(settings.window).toEqual({ x: 10, y: 20, width: 1100, height: 700, maximized: false });
   });
 
   it("ignores an unsupported locale", () => {
     expect(parseSettings(JSON.stringify({ locale: "fr" })).locale).toBe("en");
   });
 
+  it("distinguishes 'never chose a locale' from 'chose English'", () => {
+    // Regression: both used to parse to `"en"`, so the launch-locale resolver
+    // could not tell a first launch from a deliberate choice and always kept
+    // English. A first launch on a Chinese machine therefore opened in English.
+    expect(parseSettings("").locale).toBeNull();
+    expect(parseSettings("{}").locale).toBeNull();
+    expect(parseSettings(JSON.stringify({ locale: null })).locale).toBeNull();
+    expect(parseSettings(JSON.stringify({ locale: "en" })).locale).toBe("en");
+  });
+
+  it("round-trips a settings document whose locale was never chosen", () => {
+    const parsed = parseSettings(serializeSettings(DEFAULT_SETTINGS));
+
+    expect(parsed.locale).toBeNull();
+  });
+
   it("treats a non-boolean maximized as false", () => {
     const settings = parseSettings(
-      JSON.stringify({ window: { x: 0, y: 0, width: 900, height: 700, maximized: "yes" } }),
+      JSON.stringify({ window: { x: 0, y: 0, width: 1280, height: 800, maximized: "yes" } }),
     );
 
     expect(settings.window?.maximized).toBe(false);
@@ -103,10 +154,10 @@ describe("parseSettings", () => {
   it("refuses a window with a missing or non-finite coordinate", () => {
     // All or nothing: a half-specified rectangle is not a window the user had.
     for (const window of [
-      { x: 0, width: 900, height: 700 },
-      { x: 0, y: null, width: 900, height: 700 },
-      { x: "0", y: 0, width: 900, height: 700 },
-      { x: 0, y: 0, width: 900 },
+      { x: 0, width: 1280, height: 800 },
+      { x: 0, y: null, width: 1280, height: 800 },
+      { x: "0", y: 0, width: 1280, height: 800 },
+      { x: 0, y: 0, width: 1280 },
     ]) {
       expect(parseSettings(JSON.stringify({ window })).window).toBeNull();
     }
@@ -124,17 +175,123 @@ describe("parseSettings", () => {
     );
 
     expect(settings.theme).toBe("dark");
-    expect(Object.keys(settings).sort()).toEqual(["contrast", "locale", "theme", "window"]);
+    expect(Object.keys(settings).sort()).toEqual([
+      "contrast",
+      "locale",
+      "theme",
+      "version",
+      "window",
+    ]);
+  });
+});
+
+describe("the format version", () => {
+  it("writes the version this build understands", () => {
+    const document = JSON.parse(serializeSettings(DEFAULT_SETTINGS)) as Record<string, unknown>;
+
+    expect(document.version).toBe(SETTINGS_VERSION);
+  });
+
+  it("puts the version first, because a reader needs it before anything else", () => {
+    const keys = Object.keys(JSON.parse(serializeSettings(DEFAULT_SETTINGS)) as object);
+
+    expect(keys[0]).toBe("version");
+  });
+
+  it("treats a missing version as this build's own", () => {
+    // Every file written before the field existed was written by this build, so
+    // refusing to write those would strand every existing install.
+    const read = readSettings(JSON.stringify({ theme: "dark" }));
+
+    expect(read.foundVersion).toBeNull();
+    expect(read.writable).toBe(true);
+    expect(read.settings.theme).toBe("dark");
+  });
+
+  it("accepts a file at the current version", () => {
+    const read = readSettings(JSON.stringify({ version: SETTINGS_VERSION, theme: "dark" }));
+
+    expect(read.foundVersion).toBe(SETTINGS_VERSION);
+    expect(read.writable).toBe(true);
+  });
+
+  it("reads a newer version but refuses to write it back", () => {
+    // The case this rule exists for: a newer build wrote the file, then the user
+    // opened an older one. Writing would drop the fields this build cannot
+    // represent, and the newer build would find them gone.
+    const read = readSettings(
+      JSON.stringify({ version: SETTINGS_VERSION + 1, theme: "dark", futureField: { a: 1 } }),
+    );
+
+    expect(read.foundVersion).toBe(SETTINGS_VERSION + 1);
+    expect(read.writable).toBe(false);
+    // Reading still works: the values this build knows are returned, so the
+    // window still opens where it should. Only the write is refused.
+    expect(read.settings.theme).toBe("dark");
+  });
+
+  it("is not talked into a newer version by a string or a fraction", () => {
+    // Only a positive integer is a version. `"2"` and `2.5` are not documents this
+    // build wrote, and honouring them would mean guessing at a format.
+    for (const bogus of ["2", 2.5, null, -1, 0]) {
+      const read = readSettings(JSON.stringify({ version: bogus }));
+
+      expect(read.foundVersion, JSON.stringify(bogus)).toBeNull();
+      expect(read.writable, JSON.stringify(bogus)).toBe(true);
+    }
+  });
+
+  it("keeps the write verdict next to the values, so they cannot drift apart", () => {
+    // A caller that took the values but not the verdict would write a downgraded
+    // file the moment the window moved.
+    const read = readSettings(JSON.stringify({ version: SETTINGS_VERSION + 1 }));
+
+    expect(Object.keys(read).sort()).toEqual(["corrupt", "foundVersion", "settings", "writable"]);
+  });
+});
+
+describe("a settings document that exists but cannot be understood", () => {
+  it("is reported as corrupt, not as a first launch", () => {
+    // The two are different events to a user: a first launch is normal, a corrupt
+    // file means preferences were silently lost and something is writing it badly.
+    // Collapsing them is why a half-written file goes unnoticed until someone asks
+    // why settings never stick.
+    for (const raw of ["{", "null", "42", '"dark"', "[]", '{"theme":']) {
+      const read = readSettings(raw);
+
+      expect(read.corrupt, raw).toBe(true);
+    }
+  });
+
+  it("does not call an empty file corrupt", () => {
+    // An empty file is one that was created and not yet written. Reporting it would
+    // put a warning in the log of every first launch that happens to touch the file.
+    expect(readSettings("").corrupt).toBe(false);
+    expect(readSettings("   \n").corrupt).toBe(false);
+  });
+
+  it("does not call a valid document corrupt", () => {
+    expect(readSettings(JSON.stringify({ theme: "dark" })).corrupt).toBe(false);
+  });
+
+  it("still returns usable values when the document is corrupt", () => {
+    // Corrupt is a verdict about the file, not a reason to stop. The window still
+    // opens with defaults, which is the whole point of not treating this as fatal.
+    const read = readSettings("{");
+
+    expect(read.settings).toEqual(DEFAULT_SETTINGS);
+    expect(read.writable).toBe(true);
   });
 });
 
 describe("serializeSettings", () => {
   it("round-trips through the parser", () => {
     const original: ShellSettings = {
+      version: SETTINGS_VERSION,
       theme: "dark",
       contrast: "high",
       locale: "zh-CN",
-      window: { x: 12, y: 34, width: 1000, height: 700, maximized: false },
+      window: { x: 12, y: 34, width: 1280, height: 800, maximized: false },
     };
 
     expect(parseSettings(serializeSettings(original))).toEqual(original);
@@ -155,13 +312,13 @@ describe("serializeSettings", () => {
     // chose, and it accumulates drift on every save.
     const serialized = serializeSettings({
       ...DEFAULT_SETTINGS,
-      window: { x: 10.7, y: 20.2, width: 900.5, height: 700.4, maximized: false },
+      window: { x: 10.7, y: 20.2, width: 1024.5, height: 700.4, maximized: false },
     });
 
     expect(JSON.parse(serialized).window).toEqual({
       x: 11,
       y: 20,
-      width: 901,
+      width: 1025,
       height: 700,
       maximized: false,
     });

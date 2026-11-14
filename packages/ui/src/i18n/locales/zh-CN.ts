@@ -46,6 +46,11 @@ export const zhCN = {
   "error.network.unreachable": "无法连接到服务",
   "error.unexpected": "发生了意外错误",
   "error.withCode": "出错了（{code}）",
+  "error.shell.resourceDenied": "应用试图读取一个它无权访问的文件",
+  "error.shell.resourceMissing": "应用找不到需要的一个文件",
+  "error.shell.bridgeDenied": "应用请求了一项它没有的能力",
+  "error.shell.settingsCorrupt": "设置文件无法读取，已改用默认值",
+  "error.shell.engineUnavailable": "引擎未能启动",
 
   // ------------------------------------------------------------------ a11y
   "a11y.action.delete": "删除",

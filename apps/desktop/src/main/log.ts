@@ -85,7 +85,9 @@ export function formatRecord(record: LogRecord): string {
   return serialised.replace(/[\r\n]+/g, "\\n");
 }
 
-/** What the logger needs from its environment, so a test can supply a directory. */
+/**
+ * What the logger needs from its environment, so a test can supply a directory.
+ */
 export interface LoggerOptions {
   /** Absolute log directory. */
   readonly logDir: string;
@@ -93,6 +95,16 @@ export interface LoggerOptions {
   readonly minLevel?: LogLevel;
   /** Clock, injected so a test can name a file without waiting for midnight. */
   readonly now?: () => Date;
+  /**
+   * Where a record goes when the file cannot be written. Defaults to stderr.
+   *
+   * The requirement is explicit (Another test: 目录不可写时降级为 stderr 并记一条自诊断).
+   * The first version swallowed the error entirely, so an unwritable log
+   * directory produced a shell that logged nothing anywhere and looked healthy --
+   * the worst combination, because the missing log is exactly what someone would
+   * have used to notice.
+   */
+  readonly onUnwritable?: (line: string, error: unknown) => void;
 }
 
 /** A logger bound to one directory. */
@@ -125,11 +137,46 @@ function rank(level: LogLevel): number {
  * @param options directory, minimum level and clock
  */
 export function createLogger(options: LoggerOptions): Logger {
-  const { logDir, minLevel = "info", now = () => new Date() } = options;
+  const {
+    logDir,
+    minLevel = "info",
+    now = () => new Date(),
+    onUnwritable = (line: string) => {
+      process.stderr.write(line);
+    },
+  } = options;
   const threshold = rank(minLevel);
 
   let ready: Promise<void> | null = null;
   let queue: Promise<void> = Promise.resolve();
+
+  /**
+   * Whether the directory has already been reported as unwritable.
+   *
+   * Reported once, not per record: a full disk would otherwise bury stderr under
+   * one diagnostic for every line, and the user would see the noise instead of
+   * the cause.
+   */
+  let reportedUnwritable = false;
+
+  function reportUnwritable(line: string, error: unknown): void {
+    // The caller's record survives even though the file did not, so the fallback
+    // is the record itself plus one line saying why it is on stderr.
+    onUnwritable(line, error);
+
+    if (reportedUnwritable) return;
+
+    reportedUnwritable = true;
+    onUnwritable(
+      formatRecord({
+        time: now().toISOString(),
+        level: "error",
+        event: "log.unwritable",
+        detail: { logDir, detail: String(error) },
+      }) + "\n",
+      error,
+    );
+  }
 
   function ensureDir(): Promise<void> {
     ready ??= mkdir(logDir, { recursive: true }).then(() => undefined);
@@ -150,10 +197,12 @@ export function createLogger(options: LoggerOptions): Logger {
     queue = queue
       .then(ensureDir)
       .then(() => appendFile(file, line, "utf8"))
-      .catch(() => {
-        // A log write that fails must not fail the caller. The alternative --
-        // surfacing it -- turns "the disk is full" into "the app crashed", and
-        // the app crashing is not more diagnosable than the missing line.
+      .catch((error: unknown) => {
+        // A log write that fails must not fail the caller -- surfacing it turns
+        // "the disk is full" into "the app crashed", and a crash is not more
+        // diagnosable than the missing line. But it must not vanish either: the
+        // record goes to the fallback sink and the failure is reported once.
+        reportUnwritable(line, error);
       });
   }
 

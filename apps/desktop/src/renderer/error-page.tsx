@@ -22,7 +22,9 @@
 
 import { Component, type ErrorInfo, type ReactNode } from "react";
 
-import { ErrorState, useT } from "@haruyuki/ui";
+import { ErrorState, useT, type MessageKey } from "@haruyuki/ui";
+
+import { isShellErrorCode, messageKeyOf, type ShellErrorCode } from "../shared/shell-error.js";
 
 /** Props of {@link RendererErrorPage}. */
 export interface RendererErrorPageProps {
@@ -52,13 +54,39 @@ export function RendererErrorPage({ error, onRetry }: RendererErrorPageProps): R
   // the user to ignore it.
   if (error === null) return null;
 
+  // A shell failure carries a code, and the code decides the sentence. Anything else
+  // is an arbitrary error from somewhere in the tree, and gets the generic heading
+  // rather than a classification it does not have.
+  //
+  // This is the mapping the requirement makes the shell responsible for: `detail` is
+  // shown as secondary text, never as the heading, because a stack trace is not a
+  // sentence to lead with.
+  const code = shellErrorCodeOf(error);
+  const title = code === null ? t("common.state.error") : t(messageKeyOf(code) as MessageKey);
+
   return (
     <ErrorState
-      title={t("common.state.error")}
+      title={title}
       detail={error.message}
       {...(onRetry === undefined ? {} : { onRetry })}
     />
   );
+}
+
+/**
+ * Read a shell error code off a thrown value, if it has one.
+ *
+ * Errors cross a boundary here: the code is set as a property by whoever raised it,
+ * and nothing type-checks it on the way. So it is validated rather than cast -- an
+ * unknown code would reach the catalogue lookup and render as a hole.
+ *
+ * @param error the thrown value
+ * @returns the code, or `null` when this is not a classified shell failure
+ */
+function shellErrorCodeOf(error: Error): ShellErrorCode | null {
+  const candidate = (error as { code?: unknown }).code;
+
+  return isShellErrorCode(candidate) ? candidate : null;
 }
 
 /** Props of {@link ErrorBoundary}. */
