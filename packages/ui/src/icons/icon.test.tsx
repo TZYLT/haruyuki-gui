@@ -148,13 +148,38 @@ describe("Icon rendering", () => {
     expect(svg?.getAttribute("height")).toBe("20");
   });
 
-  it("takes its colour from a token, not a literal", () => {
-    // A hard-coded colour here would survive every theme and every contrast
-    // check, and the icon gate would have nothing to catch.
+  it("inherits its colour instead of naming one", () => {
+    // An earlier version set `color: var(--ui-color-neutral-2)` here and this
+    // test asserted that string, so the suite stayed green while a delete icon
+    // rendered grey on a red danger button. The property worth asserting is the
+    // absence of a colour: Lucide draws with currentColor, so no declared colour
+    // is what makes the icon follow its parent.
     const { container } = render(<Icon name="check" />);
     const svg = container.querySelector("svg");
+    const declared = svg?.getAttribute("style") ?? "";
 
-    expect(svg?.getAttribute("style")).toContain("var(--ui-color-neutral-2)");
+    expect(declared).not.toMatch(/color\s*:/i);
+  });
+
+  it("follows the surrounding text colour in a coloured control", () => {
+    // The concrete case the defect was found in: an icon inside a danger button
+    // must not stay grey.
+    render(
+      <LocaleProvider locale="en">
+        <button
+          type="button"
+          style={{ color: "rgb(255, 255, 255)", background: "rgb(179, 38, 30)" }}
+        >
+          <Icon name="delete" />
+          Delete
+        </button>
+      </LocaleProvider>,
+    );
+
+    const svg = document.querySelector("svg");
+    const declared = svg?.getAttribute("style") ?? "";
+
+    expect(declared).not.toMatch(/color\s*:/i);
   });
 
   it("merges a caller className", () => {

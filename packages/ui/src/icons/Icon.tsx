@@ -21,7 +21,6 @@ import type { CSSProperties, ReactElement } from "react";
 
 import { useT } from "../i18n/index.js";
 import type { MessageKey } from "../i18n/index.js";
-import type { TokenName } from "../tokens/index.js";
 import { ICONS, type IconName } from "./registry.js";
 
 /** Props of {@link Icon}. */
@@ -43,16 +42,19 @@ export interface IconProps {
 }
 
 /**
- * The token an icon takes its colour from.
- *
- * `neutral-2` is the secondary tier: it clears the 4.5:1 text threshold, which
- * covers the 3:1 a non-text glyph needs, and it is the tier a bare glyph belongs
- * in rather than the primary text colour.
- */
-const ICON_COLOR_TOKEN: TokenName = "--ui-color-neutral-2";
-
-/**
  * Render an icon.
+ *
+ * The colour is deliberately **not** set here. Lucide's icons draw with
+ * `currentColor`, so an icon inside a button inherits the button's text colour and
+ * a danger button's icon turns with it. Setting a token directly -- which this
+ * component used to do -- overrode that: a delete icon rendered in
+ * `--ui-color-neutral-2` grey on a red danger button, which is both ugly and a
+ * contrast regression no token check could see, because the token itself is fine.
+ * Found by looking at a screenshot, not by a test.
+ *
+ * A caller that wants a standalone colour sets it on its own wrapper; a bare icon
+ * outside any coloured context still lands in the surrounding text colour, which
+ * is the right default.
  *
  * @param props icon props
  * @returns the svg element
@@ -63,10 +65,7 @@ export function Icon({ name, size, labelKey, className }: IconProps): ReactEleme
   const Glyph = definition.component;
 
   const style: CSSProperties = {
-    // `currentColor` rather than a direct token read: it lets a parent set the
-    // colour once (a danger button's icon turns red with the button) while the
-    // default still comes from the token layer.
-    color: `var(${ICON_COLOR_TOKEN})`,
+    // Only layout. Colour comes from `currentColor` via the parent.
     flexShrink: 0,
   };
 

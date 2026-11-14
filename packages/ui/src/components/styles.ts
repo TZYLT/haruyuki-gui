@@ -562,6 +562,23 @@ const SKELETON_CSS = `
   }
 }
 
+/* Visually hidden, still announced. The wait has to reach a screen reader and
+   must not appear as text: a skeleton that says "Loading" in the middle of the
+   page is a placeholder pretending to be content, and it is what the screenshot
+   showed before this rule existed -- the class was referenced but never defined,
+   so the text rendered inline above the bars. */
+.ui-skeleton__announcement {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
 .ui-skeleton__stack {
   display: flex;
   flex-direction: column;

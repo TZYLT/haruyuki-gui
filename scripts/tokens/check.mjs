@@ -20,6 +20,10 @@
  *   T5 known-slot      every `var(--ui-...)` a component references actually
  *                      exists; a typo'd slot renders as an empty value, which is
  *                      invisible in review and silently drops the declaration
+ *   T6 known-class     every `ui-` class a component names has a rule in the
+ *                      stylesheet. A class in the markup with no rule is an
+ *                      element that renders unstyled -- which is how a
+ *                      visually-hidden live region became a visible word
  *
  * T1 and T4 read the TypeScript sources rather than importing them. Importing
  * would work today, but it would tie the gate to a build step and make a red gate
@@ -244,6 +248,24 @@ function contrast(first, second) {
 const STATUS_FAMILIES = ["danger", "warning", "success", "info"];
 
 /**
+ * Whether the stylesheet defines a rule for a class.
+ *
+ * Uses a regex with a trailing boundary rather than `includes`, because a class
+ * name is a prefix of longer ones and a substring test reports a renamed class as
+ * present -- which is a false pass, the failure mode this whole gate exists to
+ * prevent.
+ *
+ * @param stylesheet the assembled CSS text
+ * @param className the class to look for, without the leading dot
+ * @returns whether a rule exists
+ */
+function hasClassRule(stylesheet, className) {
+  const escaped = className.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+  return new RegExp(`\\.${escaped}(?![\\w-])`).test(stylesheet);
+}
+
+/**
  * Collect every violation.
  *
  * @param {{ root: string }} args parsed arguments
@@ -436,6 +458,51 @@ function collectViolations(args) {
           }
         }
       });
+    }
+  }
+
+  // ---- T6: every ui- class in the markup has a rule.
+  //
+  // `ui-skeleton__announcement` was referenced by the skeleton and had no rule, so
+  // the live region rendered as visible text above the placeholder bars. No test
+  // caught it because the live region itself was correct -- only its styling was
+  // missing, and there is no assertion for "this element is styled at all".
+  const stylesheetFile = `packages/ui/src/components/styles.ts`;
+  const stylesheetPath = path.join(args.root, stylesheetFile);
+
+  if (existsSync(stylesheetPath)) {
+    const stylesheet = read(stylesheetPath);
+    const classPattern = /className=(?:"([^"]+)"|\{`([^`]+)`\})/g;
+    const templatePattern = /\$\{[^}]*\}/g;
+
+    for (const directory of CONSUMER_DIRS) {
+      for (const relative of listFiles(args.root, directory, [".tsx"])) {
+        if (relative.includes(".test.")) continue;
+
+        const source = read(path.join(args.root, relative));
+
+        for (const match of source.matchAll(classPattern)) {
+          const literal = match[1] ?? (match[2] ?? "").replace(templatePattern, " ");
+
+          for (const token of literal.split(/\s+/)) {
+            if (!token.startsWith("ui-")) continue;
+            // A modifier assembled at runtime (`${classes}__popup`) is covered by
+            // the class it is derived from; only fully literal names are checked.
+            if (token.includes("$")) continue;
+
+            // Matched with a boundary, not a bare substring: `.ui-x` is a prefix
+            // of `.ui-x-extra`, and a substring test would call a renamed class
+            // present. That false pass is what the first version did.
+            if (!hasClassRule(stylesheet, token)) {
+              violations.push({
+                file: relative,
+                rule: "T6",
+                message: `${token} is used but has no rule in ${stylesheetFile}`,
+              });
+            }
+          }
+        }
+      }
     }
   }
 

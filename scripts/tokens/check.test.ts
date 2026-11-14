@@ -100,6 +100,27 @@ describe("token gate: each rule fires on its own fixture", () => {
     expect(run.output).toContain("--ui-z-popover");
   });
 
+  it("T6 rejects a class that has no rule in the stylesheet", () => {
+    // The defect this rule exists for: the skeleton's live region carried a class
+    // the stylesheet never defined, so "Loading" rendered as visible text above
+    // the placeholder bars. Every existing assertion passed, because the live
+    // region was correct and only its styling was missing.
+    const run = runGateOn("red-unknown-class");
+
+    expect(run.status, run.output).toBe(1);
+    expect(run.output).toContain("T6");
+    expect(run.output).toContain("ui-thing__ghost");
+  });
+
+  it("T6 does not accept a longer class as a match for a shorter one", () => {
+    // `.ui-thing__ghost` must not be satisfied by `.ui-thing__ghostExtra`. A
+    // substring test called a renamed class present, which is a false pass --
+    // exactly what this gate exists to prevent, so it is pinned.
+    const run = runGateOn("red-unknown-class");
+
+    expect(run.output).toContain("no rule in");
+  });
+
   it("T4 reports a pair below the non-text threshold separately", () => {
     // Borders and icon strokes have their own, lower threshold. A gate that only
     // checked 4.5:1 would either pass a 3.1:1 border or fail a legal one.

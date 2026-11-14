@@ -16,6 +16,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { LocaleProvider } from "../i18n/index.js";
+import { COMPONENTS_CSS } from "./index.js";
 import { Button } from "./Button.js";
 import { EmptyState } from "./EmptyState.js";
 import { ErrorState } from "./ErrorState.js";
@@ -74,6 +75,23 @@ describe("Skeleton", () => {
     const { container } = render(<Skeleton count={0} />);
 
     expect(container.querySelectorAll(".ui-skeleton").length).toBe(1);
+  });
+});
+
+describe("Skeleton announcement visibility", () => {
+  it("defines a rule for every class its announcement uses", () => {
+    // The announcement carries a class the stylesheet must style into a
+    // visually-hidden element. That class existed in the markup and not in the
+    // stylesheet, so "Loading" rendered as visible text above the bars -- which is
+    // a placeholder pretending to be content, and which no assertion about the
+    // live region could see, because the live region was correct.
+    const css = COMPONENTS_CSS;
+
+    expect(css).toContain(".ui-skeleton__announcement");
+
+    // Hidden by clipping rather than by `display: none`, which would remove it
+    // from the accessibility tree and defeat the announcement.
+    expect(css).toMatch(/clip-path:\s*inset\(50%\)/);
   });
 });
 
