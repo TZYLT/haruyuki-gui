@@ -24,3 +24,9 @@ export type {
   CapabilityScope,
   CapabilityShape,
 } from "./contract/command-map.generated";
+
+/**
+ * The frame layer: the envelope every channel shares, plus the
+ * append-only frame type table that `scripts/check-frame.mjs` scans.
+ */
+export * from "./frame/index.js";
