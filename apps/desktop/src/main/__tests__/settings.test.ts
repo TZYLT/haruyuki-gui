@@ -5,8 +5,10 @@ import {
   DEFAULT_SETTINGS,
   MIN_WINDOW_HEIGHT,
   MIN_WINDOW_WIDTH,
+  SETTINGS_VERSION,
   isWindowVisible,
   parseSettings,
+  readSettings,
   serializeSettings,
   settingsPath,
   type ShellSettings,
@@ -173,13 +175,119 @@ describe("parseSettings", () => {
     );
 
     expect(settings.theme).toBe("dark");
-    expect(Object.keys(settings).sort()).toEqual(["contrast", "locale", "theme", "window"]);
+    expect(Object.keys(settings).sort()).toEqual([
+      "contrast",
+      "locale",
+      "theme",
+      "version",
+      "window",
+    ]);
+  });
+});
+
+describe("the format version", () => {
+  it("writes the version this build understands", () => {
+    const document = JSON.parse(serializeSettings(DEFAULT_SETTINGS)) as Record<string, unknown>;
+
+    expect(document.version).toBe(SETTINGS_VERSION);
+  });
+
+  it("puts the version first, because a reader needs it before anything else", () => {
+    const keys = Object.keys(JSON.parse(serializeSettings(DEFAULT_SETTINGS)) as object);
+
+    expect(keys[0]).toBe("version");
+  });
+
+  it("treats a missing version as this build's own", () => {
+    // Every file written before the field existed was written by this build, so
+    // refusing to write those would strand every existing install.
+    const read = readSettings(JSON.stringify({ theme: "dark" }));
+
+    expect(read.foundVersion).toBeNull();
+    expect(read.writable).toBe(true);
+    expect(read.settings.theme).toBe("dark");
+  });
+
+  it("accepts a file at the current version", () => {
+    const read = readSettings(JSON.stringify({ version: SETTINGS_VERSION, theme: "dark" }));
+
+    expect(read.foundVersion).toBe(SETTINGS_VERSION);
+    expect(read.writable).toBe(true);
+  });
+
+  it("reads a newer version but refuses to write it back", () => {
+    // The case this rule exists for: a newer build wrote the file, then the user
+    // opened an older one. Writing would drop the fields this build cannot
+    // represent, and the newer build would find them gone.
+    const read = readSettings(
+      JSON.stringify({ version: SETTINGS_VERSION + 1, theme: "dark", futureField: { a: 1 } }),
+    );
+
+    expect(read.foundVersion).toBe(SETTINGS_VERSION + 1);
+    expect(read.writable).toBe(false);
+    // Reading still works: the values this build knows are returned, so the
+    // window still opens where it should. Only the write is refused.
+    expect(read.settings.theme).toBe("dark");
+  });
+
+  it("is not talked into a newer version by a string or a fraction", () => {
+    // Only a positive integer is a version. `"2"` and `2.5` are not documents this
+    // build wrote, and honouring them would mean guessing at a format.
+    for (const bogus of ["2", 2.5, null, -1, 0]) {
+      const read = readSettings(JSON.stringify({ version: bogus }));
+
+      expect(read.foundVersion, JSON.stringify(bogus)).toBeNull();
+      expect(read.writable, JSON.stringify(bogus)).toBe(true);
+    }
+  });
+
+  it("keeps the write verdict next to the values, so they cannot drift apart", () => {
+    // A caller that took the values but not the verdict would write a downgraded
+    // file the moment the window moved.
+    const read = readSettings(JSON.stringify({ version: SETTINGS_VERSION + 1 }));
+
+    expect(Object.keys(read).sort()).toEqual(["corrupt", "foundVersion", "settings", "writable"]);
+  });
+});
+
+describe("a settings document that exists but cannot be understood", () => {
+  it("is reported as corrupt, not as a first launch", () => {
+    // The two are different events to a user: a first launch is normal, a corrupt
+    // file means preferences were silently lost and something is writing it badly.
+    // Collapsing them is why a half-written file goes unnoticed until someone asks
+    // why settings never stick.
+    for (const raw of ["{", "null", "42", '"dark"', "[]", '{"theme":']) {
+      const read = readSettings(raw);
+
+      expect(read.corrupt, raw).toBe(true);
+    }
+  });
+
+  it("does not call an empty file corrupt", () => {
+    // An empty file is one that was created and not yet written. Reporting it would
+    // put a warning in the log of every first launch that happens to touch the file.
+    expect(readSettings("").corrupt).toBe(false);
+    expect(readSettings("   \n").corrupt).toBe(false);
+  });
+
+  it("does not call a valid document corrupt", () => {
+    expect(readSettings(JSON.stringify({ theme: "dark" })).corrupt).toBe(false);
+  });
+
+  it("still returns usable values when the document is corrupt", () => {
+    // Corrupt is a verdict about the file, not a reason to stop. The window still
+    // opens with defaults, which is the whole point of not treating this as fatal.
+    const read = readSettings("{");
+
+    expect(read.settings).toEqual(DEFAULT_SETTINGS);
+    expect(read.writable).toBe(true);
   });
 });
 
 describe("serializeSettings", () => {
   it("round-trips through the parser", () => {
     const original: ShellSettings = {
+      version: SETTINGS_VERSION,
       theme: "dark",
       contrast: "high",
       locale: "zh-CN",

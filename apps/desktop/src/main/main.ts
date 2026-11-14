@@ -46,6 +46,7 @@ const HERE = __dirname;
 
 import { bootstrapErrorHtml, type BootstrapFailure } from "./bootstrap-error.js";
 import { APP_HOST, APP_SCHEME, APP_PRIVILEGES, createProtocolHandler } from "./protocol.js";
+import { shellError } from "../shared/shell-error.js";
 import { CSP, headersFor, shouldApplyFallbackCsp } from "./csp.js";
 import { APP_NAME, chooseLocale } from "./i18n.js";
 import { buildMenuTemplate } from "./menu.js";
@@ -55,8 +56,9 @@ import {
   isWindowVisible,
   MIN_WINDOW_HEIGHT,
   MIN_WINDOW_WIDTH,
-  parseSettings,
+  readSettings,
   serializeSettings,
+  SETTINGS_VERSION,
   settingsPath,
   type ShellSettings,
 } from "./settings.js";
@@ -84,6 +86,15 @@ let mainWindow: BrowserWindow | null = null;
 
 /** Parsed settings, loaded once and kept in step with the window. */
 let settings: ShellSettings = DEFAULT_SETTINGS;
+
+/**
+ * Whether this build may write the settings file back.
+ *
+ * False when the file on disk declares a version this build does not know. Set by
+ * {@link loadSettings} and read by {@link saveSettings}; see `readSettings` for why
+ * the two decisions cannot be separated.
+ */
+let settingsWritable = true;
 
 /**
  * The temporary file the failure page was written to, when one was.
@@ -217,28 +228,79 @@ function devtoolsAllowed(): boolean {
  * also not fatal: the defaults are correct, and refusing to start because a settings
  * file is locked by another process would be a worse failure than forgetting the
  * window position.
+ *
+ * A file written by a newer build is read but never written back, so
+ * `settingsWritable` is captured here rather than decided at save time. The
+ * decision belongs where the version was seen: once the values are in memory the
+ * evidence is gone.
  */
 async function loadSettings(): Promise<ShellSettings> {
   const { readFile } = await import("node:fs/promises");
   const file = settingsPath(app.getPath("userData"));
 
+  let raw: string;
+
   try {
-    const raw = await readFile(file, "utf8");
-    const parsed = parseSettings(raw);
-
-    logger?.info("settings.loaded", { file, theme: parsed.theme, locale: parsed.locale });
-
-    return parsed;
+    raw = await readFile(file, "utf8");
   } catch {
+    // Not an error: this is a first launch, or the file was removed.
     logger?.info("settings.first-launch", { file });
+
+    settingsWritable = true;
 
     return { ...DEFAULT_SETTINGS };
   }
+
+  const read = readSettings(raw);
+
+  settingsWritable = read.writable;
+
+  // A file that exists but could not be understood is a different event from a
+  // first launch. Reporting both as "first launch" is how a settings file being
+  // written over by a half-crashed process goes unnoticed until someone wonders
+  // why their preferences never stick.
+  if (read.corrupt) {
+    logger?.warn("settings.corrupt", {
+      code: shellError("SHELL_SETTINGS_CORRUPT", `unparsable document: ${file}`).code,
+      detail: file,
+    });
+  }
+
+  if (!read.writable) {
+    // Warn, not error: the shell works, it just will not persist. The user
+    // needs to know the next launch will forget this session's window.
+    logger?.warn("settings.read-only", {
+      file,
+      foundVersion: read.foundVersion,
+      supportedVersion: SETTINGS_VERSION,
+    });
+  }
+
+  logger?.info("settings.loaded", {
+    file,
+    theme: read.settings.theme,
+    locale: read.settings.locale,
+    writable: read.writable,
+  });
+
+  return read.settings;
 }
 
-/** Persist the settings. Failures are logged, never surfaced: a settings file that
- * cannot be written must not close the window the user is working in. */
+/**
+ * Persist the settings. Failures are logged, never surfaced: a settings file that
+ * cannot be written must not close the window the user is working in.
+ *
+ * The write is skipped entirely when the file on disk is a newer format. Writing
+ * would drop the fields this build cannot represent, and the newer build would
+ * then find them gone -- a downgrade the user never asked for.
+ */
 async function saveSettings(next: ShellSettings): Promise<void> {
+  if (!settingsWritable) {
+    logger?.info("settings.write-skipped", { detail: "the file was written by a newer version" });
+
+    return;
+  }
+
   const { writeFile } = await import("node:fs/promises");
   const file = settingsPath(app.getPath("userData"));
 
@@ -457,7 +519,23 @@ async function main(): Promise<void> {
 
   const allowRoot = path.join(HERE, "../renderer");
 
-  protocol.handle(APP_SCHEME, createProtocolHandler({ allowRoot, headersFor }));
+  protocol.handle(
+    APP_SCHEME,
+    createProtocolHandler({
+      allowRoot,
+      headersFor,
+      // A refusal must leave a trace. Without this the handler answers 403 or 404
+      // into the void, and a broken allow root looks exactly like a missing file:
+      // a blank window and nothing in the log.
+      onFailure: (error) => {
+        logger?.warn("protocol.refused", {
+          code: error.code,
+          messageKey: error.messageKey,
+          detail: error.detail,
+        });
+      },
+    }),
+  );
 
   // The fallback. `protocol.handle` already sets the policy on its own responses;
   // this catches anything the session loads that did not come through the handler.
