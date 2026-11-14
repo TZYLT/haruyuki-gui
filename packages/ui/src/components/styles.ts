@@ -443,7 +443,7 @@ const SELECT_CSS = `
   background-color: var(--ui-color-surface-2);
   border: 1px solid var(--ui-color-neutral-3);
   border-radius: var(--ui-radius-2);
-  box-shadow: 0 4px 16px rgb(0 0 0 / 12%);
+  box-shadow: 0 4px 16px var(--ui-color-shadow);
   padding: var(--ui-space-1);
   max-height: 18rem;
   overflow-y: auto;
@@ -483,7 +483,7 @@ const DIALOG_CSS = `
 .ui-dialog__backdrop {
   position: fixed;
   inset: 0;
-  background-color: rgb(0 0 0 / 40%);
+  background-color: var(--ui-color-scrim);
   z-index: var(--ui-z-overlay);
 }
 

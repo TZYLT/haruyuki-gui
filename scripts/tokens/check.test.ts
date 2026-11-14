@@ -8,7 +8,7 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -72,6 +72,29 @@ describe("token gate: each rule fires on its own fixture", () => {
     expect(run.output).toContain("Thing.tsx");
   });
 
+  it("T2 reads a colour inside a CSS template literal", () => {
+    // The rule used to require a quote after `color:`, so it only ever saw JSX
+    // style objects. Every colour this package renders lives in a CSS template
+    // literal, so the rule was blind to the one file it exists to police. This is
+    // the shape it must catch.
+    const run = runGateOn("red-raw-color");
+
+    expect(run.output).toMatch(/styles\.ts.*T2/s);
+  });
+
+  it("T2 does not fire on a colour named only in a comment", () => {
+    // A stylesheet comment explaining "the old value was #ff0000" is a comment.
+    // A rule that flags it teaches people to delete the explanation instead of
+    // the colour, so the distinction is pinned in both directions.
+    const result = spawnSync(
+      process.execPath,
+      [GATE, "--root", path.join(FIXTURES, "green-complete")],
+      { encoding: "utf8", timeout: 30000 },
+    );
+
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+  });
+
   it("T3 reports a missing theme combination", () => {
     const run = runGateOn("red-missing-theme");
 
@@ -119,6 +142,66 @@ describe("token gate: each rule fires on its own fixture", () => {
     const run = runGateOn("red-unknown-class");
 
     expect(run.output).toContain("no rule in");
+  });
+
+  it("T6 resolves a derived class back to the component's base class", () => {
+    // `className={`${classes}__part`}` was skipped whole by a `includes("$")`
+    // guard, so none of the eleven derived sub-classes were ever checked. The
+    // fixture writes one that resolves to `ui-thing__ghost`.
+    const run = runGateOn("red-unknown-class");
+
+    expect(run.output).toContain("ui-thing__ghost");
+  });
+
+  it("T6 fails closed when the stylesheet is missing", () => {
+    // The first version wrapped the whole rule in `if (existsSync(stylesheet))`,
+    // so deleting the stylesheet turned the only class-coverage rule off and the
+    // gate reported a clean tree. "Cannot judge" must not read as "clean".
+    const tree = path.join(FIXTURES, "green-complete");
+    const stylesheet = path.join(tree, "packages", "ui", "src", "components", "styles.ts");
+    const saved = readFileSync(stylesheet, "utf8");
+
+    try {
+      rmSync(stylesheet);
+      const result = spawnSync(process.execPath, [GATE, "--root", tree], {
+        encoding: "utf8",
+        timeout: 30000,
+      });
+      const output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
+
+      expect(result.status, output).toBe(1);
+      expect(output).toContain("T6");
+      expect(output).toContain("cannot judge");
+    } finally {
+      writeFileSync(stylesheet, saved);
+    }
+  });
+
+  it("T4 refuses to measure a colour it cannot parse", () => {
+    // `luminance()` used `Number.parseInt` on the hex digits, which yields NaN for
+    // a malformed value; every comparison against NaN is false, so an unreadable
+    // colour passed every contrast rule in silence.
+    const tree = path.join(FIXTURES, "green-complete");
+    const palettes = path.join(tree, "packages", "ui", "src", "tokens", "palettes.ts");
+    const saved = readFileSync(palettes, "utf8");
+
+    try {
+      writeFileSync(
+        palettes,
+        saved.replace(/"--ui-color-neutral-1": "#[0-9a-fA-F]{3,8}"/, '"--ui-color-neutral-1": "#nope"'),
+      );
+      const result = spawnSync(process.execPath, [GATE, "--root", tree], {
+        encoding: "utf8",
+        timeout: 30000,
+      });
+      const output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
+
+      expect(result.status, output).toBe(1);
+      expect(output).toContain("T4");
+      expect(output).toContain("cannot measure");
+    } finally {
+      writeFileSync(palettes, saved);
+    }
   });
 
   it("T4 reports a pair below the non-text threshold separately", () => {
