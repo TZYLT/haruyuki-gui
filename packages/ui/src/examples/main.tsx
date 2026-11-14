@@ -16,10 +16,17 @@
  * that acceptance criterion executable instead of aspirational.
  */
 
+import { useState } from "react";
 import { createRoot } from "react-dom/client";
 
 import { applyTheme, type ThemeAttrs } from "../tokens/index.js";
 import { SamplePage } from "./SamplePage.js";
+
+declare global {
+  // The check reads this to drive a locale change on a live page.
+  // eslint-disable-next-line no-var
+  var __sampleSetLocale: ((locale: string) => void) | undefined;
+}
 
 const container = document.getElementById("root");
 
@@ -52,6 +59,27 @@ function requestedTheme(): ThemeAttrs {
 // reviewer did not ask for.
 applyTheme(requestedTheme());
 
-const requestedLocale = params.get("locale") ?? "en";
+/**
+ * The sample, with its locale held in state.
+ *
+ * A separate component because the layout check needs to change the locale on a
+ * live page and time the re-render -- and a locale passed once as a prop cannot be
+ * changed from outside. The entry also exposes it as `__sampleSetLocale` below.
+ *
+ * @returns the sample with a settable locale
+ */
+function Preview(): React.ReactElement {
+  const [locale, setLocale] = useState(params.get("locale") ?? "en");
 
-createRoot(container).render(<SamplePage locale={requestedLocale} />);
+  // Exposed for the real-browser check only. The alternative is reloading the page
+  // to change locale, which measures a page load rather than a re-render -- the
+  // thing the timing budget is actually about.
+  globalThis.__sampleSetLocale = setLocale;
+
+  // Recorded so a caller can read which locale is showing without re-deriving it.
+  if (container !== null) container.dataset.locale = locale;
+
+  return <SamplePage locale={locale} />;
+}
+
+createRoot(container).render(<Preview />);

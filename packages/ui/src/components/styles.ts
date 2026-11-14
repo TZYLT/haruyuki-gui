@@ -227,8 +227,12 @@ const SWITCH_CSS = `
 
 .ui-switch__thumb {
   position: absolute;
-  top: var(--ui-space-1);
-  left: var(--ui-space-1);
+  /* Centred, not offset by one step. The track is space-7 tall and the thumb is
+     space-7 - 2 * space-2, so the inset that centres it is space-2 -- setting
+     space-1 left a 2px gap above and a 6px gap below, which is visible as a thumb
+     sitting high in its track. */
+  top: var(--ui-space-2);
+  left: var(--ui-space-2);
   width: calc(var(--ui-space-7) - var(--ui-space-2) * 2);
   height: calc(var(--ui-space-7) - var(--ui-space-2) * 2);
   border-radius: 50%;
@@ -237,7 +241,15 @@ const SWITCH_CSS = `
 }
 
 .ui-switch[data-checked] .ui-switch__thumb {
-  transform: translateX(calc(var(--ui-space-8) * 1.6 - var(--ui-space-7)));
+  /* The distance from the left inset to the symmetric right inset. Written as
+     track - thumb - 2 * inset rather than a hand-tuned pixel value, so it stays
+     correct if any of the three changes -- the previous formula happened to
+     produce the same number and would not have survived an edit to any of them. */
+  transform: translateX(
+    calc(
+      var(--ui-space-8) * 1.6 - (var(--ui-space-7) - var(--ui-space-2) * 2) - var(--ui-space-2) * 2
+    )
+  );
 }
 `;
 

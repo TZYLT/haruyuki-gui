@@ -59,6 +59,11 @@ function SampleContent(): ReactElement {
   const [format, setFormat] = useState<string | null>("md");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [dismissed, setDismissed] = useState(false);
+  // A controlled input whose value is not updated swallows every keystroke, which
+  // is what a reviewer saw here: the field looked editable and accepted nothing.
+  // The sample was wrong, not the component -- but a sample that misleads the
+  // person validating the work is its own defect.
+  const [required, setRequired] = useState("");
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 24, maxWidth: 720 }}>
@@ -86,9 +91,9 @@ function SampleContent(): ReactElement {
         />
         <div style={{ marginTop: 8 }}>
           <Input
-            value=""
-            onChange={() => undefined}
-            invalid
+            value={required}
+            onChange={setRequired}
+            invalid={required === ""}
             placeholder={t("component.form.required")}
           />
         </div>

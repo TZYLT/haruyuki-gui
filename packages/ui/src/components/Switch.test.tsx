@@ -12,6 +12,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
+import { COMPONENTS_CSS } from "./index.js";
 import { Switch } from "./Switch.js";
 
 describe("Switch", () => {
@@ -105,5 +106,18 @@ describe("Switch", () => {
     );
 
     expect(container.querySelector('[role="switch"]')?.getAttribute("class")).toContain("caller");
+  });
+
+  it("centres the thumb in the track", () => {
+    // The thumb sat high: the track is space-7 and the thumb is
+    // space-7 - 2 * space-2, so centring it needs an inset of space-2. It was
+    // space-1, leaving 2px above and 6px below -- visible at a glance, and
+    // invisible to every behaviour test. Asserted against the CSS text because
+    // jsdom performs no layout.
+    const start = COMPONENTS_CSS.indexOf(".ui-switch__thumb {");
+    const block = COMPONENTS_CSS.slice(start, COMPONENTS_CSS.indexOf("}", start));
+
+    expect(block).toContain("top: var(--ui-space-2)");
+    expect(block).toContain("left: var(--ui-space-2)");
   });
 });
