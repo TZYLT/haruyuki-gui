@@ -19,15 +19,9 @@ import type { LocaleMessages } from "../types.js";
 export const zhCN = {
   // ---------------------------------------------------------------- common
   "common.action.cancel": "取消",
-  "common.action.close": "关闭",
   "common.action.confirm": "确认",
   "common.action.delete": "删除",
-  "common.action.edit": "编辑",
-  "common.action.retry": "重试",
   "common.action.save": "保存",
-  "common.action.copy": "复制",
-  "common.action.search": "搜索",
-  "common.action.dismiss": "忽略",
   "common.state.loading": "加载中",
   "common.state.empty": "暂无内容",
   "common.state.error": "出错了",
@@ -36,12 +30,10 @@ export const zhCN = {
   "component.input.placeholder": "请输入",
   "component.select.placeholder": "请选择",
   "component.select.empty": "无匹配选项",
-  "component.select.selectedCount": "{count, plural, other {已选 # 项}}",
   "component.dialog.title": "确认",
   "component.dialog.close": "关闭对话框",
   "component.tag.remove": "移除",
   "component.alert.dismiss": "关闭提示",
-  "component.list.selectedCount": "{count, plural, other {已选 # 项}}",
   "component.form.required": "此项为必填",
 
   // ------------------------------------------------------------------ page
@@ -52,23 +44,9 @@ export const zhCN = {
 
   // ----------------------------------------------------------------- error
   "error.network.unreachable": "无法连接到服务",
-  "error.network.timeout": "请求超时",
   "error.unexpected": "发生了意外错误",
   "error.withCode": "出错了（{code}）",
 
   // ------------------------------------------------------------------ a11y
   "a11y.action.delete": "删除",
-  "a11y.action.edit": "编辑",
-  "a11y.action.copy": "复制到剪贴板",
-  "a11y.action.close": "关闭",
-  "a11y.action.search": "搜索",
-  "a11y.action.retry": "重试",
-  "a11y.action.expand": "展开",
-  "a11y.action.collapse": "收起",
-  "a11y.state.loading": "加载中",
-  "a11y.state.selected": "已选中",
-  "a11y.state.disabled": "已禁用",
-  "a11y.field.required": "必填项",
-  "a11y.dialog.open": "对话框已打开",
-  "a11y.icon.decorative": "装饰性图标",
 } as const satisfies Record<keyof typeof en, string> & LocaleMessages;

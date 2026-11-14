@@ -69,3 +69,11 @@ export {
   themeRule,
 } from "./theme.js";
 export type { Theme } from "./theme.js";
+
+export {
+  HOST_THEME_ATTRIBUTES,
+  VSCODE_TOKEN_MAP,
+  applyHostTokens,
+  hostThemeCombination,
+} from "./host-map.js";
+export type { MappedSlot } from "./host-map.js";

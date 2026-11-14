@@ -332,7 +332,7 @@ function segmentInputs(segment) {
 }
 
 /**
- * Describe the nine base segments (plus three under --full).
+ * Describe the eight base segments (plus three under --full).
  *
  * @param {VerifyOptions} options
  * @returns {Segment[]}
@@ -370,6 +370,12 @@ function buildSegments(options) {
       // by the segment that names it rather than as a failing unit test.
       label: "tokens",
       command: () => gate("scripts/tokens/check.mjs", options.verbose),
+      notes: [
+        // A real reference, not a fixture for the placeholder test: the token
+        // gate grades the palette the test segment renders against, so a reader
+        // who sees one fail wants to know where the other runs.
+        "the palette this grades is rendered under test in segment {segment:test}",
+      ],
     },
     {
       // Catalogue completeness and consistency. Cheap and text-only, so it runs
@@ -378,28 +384,31 @@ function buildSegments(options) {
       command: () => gate("scripts/i18n/check.mjs", options.verbose),
     },
     {
+      // One run, two outputs: the test verdicts and the coverage numbers.
+      //
+      // These were two segments, and the second re-ran every test under
+      // instrumentation. That was not redundancy a reader could see -- `test`
+      // listed the unit files and `coverage` ran the whole suite again -- but it
+      // cost a full second pass, about 24 s of a 62 s run, and the run has a 60 s
+      // budget. Merging keeps both contracts and removes the second pass.
+      //
+      // Both contracts survive because they were always separate questions asked
+      // about the same run: a red test fails here, an uninformative coverage table
+      // does not.
       label: "test",
       skipReason:
         unitTestFiles.length === 0
           ? "no test files outside the gate self-test set; nothing to run"
           : undefined,
-      command: () => vitest(unitTestFiles),
-    },
-    {
-      label: "coverage",
-      command: () => ({
-        command: "pnpm",
-        args: ["exec", "vitest", "run", "--coverage", "--coverage.reporter=text"],
-      }),
-      // A number report is the whole contract of this segment: uncovered code
-      // never fails here, and a red test verdict belongs to the test segment,
-      // so a non-zero exit that still produced the table is not a coverage
-      // failure.
+      command: () => vitest(unitTestFiles, ["--coverage", "--coverage.reporter=text"]),
+      // A number report is the whole coverage contract: uncovered code never fails
+      // here, so a non-zero exit that still produced the table is not a coverage
+      // failure. A non-zero exit *with* a failing test verdict still fails, which is
+      // what the segment is for.
       evaluate: (run) => run.status === 0 || COVERAGE_REPORT_PATTERN.test(run.output),
       notes: [
-        "advisory only: no threshold, uncovered code never fails verify",
+        "coverage is advisory: no threshold, uncovered code never fails verify",
         "in-process coverage of scripts/ stays low because gates run as child processes",
-        "test verdicts belong to segment {segment:test}, not here",
       ],
     },
   ];
@@ -479,8 +488,15 @@ function gate(relative, verbose) {
  * @param {string[]} files Repo-relative posix test file paths.
  * @returns {Command}
  */
-function vitest(files) {
-  return { command: "pnpm", args: ["exec", "vitest", "run", ...files] };
+/**
+ * Build the vitest invocation for a set of test files.
+ *
+ * @param {string[]} files repo-relative test paths
+ * @param {string[]} [extraArgs] additional vitest flags
+ * @returns {{ command: string, args: string[] }}
+ */
+function vitest(files, extraArgs = []) {
+  return { command: "pnpm", args: ["exec", "vitest", "run", ...files, ...extraArgs] };
 }
 
 /**

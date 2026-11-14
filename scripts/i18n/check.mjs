@@ -14,6 +14,10 @@
  *                     into a silently missing name
  *   I4 key-format     keys match the frozen pattern and use a frozen namespace
  *   I5 no-key-value   no value equals its own key, the classic untranslated stub
+ *   I6 reference      every key a component asks `t()` for exists in the
+ *                     catalogue, and every catalogue key is used by something.
+ *                     A dangling reference renders as an error at runtime; an
+ *                     unused key rots silently and the next translator copies it.
  *
  * The catalogue sources are read, not imported. Importing would tie the gate to
  * the package compiling, so a tree with a type error could not be linted -- and a
@@ -27,13 +31,20 @@
  * Exit codes follow scripts/lib/gate-cli.mjs: 0 clean, 1 violations, 2 broken.
  */
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 import { runGate } from "../lib/gate-cli.mjs";
 
 /** Where the catalogues live, repo-relative. */
 const LOCALES_DIR = "packages/ui/src/i18n/locales";
+
+/** Where the code that consumes keys lives. */
+const COMPONENT_DIRS = [
+  "packages/ui/src/components",
+  "packages/ui/src/examples",
+  "packages/ui/src/icons",
+];
 
 /** The catalogues under comparison. English is the reference. */
 const REFERENCE_LOCALE = "en";
@@ -53,6 +64,36 @@ const NAMESPACES = new Set(["common", "component", "page", "error", "a11y"]);
  */
 function read(absolute) {
   return readFileSync(absolute, "utf8");
+}
+
+/**
+ * List source files below a directory.
+ *
+ * Only `.ts` and `.tsx` are considered, and test files are filtered by the caller
+ * because a test legitimately references keys the app does not.
+ *
+ * @param {string} root absolute posix repo root
+ * @param {string} relative repo-relative directory
+ * @returns {string[]} repo-relative posix paths
+ */
+function listSourceFiles(root, relative) {
+  const absolute = path.join(root, relative);
+
+  if (!existsSync(absolute)) return [];
+
+  const found = [];
+
+  for (const entry of readdirSync(absolute, { withFileTypes: true })) {
+    const child = `${relative}/${entry.name}`;
+
+    if (entry.isDirectory()) {
+      found.push(...listSourceFiles(root, child));
+    } else if (/[.]tsx?$/.test(entry.name) && !entry.name.endsWith(".d.ts")) {
+      found.push(child);
+    }
+  }
+
+  return found;
 }
 
 /**
@@ -291,6 +332,63 @@ function collectViolations(args) {
             });
           }
         }
+      }
+    }
+  }
+
+  // ---- I6: references resolve, and every key is used.
+  //
+  // Both directions matter and for different reasons. A key the code asks for but
+  // the catalogue lacks is a runtime error in one locale only -- the English may
+  // exist while the Chinese is missing, which is exactly what I1 already catches,
+  // but a key missing from *both* is a typo nobody notices until it renders.
+  // An unused key is dead weight that the next translator dutifully translates.
+  const sources = [];
+
+  for (const directory of COMPONENT_DIRS) {
+    for (const relative of listSourceFiles(args.root, directory)) {
+      // Tests count as references. A key that only a test names is genuinely in
+      // use -- the plural keys are referenced by the plural test precisely to
+      // prove the catalogue honours each language's rule -- and excluding them
+      // would push those keys into an allowlist for no reason.
+      sources.push({ file: relative, text: read(path.join(args.root, relative)) });
+    }
+  }
+
+  if (sources.length > 0) {
+    const referenced = new Map();
+
+    for (const source of sources) {
+      // `t("ns.key")` and `labelKey="ns.key"` are the two ways this package names
+      // a key in source. Prop-drilled keys are typed, so a typo there would not
+      // compile; these string literals are the untyped route.
+      for (const match of source.text.matchAll(
+        /(?:t\(|labelKey=|key:)\s*["']([a-z][a-zA-Z0-9]*(?:\.[a-z][a-zA-Z0-9]*){1,3})["']/g,
+      )) {
+        const key = match[1];
+
+        if (key === undefined) continue;
+        if (!referenced.has(key)) referenced.set(key, source.file);
+      }
+    }
+
+    for (const [key, file] of referenced) {
+      if (!reference.has(key)) {
+        violations.push({
+          file,
+          rule: "I6",
+          message: `${key} is referenced but not declared in ${REFERENCE_LOCALE}`,
+        });
+      }
+    }
+
+    for (const key of reference.keys()) {
+      if (!referenced.has(key)) {
+        violations.push({
+          file: referenceFile,
+          rule: "I6",
+          message: `${key} is declared but never referenced`,
+        });
       }
     }
   }

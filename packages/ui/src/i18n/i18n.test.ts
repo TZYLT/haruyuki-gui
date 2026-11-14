@@ -62,30 +62,6 @@ describe("formatting", () => {
     expect(formatMessage("en", "error.withCode", { code: "E42" })).toBe("An error occurred (E42)");
     expect(formatMessage("zh-CN", "error.withCode", { code: "E42" })).toBe("出错了（E42）");
   });
-
-  it("selects the English plural branch for one and for many", () => {
-    const t = createTranslator("en");
-
-    expect(t("component.list.selectedCount", { count: 1 })).toBe("1 item selected");
-    expect(t("component.list.selectedCount", { count: 5 })).toBe("5 items selected");
-  });
-
-  it("uses the only-branch Chinese plural for one and for many", () => {
-    // Confirmed against Intl.PluralRules: zh selects `other` for every count,
-    // so a `one` branch would be dead code.
-    const t = createTranslator("zh-CN");
-
-    expect(t("component.list.selectedCount", { count: 1 })).toBe("已选 1 项");
-    expect(t("component.list.selectedCount", { count: 5 })).toBe("已选 5 项");
-  });
-
-  it("formats a zero count through the plural rule, not string concatenation", () => {
-    // The whole point of ICU over concatenation: English says "0 items", and no
-    // code path had to special-case it.
-    expect(createTranslator("en")("component.list.selectedCount", { count: 0 })).toBe(
-      "0 items selected",
-    );
-  });
 });
 
 describe("missing interpolation values", () => {
@@ -107,20 +83,6 @@ describe("missing interpolation values", () => {
 
   it("names the missing argument in the error", () => {
     expect(() => formatMessage("en", "error.withCode", {})).toThrow(/code/);
-  });
-
-  it("does not count a value that is present but zero or empty", () => {
-    formatMessage("en", "component.list.selectedCount", { count: 0 });
-    formatMessage("en", "error.withCode", { code: "" });
-
-    expect(diagnostics.missingParams).toBe(0);
-  });
-
-  it("does not count a supplied value that is explicitly undefined-free", () => {
-    // Only presence matters, not truthiness: a count of 0 must not look missing.
-    formatMessage("zh-CN", "component.list.selectedCount", { count: 0 });
-
-    expect(diagnostics.missingParams).toBe(0);
   });
 });
 
@@ -185,34 +147,6 @@ describe("catalogues", () => {
         expect(value, `${locale} ${key}`).toBe((value as string).trim());
       }
     }
-  });
-
-  it("gives Chinese only an `other` plural branch", () => {
-    // A `one` branch in zh is unreachable: Intl.PluralRules("zh").select(1)
-    // returns `other`, so the branch can never be selected. It is still harmful,
-    // because a translator will fill it in and a reviewer will approve it, and
-    // the two branches will then silently diverge. Behaviour testing cannot
-    // catch this -- both spellings render identically -- so it is asserted
-    // structurally.
-    const chinesePlurals = Object.entries(CATALOGUES["zh-CN"]).filter(([, value]) =>
-      (value as string).includes(", plural,"),
-    );
-
-    expect(chinesePlurals.length).toBeGreaterThan(0);
-
-    for (const [key, value] of chinesePlurals) {
-      expect(value as string, key).not.toMatch(/\bone\s*\{/);
-      expect(value as string, key).not.toMatch(/\btwo\s*\{/);
-      expect(value as string, key).not.toMatch(/\bfew\s*\{/);
-      expect(value as string, key).not.toMatch(/\bmany\s*\{/);
-    }
-  });
-
-  it("lets English use the branches its plural rule actually selects", () => {
-    // The mirror of the rule above: English selects `one` for 1, so a plural
-    // without a `one` branch would render "1 items".
-    expect(CATALOGUES.en["component.list.selectedCount"]).toMatch(/\bone\s*\{/);
-    expect(CATALOGUES.en["component.list.selectedCount"]).toMatch(/\bother\s*\{/);
   });
 });
 

@@ -107,6 +107,12 @@ export function Select({
         <BaseSelect.Positioner sideOffset={4}>
           <BaseSelect.Popup className={`${classes}__popup`}>
             <BaseSelect.List>
+              {options.length === 0 ? (
+                // An empty popup is a dead end: nothing to pick, no explanation.
+                // The message is a key because "no matching options" is exactly
+                // the kind of short phrase every screen needs.
+                <div className={`${classes}__empty`}>{t("component.select.empty")}</div>
+              ) : null}
               {options.map((option) => (
                 <BaseSelect.Item
                   key={option.value}

@@ -21,7 +21,12 @@ function Consumer(): React.ReactElement {
   return (
     <div>
       <span data-testid="text">{t("common.action.cancel")}</span>
-      <span data-testid="counted">{t("component.list.selectedCount", { count: 2 })}</span>
+      {/* An interpolated key, to prove the provider reaches formatting and not
+          just lookup. The key carries a placeholder rather than a plural: this
+          package ships no list component, so a plural entry would be unused --
+          and the plural property is asserted in plural.test.ts against messages
+          built locally, which cannot pass because an entry was edited. */}
+      <span data-testid="counted">{t("error.withCode", { code: "E42" })}</span>
       <span data-testid="locale">{locale}</span>
     </div>
   );
@@ -47,7 +52,7 @@ describe("LocaleProvider", () => {
     );
 
     expect(screen.getByTestId("text").textContent).toBe("取消");
-    expect(screen.getByTestId("counted").textContent).toBe("已选 2 项");
+    expect(screen.getByTestId("counted").textContent).toBe("出错了（E42）");
     expect(screen.getByTestId("locale").textContent).toBe("zh-CN");
   });
 

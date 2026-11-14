@@ -77,6 +77,22 @@ describe("i18n gate: each rule fires on its own fixture", () => {
     expect(run.output).toContain("other branch");
   });
 
+  it("I6 reports a key the code asks for but no catalogue declares", () => {
+    const run = runGateOn("red-dangling-ref");
+
+    expect(run.status, run.output).toBe(1);
+    expect(run.output).toContain("I6");
+    expect(run.output).toContain("is referenced but not declared");
+  });
+
+  it("I6 also reports a declared key nothing references", () => {
+    // The direction that keeps the catalogue from accumulating entries nobody
+    // renders, which the next translator would faithfully translate.
+    const run = runGateOn("red-dangling-ref");
+
+    expect(run.output).toContain("is declared but never referenced");
+  });
+
   it("I3 reports a placeholder that one side dropped", () => {
     const run = runGateOn("red-placeholder-drift");
 

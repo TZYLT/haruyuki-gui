@@ -25,6 +25,7 @@
     "tokens:check": "node scripts/tokens/check.mjs",
     "i18n:check": "node scripts/i18n/check.mjs",
     "ui:e2e": "node scripts/ui-e2e/check-layout.mjs",
+    "perf:check": "node scripts/perf/baseline.mjs",
     "contract:diff": "node scripts/contract/cli.mjs diff",
     "contract:generate": "node scripts/contract/cli.mjs generate",
     "test": "vitest run",
