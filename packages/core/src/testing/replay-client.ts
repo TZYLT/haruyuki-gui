@@ -144,6 +144,12 @@ export type ReplayThroughOptions = {
    * up).
    */
   onFrame?: (frame: ReplayFrame, socket: EngineSocket) => void;
+  /**
+   * Treat a close that arrives before the plan's last emission as the end of the
+   * replay instead of a failure. Only for a case that deliberately drops the
+   * client early; a truncated run otherwise rejects (see `truncated`).
+   */
+  allowTruncation?: boolean;
 };
 
 /** What a finished replay leaves behind. */
@@ -154,6 +160,14 @@ export type ReplayThroughResult = {
   frames: ReplayFrame[];
   /** Raw text of every received frame, parallel to `frames`. */
   received: string[];
+  /**
+   * How many s2c emissions the plan asked for after its planned stops. A result
+   * with fewer `frames` is a truncation, and one that reported it (only with
+   * `allowTruncation`) says so in `truncated`.
+   */
+  expectedFrames: number;
+  /** True when the run ended before `expectedFrames` arrivals. */
+  truncated: boolean;
 };
 
 /**
@@ -219,6 +233,7 @@ async function collect(
   const received: string[] = [];
   let socket: EngineSocket | null = null;
   let settled = false;
+  let truncated = false;
 
   let settle!: (error?: Error) => void;
 
@@ -284,13 +299,25 @@ async function collect(
     }
 
     // A close is only followed by a reconnect where the plan says so; any other
-    // close means no further frame can reach this client.
+    // close means no further frame can reach this client. That used to resolve as
+    // if the plan had finished, so a replay that died mid-plan looked complete to
+    // the caller (and to every assertion built on it).
     if (resumeAfter.has(frames.length)) {
       void reconnect();
       return;
     }
 
-    finish();
+    if (options.allowTruncation === true) {
+      truncated = true;
+      finish();
+      return;
+    }
+
+    finish(
+      new Error(
+        `replayThrough: the socket closed after ${frames.length} of ${expectedFrames} s2c frames`,
+      ),
+    );
   };
 
   /** Reopen the socket after a planned disconnect with `resume: true`. */
@@ -340,7 +367,7 @@ async function collect(
       throw error;
     }
 
-    return { server, frames, received };
+    return { server, frames, received, expectedFrames, truncated };
   } finally {
     clearTimeout(timer);
     releaseSocket(socket);

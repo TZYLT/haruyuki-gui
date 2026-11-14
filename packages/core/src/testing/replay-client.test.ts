@@ -63,6 +63,17 @@ async function standardFixture() {
   return loadFixtureText(wireText(STANDARD_LINES));
 }
 
+/**
+ * A clock that really sleeps, so the frames of a fixture land apart in wall time.
+ * Only the truncation cases need it: with the instant clock every frame is
+ * already in the socket buffer when a case tries to drop the client, so nothing
+ * is ever truncated.
+ */
+const SPACED_CLOCK: Clock = {
+  now: () => Date.now(),
+  sleep: (ms: number) => new Promise((resolve) => setTimeout(resolve, ms)),
+};
+
 /** Collect the parsed messages of a result, which is what the assertions compare. */
 function messagesOf(frames: ReplayFrame[]): unknown[] {
   return frames.map((frame) => frame.json);
@@ -150,21 +161,52 @@ describe("replayThrough", () => {
     expect(messagesOf(coalesced.frames)).toEqual(EXPECTED_MESSAGES);
   });
 
+  it("refuses a run that ends before the plan's emissions", async () => {
+    const fixture = await standardFixture();
+
+    // Four s2c frames are planned; the client dies after the first. This used to
+    // resolve with one frame, so a replay that died mid-plan looked complete.
+    let seen = 0;
+
+    await expect(
+      replayThrough({
+        fixture,
+        // 10 ms between frames at speed 1, so frame 3 is not yet emitted when the
+        // client dies after frame 2: this is a real truncation, not a race.
+        plan: { speed: 1 },
+        clock: SPACED_CLOCK,
+        onFrame: (_frame, socket) => {
+          seen += 1;
+
+          if (seen === 2) {
+            socket.terminate();
+          }
+        },
+      }),
+    ).rejects.toThrow(/socket closed after 2 of 4 s2c frames/);
+  });
+
   it("stops when the client breaks and still tears the server down", async () => {
     const fixture = await standardFixture();
     let broke = false;
     const first = await replayThrough({
       fixture,
+      // A deliberate early break is the caller's choice, so it has to say so.
+      allowTruncation: true,
+      plan: { speed: 1 },
+      clock: SPACED_CLOCK,
       onFrame: (frame, socket) => {
         // Break the client mid-run; the replay can no longer reach this socket.
         if (!broke) {
           broke = true;
-          socket.terminate();
+          setTimeout(() => socket.terminate(), 0);
         }
       },
     });
 
     expect(broke).toBe(true);
+    expect(first.truncated).toBe(true);
+    expect(first.expectedFrames).toBe(4);
     // Whatever arrived is the leading prefix of the fixture's s2c lines.
     expect(first.frames.every((frame, index) => frame.text === EXPECTED_TEXTS[index])).toBe(true);
     expect(first.received.length).toBe(first.frames.length);
@@ -184,6 +226,8 @@ describe("replayThrough", () => {
 
     expect(result.frames).toEqual([]);
     expect(result.received).toEqual([]);
+    expect(result.expectedFrames).toBe(0);
+    expect(result.truncated).toBe(false);
     expect(result.server.emitted).toEqual([]);
   });
 });
