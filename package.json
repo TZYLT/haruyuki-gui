@@ -24,12 +24,14 @@
     "contract:check": "node scripts/contract/cli.mjs check",
     "tokens:check": "node scripts/tokens/check.mjs",
     "i18n:check": "node scripts/i18n/check.mjs",
+    "fixtures:check": "node scripts/check-fixtures.mjs",
     "ui:e2e": "node scripts/ui-e2e/check-layout.mjs",
     "perf:check": "node scripts/perf/baseline.mjs",
     "contract:diff": "node scripts/contract/cli.mjs diff",
     "contract:generate": "node scripts/contract/cli.mjs generate",
     "test": "vitest run",
-    "hooks:install": "node scripts/install-hooks.mjs"
+    "hooks:install": "node scripts/install-hooks.mjs",
+    "record": "node scripts/engine/record.mjs"
   },
   "devDependencies": {
     "@formatjs/icu-messageformat-parser": "3.5.23",
@@ -37,6 +39,7 @@
     "@testing-library/user-event": "14.6.10",
     "@types/node": "24.19.2",
     "@vitest/coverage-v8": "5.1.0",
+    "electron": "45.3.2",
     "eslint": "10.14.0",
     "jsdom": "31.0.1",
     "madge": "8.0.0",

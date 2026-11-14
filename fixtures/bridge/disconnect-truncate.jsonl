@@ -1,0 +1,6 @@
+{"kind":"frames","schemaVersion":1,"bridgeVersion":1,"clock":"virtual","note":"disconnect truncate: disconnect-truncate.plan.json closes the socket after 1-based line 3 and does not resume, so the replay stops at line 3 and lines 4 and 5 never arrive."}
+{"v":1,"ch":"control","seq":1,"t":"bridge.ready","body":{"appVersion":"0.1.0","bridgeVersion":1}}
+{"v":1,"ch":"stream","seq":1,"t":"delta.message","body":{"index":1,"text":"a"}}
+{"v":1,"ch":"stream","seq":2,"t":"delta.message","body":{"index":2,"text":"b"}}
+{"v":1,"ch":"stream","seq":3,"t":"state.queue","body":{"pending":0}}
+{"v":1,"ch":"bulk","seq":1,"t":"bulk.page","body":{"page":1,"items":["a"]},"page":{"more":false}}

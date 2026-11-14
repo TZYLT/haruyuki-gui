@@ -1,0 +1,12 @@
+{"kind":"wire","schemaVersion":1,"engine":{"version":"0.6.0","commit":"1641a4f"},"scenario":"terminal","redaction":"r1","clock":"real","recordedAt":"2026-11-14T12:56:58.462Z"}
+{"dir":"c2s","at":1,"msg":{"type":"app_server_info","request_id":"r-1"}}
+{"dir":"s2c","at":31,"msg":{"type":"app_server_info_response","request_id":"r-1","success":true,"backend":"local","letta_code_version":"0.6.0","protocol_version":1,"capabilities":{"agent_management":true,"conversation_management":true,"memory_management":true,"runtime_start":true,"agent_free_conversations":true,"launch_subagent":true,"runtime_workspace_sandbox":true,"runtime_external_tools_update":true,"structured_outputs":false,"split_channels":false}}}
+{"dir":"c2s","at":303,"msg":{"type":"terminal_spawn","terminal_id":"a3-term-1","cols":80,"rows":24}}
+{"dir":"s2c","at":345,"msg":{"type":"terminal_spawned","terminal_id":"a3-term-1","pid":2956}}
+{"dir":"s2c","at":381,"msg":{"type":"terminal_output","terminal_id":"a3-term-1","data":"\u001b[2J\u001b[m\u001b[HMicrosoft Windows [\u7248\u672c 10.0.19045.6466]\u001b]0;C:/work/cmd.exe\u0007\u001b[?25h"}}
+{"dir":"s2c","at":412,"msg":{"type":"terminal_output","terminal_id":"a3-term-1","data":"\r\n(c) Microsoft Corporation\u3002\u4fdd\u7559\u6240\u6709\u6743\u5229\u3002\u001b[24X\r\n\u001b[65X\r\nC:/work/work>\u001b]0;\u7ba1\u7406\u5458: C:/work/cmd.exe\u0007"}}
+{"dir":"c2s","at":613,"msg":{"type":"terminal_input","terminal_id":"a3-term-1","data":"echo a3-terminal-ok\r"}}
+{"dir":"s2c","at":644,"msg":{"type":"terminal_output","terminal_id":"a3-term-1","data":"\rC:/work/work>echo a3-termina\r\nl-ok\u001b[K\r\na3-terminal-ok\u001b[51X\r\n\u001b[65X\r\nC:/work/work>"}}
+{"dir":"c2s","at":923,"msg":{"type":"terminal_input","terminal_id":"a3-term-1","data":"exit\r"}}
+{"dir":"s2c","at":954,"msg":{"type":"terminal_output","terminal_id":"a3-term-1","data":"exit\r\n\u001b]0;C:/work/cmd.exe\u0007"}}
+{"dir":"s2c","at":1946,"msg":{"type":"terminal_exited","terminal_id":"a3-term-1","exitCode":0}}

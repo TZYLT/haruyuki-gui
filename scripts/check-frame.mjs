@@ -50,6 +50,24 @@ const SCAN_DIRS = ["packages", "apps"];
 /** File extensions the scan reads. */
 const SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".mts", ".cts"]);
 
+/**
+ * Test files are skipped, and the reason is not "tests are less important".
+ *
+ * A test deliberately constructs values production code must never emit: an
+ * empty frame type, a single letter standing in for "some type", a type the
+ * test itself asserts must be REJECTED. Those literals are the test's input,
+ * not a claim about the wire, so registering them in `FRAME_TYPES` would put
+ * invented types into the contract -- and there is nowhere sensible to put a
+ * type whose whole purpose is to be invalid.
+ *
+ * The production half is still fully covered: every non-test source file is
+ * scanned, and the renderer's own consumers are production code.
+ *
+ * The same convention as `isTestFilePath` in boundaries-resolve.mjs: the
+ * suffix decides, so a file merely containing "test" is still production.
+ */
+const TEST_FILE_PATTERN = /\.test\.tsx?$/;
+
 /** Directories never descended into. */
 const EXCLUDED_DIRS = new Set([
   "node_modules",
@@ -289,7 +307,11 @@ function scanSourceFiles(root) {
       }
 
       if (entry.isFile() && SOURCE_EXTENSIONS.has(path.posix.extname(entry.name))) {
-        files.push(toPosix(path.relative(root, absolute)));
+        const relative = toPosix(path.relative(root, absolute));
+
+        if (!TEST_FILE_PATTERN.test(relative)) {
+          files.push(relative);
+        }
       }
     }
   }

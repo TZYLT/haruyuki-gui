@@ -189,18 +189,41 @@ describe("check-frame: registration", () => {
     expect(run.output).toContain("term.ouput");
   });
 
-  it("checks test files too", () => {
+  it("skips test files, whose literals are inputs rather than wire claims", () => {
     const root = writeTree({
       ...EMPTY_PACKAGES,
+      // A test deliberately feeds invalid values to the code under test. If
+      // those had to be registered, the table would collect invented types,
+      // including ones whose purpose is to be rejected.
       "packages/core/src/send.test.ts":
-        'export const frame = { ch: "stream", t: "term.ouput", body: {} };\n',
+        'export const bad = { ch: "stream", t: "not-a-type", body: {} };\n' +
+        'export const empty = { ch: "stream", t: "", body: {} };\n',
       "packages/protocol/src/frame/frame-types.ts": TABLE,
     });
 
     const run = runGateAt(root);
 
+    expect(run.status, run.output).toBe(0);
+    expect(run.output).toContain("PASS");
+  });
+
+  it("still catches the same literal one file over, outside the test suffix", () => {
+    const root = writeTree({
+      ...EMPTY_PACKAGES,
+      "packages/core/src/send.test.ts":
+        'export const bad = { ch: "stream", t: "not-a-type", body: {} };\n',
+      "packages/core/src/send.ts":
+        'export const frame = { ch: "stream", t: "not-a-type", body: {} };\n',
+      "packages/protocol/src/frame/frame-types.ts": TABLE,
+    });
+
+    const run = runGateAt(root);
+
+    // The exemption is per file, not per directory: the test is skipped and its
+    // neighbour in the same directory is still reported.
     expect(run.status, run.output).toBe(1);
-    expect(run.output).toContain("send.test.ts");
+    expect(run.output).toContain("send.ts:");
+    expect(run.output).not.toContain("send.test.ts");
   });
 
   it("ignores a computed frame type, which cannot be resolved statically", () => {

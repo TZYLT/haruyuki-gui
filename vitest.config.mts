@@ -14,6 +14,13 @@
  *               the pattern on purpose: it keeps a stray file in a package root
  *               from being collected as a test.
  *
+ *   apps/*\/src/**      the application shells. Same reasoning as the packages,
+ *               with one extra: the shell's main-process code must be testable
+ *               without launching Electron, so tests reach the pure modules
+ *               (path resolution, settings parsing) directly. Anything that
+ *               needs a real Electron process belongs in a script under
+ *               `apps/desktop/scripts/`, not here.
+ *
  * Both `.test.ts` and `.test.tsx` are collected: the renderer's component tests
  * are TSX. Keeping that list here and in `scripts/verify.mjs` in sync is the
  * point -- a test file nobody collects is a test file that never fails.
@@ -31,6 +38,8 @@ export default defineConfig({
       "scripts/**/*.test.ts",
       "packages/*/src/**/*.test.ts",
       "packages/*/src/**/*.test.tsx",
+      "apps/*/src/**/*.test.ts",
+      "apps/*/src/**/*.test.tsx",
     ],
     // Renderer tests need an explicit cleanup hook: @testing-library/react only
     // auto-cleans when a global `afterEach` exists, and this config deliberately
