@@ -94,6 +94,24 @@ describe("Tag", () => {
     expect(screen.getByText("TypeScript")).toBeDefined();
   });
 
+  it("disables the remove button without hiding it", async () => {
+    // The disabled case for this component. Disabled rather than removed: a
+    // chip whose remove button vanishes changes width and looks like a different
+    // tag, and a user cannot tell why it went away.
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+
+    render(<Tag text="TypeScript" onClose={onClose} closeDisabled />);
+
+    const button = screen.getByRole("button");
+
+    expect(button.hasAttribute("disabled")).toBe(true);
+
+    await user.click(button);
+
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
   it("forwards data-testid", () => {
     render(<Tag text="TypeScript" data-testid="chip" />);
 
