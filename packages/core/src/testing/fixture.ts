@@ -103,7 +103,16 @@ export type BridgeFrame = {
   seq: number;
   t: string;
   body: Record<string, unknown>;
-  page?: { more: boolean };
+  /**
+   * The paging cursor of a `bulk` frame.
+   *
+   * `watermark` and `token` are optional because corpora recorded before the
+   * cursor existed carry only `more`. A consumer that needs the cursor must
+   * treat an absent value as "unknown position", never as position zero: a
+   * watermark of zero is a real snapshot position, and conflating the two
+   * would make a stale page look current.
+   */
+  page?: { more: boolean; watermark?: number; token?: string };
 };
 
 /** Bridge corpus header: the first JSONL line. */
@@ -316,7 +325,14 @@ function readFrame(entry: FixtureEntry): BridgeFrame {
       );
     }
 
-    frame.page = { more: page.more };
+    // Everything the envelope carried is kept: a loader that silently narrows
+    // the frame cannot be used to test a consumer that reads the narrowed-away
+    // fields, and the loss is invisible at the call site.
+    frame.page = {
+      more: page.more,
+      ...(page.watermark === undefined ? {} : { watermark: page.watermark }),
+      ...(page.token === undefined ? {} : { token: page.token }),
+    };
   }
 
   return frame;
@@ -375,8 +391,23 @@ function isFrameChannel(value: unknown): value is FrameChannel {
 }
 
 /** True for a `page` envelope field. */
-function isPage(value: unknown): value is { more: boolean } {
-  return isRecord(value) && typeof value.more === "boolean";
+/**
+ * Whether a frame's `page` field is a usable cursor.
+ *
+ * `more` is required because every recorded corpus has it and the drain loop
+ * keys on it. The other two are checked only when present, so an older corpus
+ * still loads while a malformed cursor is still rejected.
+ */
+function isPage(value: unknown): value is { more: boolean; watermark?: number; token?: string } {
+  if (!isRecord(value) || typeof value.more !== "boolean") {
+    return false;
+  }
+
+  if (value.watermark !== undefined && typeof value.watermark !== "number") {
+    return false;
+  }
+
+  return value.token === undefined || typeof value.token === "string";
 }
 
 /** Readable message for a thrown value of unknown shape. */

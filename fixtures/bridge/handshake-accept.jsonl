@@ -1,0 +1,4 @@
+{"kind":"frames","schemaVersion":1,"bridgeVersion":1,"clock":"virtual","note":"version match: bridge.ready body declares bridgeVersion \"1\" equal to the header, core answers bridge.accept and the snapshot opens; the match half of V-5. No replay plan."}
+{"v":1,"ch":"control","seq":1,"t":"bridge.ready","body":{"appVersion":"0.1.0","bridgeVersion":"1"}}
+{"v":1,"ch":"control","seq":2,"t":"bridge.accept","body":{"coreVersion":"0.1.0","bulkPages":1}}
+{"v":1,"ch":"bulk","seq":3,"t":"bulk.page","body":{"page":1,"items":["alpha"]},"page":{"watermark":2,"token":"snap-1-p1","more":false}}

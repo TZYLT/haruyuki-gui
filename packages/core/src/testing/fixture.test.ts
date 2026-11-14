@@ -162,6 +162,49 @@ describe("loadFramesFixture", () => {
     );
   });
 
+  it("keeps every page field the envelope carried, not just `more`", async () => {
+    // A loader that narrows the envelope cannot be used to test a consumer
+    // that reads the narrowed-away fields, and the loss is invisible at the
+    // call site: the frame simply arrives looking older than it is.
+    const frame = {
+      v: 1,
+      ch: "bulk",
+      seq: 1,
+      t: "bulk.page",
+      body: {},
+      page: { more: true, watermark: 40, token: "snap-40-p1" },
+    };
+    const text = [JSON.stringify(FRAMES_HEADER), JSON.stringify(frame)].join("\n");
+    const file = await writeFixture("frames-cursor.jsonl", text);
+    const fixture = await loadFramesFixture(file);
+
+    expect(fixture.frames[0]?.page).toEqual({ more: true, watermark: 40, token: "snap-40-p1" });
+  });
+
+  it("still loads a corpus whose page predates the cursor", async () => {
+    const frame = { v: 1, ch: "bulk", seq: 1, t: "bulk.page", body: {}, page: { more: false } };
+    const text = [JSON.stringify(FRAMES_HEADER), JSON.stringify(frame)].join("\n");
+    const file = await writeFixture("frames-old-page.jsonl", text);
+    const fixture = await loadFramesFixture(file);
+
+    expect(fixture.frames[0]?.page).toEqual({ more: false });
+  });
+
+  it("rejects a cursor whose watermark is not a number", async () => {
+    const frame = {
+      v: 1,
+      ch: "bulk",
+      seq: 1,
+      t: "bulk.page",
+      body: {},
+      page: { more: true, watermark: "40" },
+    };
+    const text = [JSON.stringify(FRAMES_HEADER), JSON.stringify(frame)].join("\n");
+    const file = await writeFixture("frames-bad-cursor.jsonl", text);
+
+    await expect(loadFramesFixture(file)).rejects.toThrow(/frame "page" must be an object/);
+  });
+
   it("rejects a line that is not a Frame envelope and names its line", async () => {
     const text = [
       JSON.stringify(FRAMES_HEADER),

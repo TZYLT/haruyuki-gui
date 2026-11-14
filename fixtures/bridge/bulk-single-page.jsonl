@@ -1,0 +1,3 @@
+{"kind":"frames","schemaVersion":1,"bridgeVersion":1,"clock":"virtual","note":"paging boundary, single page: one snapshot fits in one bulk.page whose more is false from the first frame, so no second page is awaited (V-9). No replay plan."}
+{"v":1,"ch":"control","seq":1,"t":"bridge.ready","body":{"appVersion":"0.1.0","bridgeVersion":1}}
+{"v":1,"ch":"bulk","seq":2,"t":"bulk.page","body":{"page":1,"items":["alpha"]},"page":{"watermark":7,"token":"snap-single-p1","more":false}}
