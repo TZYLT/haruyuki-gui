@@ -143,4 +143,29 @@ describe("Select", () => {
 
     expect(screen.getByTestId("format").getAttribute("role")).toBe("combobox");
   });
+
+  it("keeps its own classes when the caller passes one", async () => {
+    // `classes` used to be the root class and the prefix for every derived name
+    // in one string, so a caller class of `wide` produced `ui-select
+    // wide__trigger` -- the real `ui-select__trigger` class disappeared and the
+    // trigger rendered with no styling at all. Nothing caught it because no test
+    // passed a `className`.
+    const user = userEvent.setup();
+
+    renderSelect({ className: "wide" });
+    const trigger = screen.getByRole("combobox");
+
+    expect(trigger.className.split(" ")).toContain("ui-select__trigger");
+    expect(trigger.className.split(" ")).toContain("wide");
+
+    await user.click(trigger);
+
+    // The listbox role sits on base-ui's inner list; the popup is the styled
+    // wrapper around it. Asserting on the wrapper is the point -- it is the
+    // element whose derived class name is built from the base.
+    const listbox = screen.getByRole("listbox");
+    const popup = listbox.closest(".ui-select__popup");
+
+    expect(popup, "the popup wrapper keeps its own class").not.toBeNull();
+  });
 });

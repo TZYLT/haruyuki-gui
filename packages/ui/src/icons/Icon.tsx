@@ -39,6 +39,15 @@ export interface IconProps {
   labelKey?: MessageKey;
   /** Extra class names, merged onto the svg. */
   className?: string;
+  /**
+   * Test handle.
+   *
+   * An icon has no role and no text, so `getByRole` and `getByText` cannot find
+   * one; without this prop a test asserting "the danger button's icon is the
+   * delete glyph" had no way to ask. `data-*` and not a `role`, because a
+   * decorative icon must stay out of the accessibility tree.
+   */
+  "data-testid"?: string;
 }
 
 /**
@@ -59,7 +68,13 @@ export interface IconProps {
  * @param props icon props
  * @returns the svg element
  */
-export function Icon({ name, size, labelKey, className }: IconProps): ReactElement {
+export function Icon({
+  name,
+  size,
+  labelKey,
+  className,
+  "data-testid": testId,
+}: IconProps): ReactElement {
   const t = useT();
   const definition = ICONS[name];
   const Glyph = definition.component;
@@ -81,6 +96,7 @@ export function Icon({ name, size, labelKey, className }: IconProps): ReactEleme
       className={className}
       style={style}
       focusable="false"
+      data-testid={testId}
       {...accessibility}
     />
   );

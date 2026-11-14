@@ -75,7 +75,15 @@ export function Select({
   ensureStyles();
 
   const t = useT();
-  const classes = className === undefined ? "ui-select" : `ui-select ${className}`;
+  // The base class is the prefix for every derived name.
+  //
+  // It used to be a single `classes` string that was *also* the prefix, so a
+  // caller passing `className="wide"` produced `ui-select wide__trigger`: the
+  // real `ui-select__trigger` class vanished and the trigger rendered with no
+  // styling at all. The caller's class is appended to the trigger -- the element
+  // that is the visible control -- and plays no part in any derived name.
+  const BASE = "ui-select";
+  const triggerClass = className === undefined ? `${BASE}__trigger` : `${BASE}__trigger ${className}`;
   const resolvedPlaceholder = placeholder ?? t("component.select.placeholder");
 
   return (
@@ -93,32 +101,32 @@ export function Select({
       items={options.map((option) => ({ value: option.value, label: option.label }))}
     >
       <BaseSelect.Trigger
-        className={`${classes}__trigger`}
+        className={triggerClass}
         style={style}
         aria-label={t(labelKey)}
         aria-invalid={invalid ? true : undefined}
         data-invalid={invalid ? "true" : undefined}
         data-testid={testId}
       >
-        <BaseSelect.Value className={`${classes}__value`} placeholder={resolvedPlaceholder} />
+        <BaseSelect.Value className={`${BASE}__value`} placeholder={resolvedPlaceholder} />
         <Icon name="chevronDown" />
       </BaseSelect.Trigger>
       <BaseSelect.Portal>
         <BaseSelect.Positioner sideOffset={4}>
-          <BaseSelect.Popup className={`${classes}__popup`}>
+          <BaseSelect.Popup className={`${BASE}__popup`}>
             <BaseSelect.List>
               {options.length === 0 ? (
                 // An empty popup is a dead end: nothing to pick, no explanation.
                 // The message is a key because "no matching options" is exactly
                 // the kind of short phrase every screen needs.
-                <div className={`${classes}__empty`}>{t("component.select.empty")}</div>
+                <div className={`${BASE}__empty`}>{t("component.select.empty")}</div>
               ) : null}
               {options.map((option) => (
                 <BaseSelect.Item
                   key={option.value}
                   value={option.value}
                   disabled={option.disabled === true}
-                  className={`${classes}__item`}
+                  className={`${BASE}__item`}
                 >
                   <BaseSelect.ItemText>{option.label}</BaseSelect.ItemText>
                 </BaseSelect.Item>

@@ -63,8 +63,12 @@ export function Dialog({
   ensureStyles();
 
   const t = useT();
-  const classes = className === undefined ? "ui-dialog" : `ui-dialog ${className}`;
-
+  // Kept apart on purpose -- see `Select` for the full explanation. One string
+  // used as both the root class and the prefix for every derived name meant a
+  // caller passing `className="wide"` produced `ui-dialog wide__backdrop`, so the
+  // backdrop lost its real class and rendered unstyled.
+  const BASE = "ui-dialog";
+  const popupClass = className === undefined ? `${BASE}__popup` : `${BASE}__popup ${className}`;
   return (
     <BaseDialog.Root
       open={open}
@@ -73,30 +77,30 @@ export function Dialog({
       }}
     >
       <BaseDialog.Portal>
-        <BaseDialog.Backdrop className={`${classes}__backdrop`} />
+        <BaseDialog.Backdrop className={`${BASE}__backdrop`} />
         <BaseDialog.Popup
-          className={`${classes}__popup`}
+          className={popupClass}
           style={style}
           data-testid={testId}
           // base-ui does not set this; see the note above. It is a boolean ARIA
           // attribute, so the string is correct.
           aria-modal="true"
         >
-          <div className={`${classes}__header`}>
+          <div className={`${BASE}__header`}>
             {/* Dialog.Title wires aria-labelledby on the popup, which is what
                 gives the dialog its accessible name. Rendering a plain <h2>
                 would look identical and leave the dialog unnamed. */}
-            <BaseDialog.Title className={`${classes}__title`}>{title}</BaseDialog.Title>
+            <BaseDialog.Title className={`${BASE}__title`}>{title}</BaseDialog.Title>
             <BaseDialog.Close
-              className={`${classes}__close`}
+              className={`${BASE}__close`}
               aria-label={t("component.dialog.close")}
               title={t("component.dialog.close")}
             >
               <Icon name="close" />
             </BaseDialog.Close>
           </div>
-          <div className={`${classes}__body`}>{children}</div>
-          {footer === undefined ? null : <div className={`${classes}__footer`}>{footer}</div>}
+          <div className={`${BASE}__body`}>{children}</div>
+          {footer === undefined ? null : <div className={`${BASE}__footer`}>{footer}</div>}
         </BaseDialog.Popup>
       </BaseDialog.Portal>
     </BaseDialog.Root>

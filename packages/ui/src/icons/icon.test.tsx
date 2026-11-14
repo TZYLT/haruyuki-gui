@@ -159,6 +159,13 @@ describe("Icon rendering", () => {
     const declared = svg?.getAttribute("style") ?? "";
 
     expect(declared).not.toMatch(/color\s*:/i);
+    // Checked on the whole element, not just its `style` attribute. The defect
+    // could come straight back as `stroke="var(--ui-color-neutral-2)"` -- the
+    // effect of Lucide's `color` prop -- and `style` would still read
+    // `flex-shrink: 0`, so a style-only assertion passes. `stroke` must be
+    // `currentColor` (Lucide's default) or absent, never a colour.
+    expect(svg?.getAttribute("stroke") ?? "currentColor").toBe("currentColor");
+    expect(svg?.getAttribute("color")).toBeNull();
   });
 
   it("follows the surrounding text colour in a coloured control", () => {

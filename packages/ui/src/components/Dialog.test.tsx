@@ -137,4 +137,21 @@ describe("Dialog", () => {
 
     expect(await screen.findByTestId("confirm")).toBeDefined();
   });
+
+  it("keeps its own classes when the caller passes one", async () => {
+    // Same defect as `Select`: `classes` was both the root class and the prefix
+    // for every derived name, so `className="wide"` produced
+    // `ui-dialog wide__backdrop` -- the backdrop lost its real class and the
+    // scrim rendered as an unstyled transparent layer.
+    renderDialog({ className: "wide" });
+
+    const dialog = await screen.findByRole("dialog");
+
+    expect(dialog.className.split(" ")).toContain("ui-dialog__popup");
+    expect(dialog.className.split(" ")).toContain("wide");
+
+    const backdrop = document.querySelector(".ui-dialog__backdrop");
+
+    expect(backdrop, "the backdrop keeps its own class").not.toBeNull();
+  });
 });
