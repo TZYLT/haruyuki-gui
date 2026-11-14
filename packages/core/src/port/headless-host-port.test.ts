@@ -214,23 +214,23 @@ describe("headless host port: nine-item contract", () => {
   it("consumes one queued answer per pickPaths call and reports cancellation as []", async () => {
     const answers = [
       path.join(tmpdir(), "haruyuki-pick-1.txt"),
-      path.join(tmpdir(), "haruyuki-pick-2.txt"),
+      [path.join(tmpdir(), "haruyuki-pick-2.txt"), path.join(tmpdir(), "haruyuki-pick-3.txt")],
     ];
 
     const { port } = await createFixture({ pickQueue: answers });
 
     expect(await port.pickPaths({ kind: "file" })).toEqual([answers[0]]);
-    // At most one path per call, including a multi-select call: the replay engine
-    // 3.4.1.1 S-3 freezes that for this version, so the second call answers with
-    // its own single queued path rather than two.
-    expect(await port.pickPaths({ kind: "directory", multiple: true })).toEqual([answers[1]]);
+    // A list answer is what a `multiple: true` dialog returns; the same answer
+    // asked for one path truncates, the way a real dialog honours its properties.
+    expect(await port.pickPaths({ kind: "directory", multiple: true })).toEqual(answers[1]);
+    expect(await port.pickPaths({ kind: "file", multiple: true })).toEqual([]);
 
     // An empty queue is a cancellation, which is an empty array and not an error
     // .
     expect(await port.pickPaths({ kind: "file" })).toEqual([]);
 
-    // Every call counts, including the cancelled one.
-    expect(port.calls.pickPaths).toBe(3);
+    // Every call counts, including the cancelled ones.
+    expect(port.calls.pickPaths).toBe(4);
   });
 
   it("resolves a path inside an allowed root and refuses everything outside", async () => {
@@ -333,7 +333,7 @@ type Fixture = {
 };
 
 type FixtureOptions = {
-  pickQueue?: string[];
+  pickQueue?: Array<string | string[]>;
   allowedRoots?: string[];
   secureSeed?: Record<string, string>;
 };
