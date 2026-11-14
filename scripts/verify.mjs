@@ -131,6 +131,7 @@ const GATE_SELF_TEST_FILES = [
   "scripts/file-size-ratchet.test.ts",
   "scripts/module-ownership.test.ts",
   "scripts/contract-gate.test.ts",
+  "scripts/tokens/check.test.ts",
 ];
 
 /** Long form of the gate self-test heading; see the segment definition. */
@@ -329,7 +330,7 @@ function segmentInputs(segment) {
 }
 
 /**
- * Describe the seven base segments (plus three under --full).
+ * Describe the eight base segments (plus three under --full).
  *
  * @param {VerifyOptions} options
  * @returns {Segment[]}
@@ -361,6 +362,12 @@ function buildSegments(options) {
     {
       label: "contract",
       command: () => gate("scripts/check-contract.mjs", options.verbose),
+    },
+    {
+      // Runs after `contract` and before `test` so a token violation is reported
+      // by the segment that names it rather than as a failing unit test.
+      label: "tokens",
+      command: () => gate("scripts/tokens/check.mjs", options.verbose),
     },
     {
       label: "test",

@@ -61,6 +61,7 @@ const SEGMENT_SCRIPTS = [
   "check-cycles.mjs",
   "check-file-size.mjs",
   "check-module-ownership.mjs",
+  "tokens/check.mjs",
 ];
 
 /** Mirrors GATE_SELF_TEST_FILES in verify.mjs; see the note above. */
@@ -71,6 +72,7 @@ const GATE_SELF_TEST_FILES = [
   "file-size-ratchet.test.ts",
   "module-ownership.test.ts",
   "contract-gate.test.ts",
+  "tokens/check.test.ts",
 ];
 
 /** Default-mode segment labels, in the documented order. */
@@ -80,6 +82,7 @@ const DEFAULT_LABELS = [
   "boundaries",
   "gate self-test",
   "contract",
+  "tokens",
   "test",
   "coverage",
 ];
@@ -147,12 +150,20 @@ function makeStubTree(
 
   for (const name of SEGMENT_SCRIPTS) {
     if (!missing.has(`scripts/${name}`)) {
-      writeFileSync(path.join(root, "scripts", name), GATE_STUB);
+      // Gate scripts may sit in a subdirectory (`tokens/check.mjs`), so the
+      // parent has to exist before the write.
+      const target = path.join(root, "scripts", name);
+
+      mkdirSync(path.dirname(target), { recursive: true });
+      writeFileSync(target, GATE_STUB);
     }
   }
 
   for (const name of GATE_SELF_TEST_FILES) {
-    writeFileSync(path.join(root, "scripts", name), "");
+    const target = path.join(root, "scripts", name);
+
+    mkdirSync(path.dirname(target), { recursive: true });
+    writeFileSync(target, "");
   }
 
   for (const relative of options.extraFiles ?? []) {
@@ -329,13 +340,13 @@ afterAll(() => {
 });
 
 describe("verify aggregator: segment assembly", () => {
-  it("runs the seven default segments in the documented order", () => {
+  it("runs the eight default segments in the documented order", () => {
     const tree = makeStubTree();
     const run = cachedRun("default", () => runVerify(tree));
 
     expect(run.status, run.output).toBe(0);
-    expect(run.output).toContain("verify: 7 segments, mode default");
-    expectHeadingsInOrder(run, DEFAULT_LABELS, 7);
+    expect(run.output).toContain("verify: 8 segments, mode default");
+    expectHeadingsInOrder(run, DEFAULT_LABELS, 8);
 
     // The gate scripts themselves ran in segment order, not just the printer.
     const gateLog = readFileSync(tree.logFile, "utf8");
@@ -344,8 +355,8 @@ describe("verify aggregator: segment assembly", () => {
     expect(gateLog.indexOf("check-contract.mjs")).toBeGreaterThan(
       gateLog.indexOf("check-boundaries.mjs"),
     );
-    expect(run.output).toContain("[3/7] boundaries  PASS");
-    expect(run.output).toContain("[5/7] contract  PASS");
+    expect(run.output).toContain("[3/8] boundaries  PASS");
+    expect(run.output).toContain("[5/8] contract  PASS");
   });
 
   it("appends the three --full segments in the documented order", () => {
@@ -353,9 +364,9 @@ describe("verify aggregator: segment assembly", () => {
     const run = cachedRun("full", () => runVerify(tree, ["--full"]));
 
     expect(run.status, run.output).toBe(0);
-    expect(run.output).toContain("verify: 10 segments, mode full");
-    expectHeadingsInOrder(run, [...DEFAULT_LABELS, ...FULL_LABELS], 10);
-    expect(run.output).toContain("[10/10] module ownership  PASS");
+    expect(run.output).toContain("verify: 11 segments, mode full");
+    expectHeadingsInOrder(run, [...DEFAULT_LABELS, ...FULL_LABELS], 11);
+    expect(run.output).toContain("[11/11] module ownership  PASS");
   });
 
   it("names the test segment by its real index in the coverage notes (P3-03)", () => {
@@ -364,9 +375,9 @@ describe("verify aggregator: segment assembly", () => {
     const run = peekRun("default");
 
     expect(run).toBeDefined();
-    expect(run?.output).toContain("test verdicts belong to segment 6, not here");
-    expect(run?.output).not.toContain("test verdicts belong to segment 5");
-    expect(run?.output).toContain("[6/7] test  PASS");
+    expect(run?.output).toContain("test verdicts belong to segment 7, not here");
+    expect(run?.output).not.toContain("test verdicts belong to segment 6");
+    expect(run?.output).toContain("[7/8] test  PASS");
   });
 });
 
@@ -473,7 +484,7 @@ describe("verify aggregator: fail closed", () => {
     expect(existsSync(tree.logFile)).toBe(false);
   });
 
-  it("requires the three --full-only scripts as well (ten segments) (P3-01)", () => {
+  it("requires the three --full-only scripts as well (eleven segments) (P3-01)", () => {
     const tree = makeStubTree({ missing: ["scripts/check-cycles.mjs"] });
     const run = cachedRun("missing-full", () => runVerify(tree, ["--full"]));
 
@@ -507,12 +518,12 @@ describe("verify aggregator: behaviour", () => {
     );
 
     expect(run.status, run.output).toBe(1);
-    expectHeadingsInOrder(run, DEFAULT_LABELS, 7);
-    expect(run.output).toContain("[3/7] boundaries  FAIL");
+    expectHeadingsInOrder(run, DEFAULT_LABELS, 8);
+    expect(run.output).toContain("[3/8] boundaries  FAIL");
     // Later segments still ran, including the one after the failure.
-    expect(run.output).toContain("[5/7] contract  PASS");
-    expect(run.output).toContain("[7/7] coverage  PASS");
-    expect(run.output).toContain("verify: 1 of 7 segments FAILED");
+    expect(run.output).toContain("[5/8] contract  PASS");
+    expect(run.output).toContain("[8/8] coverage  PASS");
+    expect(run.output).toContain("verify: 1 of 8 segments FAILED");
     expect(run.output).toContain("FAILED: boundaries");
     // The failing segment's captured output is replayed as the debugging payload.
     expect(run.output).toContain("stub gate output: check-boundaries.mjs");
