@@ -38,8 +38,9 @@ const WATCHDOG_PATH = path.join(REPO_ROOT, "packages", "core", "src", "runtime",
 const CORE_PACKAGE_JSON = path.join(REPO_ROOT, "packages", "core", "package.json");
 /** What a developer must run when the engine artifact is absent. */
 const FETCH_HINT = "node scripts/engine/fetch-engine.mjs";
-/** F-6 is the only discovery path for the bound port (F-7, F-8: no ws-url-file). */
-const PORT_LINE = /^WebSocket:\s+(ws:\S+)$/m;
+/** F-6 is the only port-discovery path (F-7, F-8); equal to `WS_URL_LINE` in
+ * port-discovery.ts, so a shape the product parser rejects cannot pass here. */
+const PORT_LINE = /^WebSocket:\s+(ws:\/\/\S+)$/m;
 /** Watchdog self-check marker written to the engine's stderr (section 3.4). */
 const MARKER_LINE = /^WATCHDOG_OK=(\d+)$/m;
 /** Line the inner harness prints with the engine pid. */
@@ -581,8 +582,10 @@ function runHarnessChild(argv) {
   delete env.NODE_OPTIONS;
   if (watchdogPath && watchdogPath !== "-") {
     const target = process.platform === "win32" ? watchdogPath.replace(/\\/g, "/") : watchdogPath;
-    env.NODE_OPTIONS =
-      process.platform === "win32" ? `--require "${target}"` : `--require ${target}`;
+    // Always quoted: the repository path may contain a space, and an unquoted
+    // `--require C:\Users\Some Name\...` would split into two arguments and make
+    // the watchdog silently never load - exactly the failure the watchdog check has to catch.
+    env.NODE_OPTIONS = `--require "${target}"`;
   }
   const outFd = openSync(outLog, "a");
   const errFd = openSync(errLog, "a");

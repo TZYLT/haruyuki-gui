@@ -480,6 +480,15 @@ function assertSpawnSpecContract(
     const quotedPath = /^--require "(.*)"$/.exec(nodeOptions)?.[1] ?? "";
 
     expect(path.isAbsolute(quotedPath)).toBe(true);
+
+    // On Windows the quoted path must use forward slashes: Node unescapes
+    // backslashes inside NODE_OPTIONS, so a native `C:\a\watchdog.cjs` preload
+    // becomes `C:awatchdog.cjs` and the watchdog silently never loads (measured,
+    // on Windows). This is the form the headless port produces, and the one a
+    // second host port has to reproduce.
+    if (process.platform === "win32") {
+      expect(quotedPath).not.toContain("\\");
+    }
   }
 
   // Invariant 3: no credential may be injected through env either. Entries the
@@ -727,7 +736,10 @@ async function createFakeDesktopHostPort(
         cwd: paths.userData,
         stdio: "pipe",
         windowsHide: true,
-        detached: false,
+        // A platform fact, not a host-capability fact: both implementations must
+        // agree, because the stop path decides between a group signal and
+        // `taskkill /T /F` from this value alone.
+        detached: process.platform !== "win32",
       };
 
       return { ok: true, spec };
@@ -769,7 +781,12 @@ function fakeDesktopEnv(
   env["HARUYUKI_HOME"] = paths.userData;
 
   if (withWatchdog) {
-    env["NODE_OPTIONS"] = `--require "${watchdogPath}"`;
+    // Forward slashes, exactly as the headless port does: Node strips
+    // backslashes inside NODE_OPTIONS as escapes, so `C:\...\watchdog.cjs`
+    // preloads as `C:...watchdog.cjs` and fails with MODULE_NOT_FOUND
+    // (measured on Windows). A stand-in that used `path.join` here would
+    // make the suite accept a form the real runtime rejects.
+    env["NODE_OPTIONS"] = `--require "${watchdogPath.split("\\").join("/")}"`;
   }
 
   return env;

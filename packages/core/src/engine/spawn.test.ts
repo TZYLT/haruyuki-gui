@@ -40,6 +40,13 @@ const PRINTS_SOURCE =
   'process.stderr.write("spawn-stderr\\n");';
 const POSIX_SIGTERM_SOURCE =
   'process.on("SIGTERM", () => { process.exit(7); }); process.stdout.write("armed\\n"); setInterval(() => {}, 1000);';
+const POSIX_IGNORES_TERM_SOURCE =
+  'process.on("SIGTERM", () => {}); process.stdout.write("armed\\n"); setInterval(() => {}, 1000);';
+const GRANDCHILD_SOURCE =
+  'const { spawn } = require("node:child_process");' +
+  'const g = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });' +
+  'process.stdout.write("GRANDCHILD=" + g.pid + "\\n");' +
+  "setInterval(() => {}, 1000);";
 
 /** Children started by a test, force-cleaned after it. */
 const liveChildren = new Set<ChildProcess>();
@@ -244,7 +251,89 @@ describe("stopGraceful", () => {
       expect(info.signal).toBeNull();
     },
   );
+  it.skipIf(process.platform === "win32")(
+    "escalates to SIGKILL for a POSIX child that ignores SIGTERM",
+    async () => {
+      // The whole point of the escalation stage: a wedged engine must still die
+      // inside the caller's budget. Without this case the SIGTERM grace could be
+      // skipped entirely and every other test would stay green.
+      const child = start(engineSpec(POSIX_IGNORES_TERM_SOURCE));
+      await new Promise<void>((resolve) => {
+        child.stdout!.once("data", () => {
+          resolve();
+        });
+      });
+      const exit = nextExit(child, 10000);
+
+      const startedAt = Date.now();
+      await stopGraceful(child, 600);
+      const info = await exit;
+
+      expect(info.signal).toBe("SIGKILL");
+      expect(Date.now() - startedAt).toBeLessThan(5000);
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "takes the whole process group with it when the child is detached",
+    async () => {
+      // `detached` exists so POSIX can signal the group.
+      // The engine runs external commands, so a grandchild must not survive the
+      // stop; without the group signal this case leaves it running.
+      const child = start({ ...engineSpec(GRANDCHILD_SOURCE), detached: true });
+
+      const grandchildPid = await new Promise<number>((resolve, reject) => {
+        let buffered = "";
+
+        child.stdout!.on("data", (chunk: Buffer) => {
+          buffered += chunk.toString("utf8");
+
+          const match = /^GRANDCHILD=(\d+)$/m.exec(buffered);
+
+          if (match !== null) {
+            resolve(Number(match[1]));
+          }
+        });
+
+        child.once("error", reject);
+      });
+
+      expect(isAlive(grandchildPid)).toBe(true);
+
+      await stopGraceful(child, 5000);
+      await waitForTermination(child, 5000);
+
+      await waitUntil(() => !isAlive(grandchildPid), "the grandchild to be killed with the group");
+    },
+  );
 });
+
+/** True while `process.kill(pid, 0)` succeeds; EPERM still means alive. */
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as { code?: string }).code === "EPERM";
+  }
+}
+
+/** Poll `predicate` until it holds or the budget runs out. */
+async function waitUntil(predicate: () => boolean, label: string, timeoutMs = 5000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    if (predicate()) {
+      return;
+    }
+
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 25);
+    });
+  }
+
+  throw new Error(`timed out waiting for ${label}`);
+}
 
 /** Full environment as the string-only shape EngineSpawnSpec requires. */
 function environment(): Record<string, string> {

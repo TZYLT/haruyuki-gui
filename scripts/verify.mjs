@@ -446,16 +446,87 @@ function vitest(files) {
 }
 
 /**
- * Every test file below scripts/, sorted, as repo-relative posix paths.
+ * Every unit test file in the repository, as repo-relative posix paths.
+ *
+ * Two roots, because the repository keeps tests in two places and the `test`
+ * segment must be the segment that runs them all:
+ *
+ * - `scripts/*.test.ts`, flat, next to the gate they exercise;
+ * - `packages/<pkg>/src/**\/*.test.ts`, co-located with the source they cover.
+ *
+ * The package tree is walked rather than globbed because this script has no
+ * dependencies. `node_modules`, `dist` and dot-directories are skipped: a
+ * dependency's own tests are not ours to run.
+ *
+ * Why this matters: the `coverage` segment does run everything, but it accepts a
+ * non-zero exit as long as a coverage table was printed, so a failing package
+ * test would only fail `verify` for as long as vitest keeps omitting the table on
+ * failure. A gate that relies on that is a gate by accident.
  *
  * @param {string} root Absolute posix repository root.
  * @returns {string[]}
  */
 function discoverTestFiles(root) {
-  return readdirSync(path.join(root, "scripts"))
+  const flat = readdirSync(path.join(root, "scripts"))
     .filter((name) => TEST_FILE_PATTERN.test(name))
     .sort()
     .map((name) => `scripts/${name}`);
+
+  return [...flat, ...discoverPackageTestFiles(root)].sort();
+}
+
+/**
+ * Co-located test files below every `packages/<pkg>/src` tree.
+ *
+ * @param {string} root Absolute posix repository root.
+ * @returns {string[]}
+ */
+function discoverPackageTestFiles(root) {
+  const packagesDir = path.join(root, "packages");
+
+  if (!existsSync(packagesDir)) {
+    return [];
+  }
+
+  const found = [];
+
+  for (const name of readdirSync(packagesDir).sort()) {
+    const srcDir = path.join(packagesDir, name, "src");
+
+    if (!existsSync(srcDir)) {
+      continue;
+    }
+
+    walkTests(srcDir, `packages/${name}/src`, found);
+  }
+
+  return found;
+}
+
+/**
+ * Depth-first walk collecting `*.test.ts` below `dir`.
+ *
+ * @param {string} dir Absolute directory to read.
+ * @param {string} prefix Repo-relative posix prefix for the files found.
+ * @param {string[]} found Accumulator.
+ */
+function walkTests(dir, prefix, found) {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (entry.name.startsWith(".") || entry.name === "node_modules" || entry.name === "dist") {
+      continue;
+    }
+
+    const relative = `${prefix}/${entry.name}`;
+
+    if (entry.isDirectory()) {
+      walkTests(path.join(dir, entry.name), relative, found);
+      continue;
+    }
+
+    if (TEST_FILE_PATTERN.test(entry.name)) {
+      found.push(relative);
+    }
+  }
 }
 
 /**

@@ -172,6 +172,9 @@ export function waitForWsUrl(
         return;
       }
       settled = true;
+      // Before the diagnosis is built, so a half-written last line is part of it
+      // instead of "0 line(s) read".
+      absorbPending();
       cleanup();
       reject(new PortNotFoundError(lineCount, lastLine, reason, cause));
     }
@@ -205,6 +208,24 @@ export function waitForWsUrl(
         return;
       }
       feed(typeof chunk === "string" ? chunk : decoder.write(chunk));
+    }
+
+    /**
+     * Count the unterminated tail as a line for the diagnosis.
+     *
+     * A timeout or an early end usually means the engine wrote something that is
+     * not a `WebSocket:` line, and the last thing it wrote may well have no
+     * newline yet. Reporting "0 line(s) read; last line: <none>" while half a
+     * line is sitting in the buffer sends the reader looking in the wrong place.
+     */
+    function absorbPending(): void {
+      if (pending.length === 0) {
+        return;
+      }
+
+      lineCount += 1;
+      lastLine = pending.endsWith("\r") ? pending.slice(0, -1) : pending;
+      pending = "";
     }
 
     function onEnd(): void {

@@ -20,12 +20,9 @@
  */
 
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readdir, readFile, rmdir, unlink, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import http from "node:http";
-import { createRequire } from "node:module";
-import { tmpdir } from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -35,66 +32,34 @@ import { isEngineError, toEngineError } from "./errors";
 import { PortNotFoundError } from "./port-discovery";
 import { TOKEN_FILE_NAME } from "./token";
 import type { EngineError, EngineErrorCode, EngineSpawnSpec, EngineState } from "./types";
-
-/** Pinned engine artifact; gitignored. */
-const ENGINE_ENTRY = fileURLToPath(
-  new URL("../../../../_research/engine-0.6.0/package/haruyuki.js", import.meta.url),
-);
-
-const ENGINE_AVAILABLE = existsSync(ENGINE_ENTRY);
-
-/** Engine build string the pinned artifact reports (F-4). */
-const ENGINE_VERSION = "0.6.0";
-
-/** Loopback tooling for the WS server side; `ws` ships no declarations (see connection.ts). */
-type WsServer = {
-  on(event: "connection", listener: (socket: ServerSocket) => void): void;
-  close(callback?: (error?: Error) => void): void;
-};
-
-type ServerSocket = {
-  on(event: "message", listener: (data: Buffer) => void): void;
-  send(data: string): void;
-  close(code?: number, reason?: string): void;
-};
-
-const requireFromHere = createRequire(import.meta.url);
-const { WebSocketServer } = requireFromHere("ws") as {
-  WebSocketServer: new (options: { server: http.Server }) => WsServer;
-};
-
-const tempRoots: string[] = [];
-const engines: Engine[] = [];
-const httpServers: http.Server[] = [];
-const wsServers: WsServer[] = [];
+import {
+  ENGINE_AVAILABLE,
+  ENGINE_VERSION,
+  WATCHDOG_ENTRY,
+  fakeEngineSource,
+  fakeEngineSpec,
+  makeDir,
+  makeRoot,
+  readPid,
+  processAlive,
+  startTracking,
+  recordStates,
+  startHandshakeStub,
+  prepareRealEngine,
+  expectEngineFailure,
+  rejectionOf,
+  waitFor,
+  releaseFixtures,
+  listen,
+  closeServer,
+  delay,
+  environment,
+  httpServers,
+} from "./engine-test-support";
 
 afterEach(async () => {
-  for (const engine of engines.splice(0)) {
-    try {
-      await engine.stopGraceful(1_000);
-    } catch {
-      // A stop never rejects by contract; guard so cleanup continues anyway.
-    }
-    engine.kill();
-  }
-
-  for (const wsServer of wsServers.splice(0)) {
-    await new Promise<void>((resolve) => {
-      wsServer.close(() => resolve());
-    });
-  }
-
-  for (const server of httpServers.splice(0)) {
-    await new Promise<void>((resolve) => {
-      server.close(() => resolve());
-    });
-  }
-
-  for (const root of tempRoots.splice(0)) {
-    await removeTree(root);
-  }
+  await releaseFixtures();
 });
-
 describe("toEngineError", () => {
   it("forwards an EngineConnectionError without re-classifying it", () => {
     const mapped = toEngineError(new EngineConnectionError("AUTH_FAILED", "denied", "HTTP 401"));
@@ -309,6 +274,162 @@ describe("Engine.start", () => {
     await waitFor(() => !existsSync(tokenPath), "the token file removal after kill");
     await waitFor(() => !processAlive(pid), "the engine child to die after kill");
   });
+
+  it("kill() then stopGraceful is proof that the token file is gone", async () => {
+    const root = await makeRoot();
+    const tokenDir = await makeDir(root, "tokens");
+    const pidFile = path.join(root, "engine.pid");
+    const stub = await startHandshakeStub();
+    const engine = startTracking();
+
+    await engine.start({
+      spawnSpec: fakeEngineSpec(fakeEngineSource(stub.url, pidFile), root),
+      tokenDir,
+      portTimeoutMs: 5_000,
+      handshakeTimeoutMs: 2_000,
+    });
+
+    const tokenPath = path.join(tokenDir, TOKEN_FILE_NAME);
+    expect(existsSync(tokenPath)).toBe(true);
+
+    // kill() is synchronous and only *starts* the unlink, so the documented way
+    // to get proof of removal is a following stopGraceful. That promise is
+    // worthless if it resolves before the unlink it shares, hence no waitFor here.
+    engine.kill();
+    await engine.stopGraceful();
+
+    expect(existsSync(tokenPath)).toBe(false);
+    expect(engine.state).toBe("closed");
+  });
+
+  it("keeps a caller-initiated stop from being rewritten to failed", async () => {
+    const root = await makeRoot();
+    const tokenDir = await makeDir(root, "tokens");
+    const pidFile = path.join(root, "engine.pid");
+    // The stub accepts the upgrade and never answers the handshake, so `start`
+    // parks in `handshaking` long enough for the stop to win the race.
+    const stub = await startHandshakeStub({ answer: false });
+    const engine = startTracking();
+
+    const starting = engine
+      .start({
+        spawnSpec: fakeEngineSpec(fakeEngineSource(stub.url, pidFile), root),
+        tokenDir,
+        portTimeoutMs: 5_000,
+        handshakeTimeoutMs: 10_000,
+      })
+      .catch((error: unknown) => error);
+
+    await waitFor(() => engine.state === "handshaking", "the facade to reach handshaking");
+    await engine.stopGraceful(500);
+
+    const failure = await starting;
+
+    // The start did fail (the caller asked for it), but `closed` is what the
+    // caller asked the facade to be: `failed` is terminal and would block the
+    // next start for no reason.
+    expect(isEngineError(failure)).toBe(true);
+    expect(engine.state).toBe("closed");
+    expect(existsSync(path.join(tokenDir, TOKEN_FILE_NAME))).toBe(false);
+  });
+});
+
+describe("Engine.degradations", () => {
+  it("reports an untested protocol version but still reaches ready", async () => {
+    const root = await makeRoot();
+    const tokenDir = await makeDir(root, "tokens");
+    const pidFile = path.join(root, "engine.pid");
+    const stub = await startHandshakeStub({ protocolVersion: 2 });
+    const engine = startTracking();
+
+    // The rule is "warn, then connect anyway": the five frozen error codes
+    // have no slot for this, so it must not become a failure.
+    const info = await engine.start({
+      spawnSpec: fakeEngineSpec(fakeEngineSource(stub.url, pidFile), root),
+      tokenDir,
+      portTimeoutMs: 5_000,
+      handshakeTimeoutMs: 2_000,
+    });
+
+    expect(info.protocolVersion).toBe(2);
+    expect(engine.state).toBe("ready");
+
+    const protocol = engine.degradations.filter((entry) => entry.kind === "protocol-version");
+    expect(protocol).toHaveLength(1);
+    expect(protocol[0]?.detail).toContain("2");
+
+    await engine.stopGraceful(3_000);
+  });
+
+  it("stays silent about the watchdog when the injected script prints its marker", async () => {
+    const root = await makeRoot();
+    const tokenDir = await makeDir(root, "tokens");
+    const pidFile = path.join(root, "engine.pid");
+    const stub = await startHandshakeStub();
+    const engine = startTracking();
+
+    const info = await engine.start({
+      spawnSpec: {
+        ...fakeEngineSpec(fakeEngineSource(stub.url, pidFile), root),
+        env: environment({ NODE_OPTIONS: `--require "${WATCHDOG_ENTRY}"` }),
+      },
+      tokenDir,
+      portTimeoutMs: 10_000,
+      handshakeTimeoutMs: 2_000,
+    });
+
+    expect(info.engineVersion).toBe(ENGINE_VERSION);
+    expect(engine.degradations.filter((entry) => entry.kind === "watchdog")).toEqual([]);
+
+    await engine.stopGraceful(3_000);
+  });
+
+  it("reports a watchdog degradation when the preloaded script prints no marker", async () => {
+    const root = await makeRoot();
+    const tokenDir = await makeDir(root, "tokens");
+    const pidFile = path.join(root, "engine.pid");
+    const silent = path.join(root, "watchdog.cjs");
+    await writeFile(silent, "// preloaded, prints nothing: simulates a disabled marker\n");
+
+    const stub = await startHandshakeStub();
+    const engine = startTracking();
+
+    // R-3: the fuse disables `--require`, or the path is wrong. Orphan
+    // protection then rests on the parent, and the host has to know.
+    await engine.start({
+      spawnSpec: {
+        ...fakeEngineSpec(fakeEngineSource(stub.url, pidFile), root),
+        env: environment({ NODE_OPTIONS: `--require "${silent.split("\\").join("/")}"` }),
+      },
+      tokenDir,
+      portTimeoutMs: 10_000,
+      handshakeTimeoutMs: 2_000,
+    });
+
+    expect(engine.state).toBe("ready");
+    expect(engine.degradations.filter((entry) => entry.kind === "watchdog")).toHaveLength(1);
+
+    await engine.stopGraceful(3_000);
+  });
+
+  it("reports no degradation at all for a plain start", async () => {
+    const root = await makeRoot();
+    const tokenDir = await makeDir(root, "tokens");
+    const pidFile = path.join(root, "engine.pid");
+    const stub = await startHandshakeStub();
+    const engine = startTracking();
+
+    await engine.start({
+      spawnSpec: fakeEngineSpec(fakeEngineSource(stub.url, pidFile), root),
+      tokenDir,
+      portTimeoutMs: 5_000,
+      handshakeTimeoutMs: 2_000,
+    });
+
+    expect(engine.degradations).toEqual([]);
+
+    await engine.stopGraceful(3_000);
+  });
 });
 
 describe("Engine.start failure classification", () => {
@@ -433,34 +554,44 @@ describe("Engine.start failure classification", () => {
     expect(existsSync(path.join(tokenDir, TOKEN_FILE_NAME))).toBe(false);
   });
 
-  it("classifies a version mismatch as PROTOCOL_MISMATCH and names both versions", async () => {
+  it("reaches ready on a version mismatch and reports it as a degradation", async () => {
     const root = await makeRoot();
     const tokenDir = await makeDir(root, "tokens");
     const pidFile = path.join(root, "engine.pid");
     const stub = await startHandshakeStub();
     const engine = startTracking();
+    const errors: EngineError[] = [];
+    engine.onError((error) => errors.push(error));
 
-    const failure = await expectEngineFailure(
-      engine.start({
-        spawnSpec: fakeEngineSpec(fakeEngineSource(stub.url, pidFile), root),
-        tokenDir,
-        expectedEngineVersion: "9.9.9",
-        portTimeoutMs: 5_000,
-        handshakeTimeoutMs: 2_000,
-      }),
-      "PROTOCOL_MISMATCH",
-    );
+    // An untested build is a warning, not a veto, so the
+    // start must succeed and the mismatch must survive as an observable fact.
+    const info = await engine.start({
+      spawnSpec: fakeEngineSpec(fakeEngineSource(stub.url, pidFile), root),
+      tokenDir,
+      expectedEngineVersion: "9.9.9",
+      portTimeoutMs: 5_000,
+      handshakeTimeoutMs: 2_000,
+    });
 
-    expect(failure.detail).toContain("9.9.9");
-    expect(failure.detail).toContain(ENGINE_VERSION);
-    expect(engine.state).toBe("failed");
+    expect(info.engineVersion).toBe(ENGINE_VERSION);
+    expect(engine.state).toBe("ready");
+    expect(errors).toEqual([]);
 
+    const mismatch = engine.degradations.filter((entry) => entry.kind === "engine-version");
+    expect(mismatch).toHaveLength(1);
+    expect(mismatch[0]?.detail).toContain("9.9.9");
+    expect(mismatch[0]?.detail).toContain(ENGINE_VERSION);
+
+    // The engine is still fully usable: the token file and the child survive.
     const pid = await readPid(pidFile);
-    await waitFor(
-      () => !existsSync(path.join(tokenDir, TOKEN_FILE_NAME)),
-      "the token file removal after PROTOCOL_MISMATCH",
-    );
-    await waitFor(() => !processAlive(pid), "the engine child to exit after PROTOCOL_MISMATCH");
+    expect(existsSync(path.join(tokenDir, TOKEN_FILE_NAME))).toBe(true);
+    expect(processAlive(pid)).toBe(true);
+
+    await engine.stopGraceful(3_000);
+
+    expect(engine.state).toBe("closed");
+    expect(existsSync(path.join(tokenDir, TOKEN_FILE_NAME))).toBe(false);
+    await waitFor(() => !processAlive(pid), "the engine child to exit after the stop");
   });
 
   it("keeps failed terminal: a second start rejects with the previous code", async () => {
@@ -554,21 +685,32 @@ describe("Engine.attach", () => {
     expect(states).toEqual(["handshaking", "ready", "closing", "closed"]);
   });
 
-  it("classifies a version mismatch as PROTOCOL_MISMATCH", async () => {
+  it("keeps an untested version as a degradation instead of failing the facade", async () => {
     const stub = await startHandshakeStub();
     const engine = startTracking();
     const errors: EngineError[] = [];
     engine.onError((error) => errors.push(error));
 
-    const failure = await expectEngineFailure(
-      engine.attach({ url: stub.url, token: "external-token", expectedEngineVersion: "1.2.3" }),
-      "PROTOCOL_MISMATCH",
-    );
+    // A version mismatch is a warning, not a veto: the manual URL + token flow must stay
+    // usable with a build the GUI was never tested against, and `failed` is
+    // terminal, so turning this into a rejection would close that door for good.
+    const info = await engine.attach({
+      url: stub.url,
+      token: "external-token",
+      expectedEngineVersion: "1.2.3",
+    });
 
-    expect(failure.detail).toContain("1.2.3");
-    expect(engine.state).toBe("failed");
-    expect(engine.socketState).toBe("closed");
-    expect(errors).toHaveLength(1);
+    expect(info.engineVersion).toBe(ENGINE_VERSION);
+    expect(engine.state).toBe("ready");
+    expect(engine.socketState).toBe("open");
+    expect(errors).toEqual([]);
+
+    const mismatch = engine.degradations.filter((entry) => entry.kind === "engine-version");
+    expect(mismatch).toHaveLength(1);
+    expect(mismatch[0]?.detail).toContain("1.2.3");
+    expect(mismatch[0]?.detail).toContain(ENGINE_VERSION);
+
+    await engine.stopGraceful(500);
   });
 
   it("refuses a second attach after a failure, quoting the previous code", async () => {
@@ -635,364 +777,35 @@ describe("Engine.start against the real engine", () => {
   );
 
   it.skipIf(!ENGINE_AVAILABLE)(
-    "classifies a version mismatch against the real engine and cleans up",
+    "reaches ready on a real-engine version mismatch and reports the degradation",
     async () => {
       const { spawnSpec, tokenDir, pidFile } = await prepareRealEngine();
       const engine = startTracking();
 
-      const failure = await expectEngineFailure(
-        engine.start({
-          spawnSpec,
-          tokenDir,
-          expectedEngineVersion: "9.9.9",
-          portTimeoutMs: 15_000,
-          handshakeTimeoutMs: 5_000,
-        }),
-        "PROTOCOL_MISMATCH",
-      );
+      const info = await engine.start({
+        spawnSpec,
+        tokenDir,
+        expectedEngineVersion: "9.9.9",
+        portTimeoutMs: 15_000,
+        handshakeTimeoutMs: 5_000,
+      });
 
-      expect(failure.detail).toContain("9.9.9");
-      expect(failure.detail).toContain(ENGINE_VERSION);
-      expect(engine.state).toBe("failed");
+      expect(info.engineVersion).toBe(ENGINE_VERSION);
+      expect(engine.state).toBe("ready");
+
+      const mismatch = engine.degradations.filter((entry) => entry.kind === "engine-version");
+      expect(mismatch).toHaveLength(1);
+      expect(mismatch[0]?.detail).toContain("9.9.9");
+      expect(mismatch[0]?.detail).toContain(ENGINE_VERSION);
 
       const pid = await readPid(pidFile);
+      expect(processAlive(pid)).toBe(true);
+
+      await engine.stopGraceful(3_000);
+
+      expect(engine.state).toBe("closed");
       expect(existsSync(path.join(tokenDir, TOKEN_FILE_NAME))).toBe(false);
-      await waitFor(() => !processAlive(pid), "the real engine process to exit after a failure");
+      await waitFor(() => !processAlive(pid), "the real engine process to exit after the stop");
     },
   );
 });
-
-// --- helpers ---------------------------------------------------------------
-
-/**
- * Test-only launcher: rewrites `process.argv` to the measured F-6 command line
- * and loads the bundle in this same process, so the facade's child IS the engine
- * (one pid, no wrapper to orphan). `spawn.ts` appends `bundlePath` after
- * `argvPrefix`; see the file comment.
- */
-const LAUNCHER_SOURCE = `import { writeFileSync } from "node:fs";
-import { pathToFileURL } from "node:url";
-const enginePath = process.argv[2];
-const pidFile = process.argv[3];
-const tokenPath = process.argv[4];
-writeFileSync(pidFile, String(process.pid));
-process.argv = [process.execPath, enginePath, "server", "--listen", "ws://127.0.0.1:0", "--ws-auth", "capability-token", "--ws-token-file", tokenPath];
-await import(pathToFileURL(enginePath).href);
-`;
-
-/** Spawn spec for the launcher: `node launcher.mjs <engine> <pidFile> <tokenPath> ...`. */
-function realEngineSpec(options: {
-  launcher: string;
-  pidFile: string;
-  home: string;
-  work: string;
-  root: string;
-}): EngineSpawnSpec {
-  return {
-    exePath: process.execPath,
-    env: environment({
-      HARUYUKI_HOME: options.home,
-      USERPROFILE: options.home,
-      HOME: options.home,
-    }),
-    // `node <launcher> <engine entry> <pid file>`: bundlePath first, then the
-    // engine arguments, matching the F-6 order.
-    argvPrefix: [ENGINE_ENTRY, options.pidFile],
-    bundlePath: options.launcher,
-    cwd: options.work,
-    stdio: "pipe",
-    windowsHide: true,
-    detached: false,
-  };
-}
-
-/** Isolated home / work / launcher for one real-engine case. */
-async function prepareRealEngine(): Promise<{
-  spawnSpec: EngineSpawnSpec;
-  tokenDir: string;
-  pidFile: string;
-}> {
-  const root = await makeRoot();
-  const tokenDir = await makeDir(root, "tokens");
-  const home = await makeDir(root, "home");
-  const work = await makeDir(root, "work");
-  const launcher = path.join(root, "launcher.mjs");
-  const pidFile = path.join(root, "engine.pid");
-  await writeFile(launcher, LAUNCHER_SOURCE, "utf8");
-
-  return { tokenDir, pidFile, spawnSpec: realEngineSpec({ launcher, pidFile, home, work, root }) };
-}
-
-/**
- * Spawn spec for a `node -e` fake engine: it prints one `WebSocket:` line and
- * stays alive, so discovery, connection and cleanup are real while the HTTP/WS
- * behaviour is supplied in-process.
- */
-function fakeEngineSpec(source: string, root: string): EngineSpawnSpec {
-  return {
-    exePath: process.execPath,
-    env: environment(),
-    // `node -e <source>`: bundlePath is the interpreter flag, the source is the
-    // first engine argument; `start` appends the token path after it.
-    argvPrefix: [source],
-    bundlePath: "-e",
-    cwd: root,
-    stdio: "pipe",
-    windowsHide: true,
-    detached: false,
-  };
-}
-
-/** Inline fake engine: record the pid, print the endpoint, stay alive. */
-function fakeEngineSource(url: string, pidFile: string): string {
-  const lines = [
-    `require("node:fs").writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));`,
-    `process.stdout.write(${JSON.stringify(`WebSocket: ${url}\n`)});`,
-    "setInterval(() => {}, 1000);",
-  ];
-  return lines.join("\n");
-}
-
-type HandshakeStub = {
-  url: string;
-  pushFrame: (frame: unknown) => void;
-};
-
-/** In-process engine stub: answers `app_server_info` (F-15) and keeps the client socket. */
-async function startHandshakeStub(): Promise<HandshakeStub> {
-  const server = http.createServer((_request, response) => {
-    response.writeHead(426, { "content-type": "text/plain" });
-    response.end("upgrade required");
-  });
-  const port = await listen(server);
-  httpServers.push(server);
-
-  const wsServer = new WebSocketServer({ server });
-  wsServers.push(wsServer);
-  const clients: ServerSocket[] = [];
-
-  wsServer.on("connection", (socket) => {
-    clients.push(socket);
-    socket.on("message", (data: Buffer) => {
-      const frame = parseFrame(data);
-
-      if (frame === null || frame.type !== "app_server_info") {
-        return;
-      }
-
-      socket.send(
-        JSON.stringify({
-          type: "app_server_info_response",
-          request_id: frame.request_id,
-          success: true,
-          letta_code_version: ENGINE_VERSION,
-          protocol_version: 1,
-          backend: "local",
-          capabilities: {},
-        }),
-      );
-    });
-  });
-
-  const url = `ws://127.0.0.1:${port}/ws`;
-  const pushFrame = (frame: unknown): void => {
-    for (const socket of clients) socket.send(JSON.stringify(frame));
-  };
-  return { url, pushFrame };
-}
-
-function parseFrame(data: Buffer): Record<string, unknown> | null {
-  try {
-    const value: unknown = JSON.parse(data.toString("utf8"));
-
-    if (typeof value !== "object" || value === null || Array.isArray(value)) {
-      return null;
-    }
-
-    return value as Record<string, unknown>;
-  } catch {
-    return null;
-  }
-}
-
-/** A complete environment for a spawned child; never inherits a preload. */
-function environment(overrides: Record<string, string> = {}): Record<string, string> {
-  const env: Record<string, string> = {};
-  for (const [key, value] of Object.entries(process.env)) {
-    if (value !== undefined) {
-      env[key] = value;
-    }
-  }
-  delete env.NODE_OPTIONS;
-  return { ...env, ...overrides };
-}
-
-/** Create a tracked temp root under the system temp directory. */
-async function makeRoot(): Promise<string> {
-  const root = await mkdtemp(path.join(tmpdir(), "haruyuki-engine-"));
-  tempRoots.push(root);
-  return root;
-}
-
-/** Create one tracked subdirectory under a temp root. */
-async function makeDir(root: string, name: string): Promise<string> {
-  const dir = path.join(root, name);
-  await mkdir(dir, { recursive: true });
-  return dir;
-}
-
-/** Register an engine so `afterEach` stops it even when a case fails early. */
-function startTracking(): Engine {
-  const engine = new Engine();
-  engines.push(engine);
-  return engine;
-}
-
-/** Record every transition of one engine. */
-function recordStates(engine: Engine): EngineState[] {
-  const states: EngineState[] = [];
-  engine.onState((state) => states.push(state));
-  return states;
-}
-
-/** Read the pid the fake engine recorded. */
-async function readPid(pidFile: string): Promise<number> {
-  const text = await readFile(pidFile, "utf8");
-  const pid = Number.parseInt(text, 10);
-  if (!Number.isInteger(pid) || pid <= 0) {
-    throw new Error(`the fake engine wrote no usable pid: ${JSON.stringify(text)}`);
-  }
-  return pid;
-}
-
-/** True when a process with that pid is still alive. */
-function processAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/** Listen on a system-assigned loopback port and return it. */
-async function listen(server: http.Server): Promise<number> {
-  await new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => {
-      server.off("error", reject);
-      resolve();
-    });
-  });
-
-  const address = server.address();
-
-  if (address === null || typeof address === "string") {
-    throw new Error("expected the test server to bind a TCP port");
-  }
-
-  return address.port;
-}
-
-/** Close a server and wait for the handle to be released. */
-async function closeServer(server: http.Server): Promise<void> {
-  await new Promise<void>((resolve) => {
-    server.close(() => resolve());
-  });
-}
-
-/** Resolve to the rejection reason instead of throwing. */
-async function rejectionOf(promise: Promise<unknown>): Promise<unknown> {
-  try {
-    await promise;
-    return null;
-  } catch (error) {
-    return error;
-  }
-}
-
-/** Assert that a facade call rejected with a classified `EngineError` of `code`. */
-async function expectEngineFailure(
-  promise: Promise<unknown>,
-  code: EngineErrorCode,
-): Promise<EngineError> {
-  const error = await rejectionOf(promise);
-  expect(isEngineError(error)).toBe(true);
-
-  if (!isEngineError(error)) {
-    throw new Error(`expected a classified EngineError, got ${String(error)}`);
-  }
-
-  expect(error.code).toBe(code);
-  expect(error.detail.length).toBeGreaterThan(0);
-  // The rejection value is still an Error, so a stack survives the throw.
-  expect(error).toBeInstanceOf(Error);
-  return error;
-}
-
-/** Poll a predicate until it holds or the deadline passes. */
-async function waitFor(predicate: () => boolean, label: string, timeoutMs = 10_000): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-
-  for (;;) {
-    if (predicate()) {
-      return;
-    }
-
-    if (Date.now() >= deadline) {
-      throw new Error(`timed out after ${timeoutMs}ms waiting for ${label}`);
-    }
-
-    await delay(25);
-  }
-}
-
-/** Promise-based sleep, used for polling and for timestamp gaps. */
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
-}
-
-/**
- * Delete a temp tree point by point: `unlink` every file, then `rmdir` every
- * directory bottom-up. Recursive delete helpers are forbidden, and a just-stopped
- * engine can hold a handle for a moment, so the walk is retried a few times.
- */
-async function removeTree(root: string): Promise<void> {
-  if (!existsSync(root)) {
-    return;
-  }
-
-  let lastError: unknown;
-
-  for (let attempt = 0; attempt < 10; attempt += 1) {
-    try {
-      await removeTreeOnce(root);
-      return;
-    } catch (error) {
-      lastError = error;
-      await delay(50);
-    }
-  }
-
-  throw lastError;
-}
-
-/** One point-by-point delete pass. */
-async function removeTreeOnce(directory: string): Promise<void> {
-  const entries = await readdir(directory, { withFileTypes: true });
-
-  for (const entry of entries) {
-    const child = path.join(directory, entry.name);
-
-    if (entry.isDirectory()) {
-      await removeTreeOnce(child);
-      continue;
-    }
-
-    await unlink(child);
-  }
-
-  await rmdir(directory);
-}

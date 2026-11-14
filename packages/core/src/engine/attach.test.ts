@@ -127,6 +127,35 @@ function expectConnectionError(error: unknown, code: EngineErrorCode): EngineCon
   return connectionError;
 }
 
+/** `ws` readyState for a closed socket. */
+const SOCKET_CLOSED = 3;
+
+/**
+ * Assert the probe socket the stub accepted has been released.
+ *
+ * `attachToExternalServer` is a probe: it must not hand back a live handle, so
+ * the only observable proof is on the server side. Without this the whole
+ * `finally { disposeSocket(socket) }` could be deleted and every case would stay
+ * green, which would leave a socket leaked per manual attach.
+ */
+async function expectProbeSocketsClosed(): Promise<void> {
+  expect(sockets.length).toBeGreaterThan(0);
+
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (sockets.every((socket) => socket.readyState === SOCKET_CLOSED)) {
+      return;
+    }
+
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 10);
+    });
+  }
+
+  throw new Error(
+    `the probe socket was left open: ${sockets.map((socket) => socket.readyState).join(", ")}`,
+  );
+}
+
 function parseJsonObject(data: Buffer): Record<string, unknown> | null {
   try {
     const value: unknown = JSON.parse(data.toString("utf8"));
@@ -249,6 +278,9 @@ describe("attachToExternalServer", () => {
     expect(result.versionMismatch).toBeNull();
     // A matching version produces no mismatch hint at all.
     expect(describeAttachMismatch(result)).toBe("");
+
+    // Probe semantics: the socket is closed before the promise settles.
+    await expectProbeSocketsClosed();
   });
 
   it("reports a version mismatch without rejecting and still returns the info", async () => {

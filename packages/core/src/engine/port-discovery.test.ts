@@ -125,6 +125,21 @@ describe("waitForWsUrl", () => {
     expectPortNotFound(error);
   });
 
+  it("counts an unterminated last line in the diagnosis", async () => {
+    const stream = new PassThrough();
+    // No newline: the engine was still writing when the budget ran out, which is
+    // exactly the case where "0 line(s) read" would send the reader hunting for
+    // the wrong thing.
+    stream.write("Listening on ws://127.0.0.1:6387");
+
+    const error = expectPortNotFound(await rejectionOf(waitForWsUrl(stream, 50)));
+    stream.destroy();
+
+    expect(error.lineCount).toBe(1);
+    expect(error.detail).toContain("1 line(s)");
+    expect(error.detail).toContain("Listening on ws://127.0.0.1:6387");
+  });
+
   it("reports how many lines it saw and the last one on timeout", async () => {
     const stream = new PassThrough();
     stream.write(`${LISTENING_LINE}\n`);

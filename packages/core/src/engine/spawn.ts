@@ -9,19 +9,31 @@
  *
  * Platform contract for `stopGraceful`:
  *
- * - POSIX: SIGTERM, up to 2 s; then SIGKILL, up to 1 s.
+ * - POSIX: SIGTERM, up to 2 s; then SIGKILL, up to 1 s. When the child was
+ *   spawned `detached` it leads its own process group, so both signals go to the
+ *   GROUP (`kill(-pid)`), which is what the spec's "POSIX 建进程组，供看门狗与
+ *   杀树用" (docs/13 section 4.1/4.2) is for: a `git` the engine started must not
+ *   outlive it.
  * - Windows: `taskkill /PID <pid> /T` without `/F` (tree-wide and graceful),
- *   up to 1.5 s; then `child.kill()`, which is TerminateProcess, up to 1 s.
+ *   up to 1.5 s; then `taskkill /PID <pid> /T /F` (tree-wide and forced), up to
+ *   1 s; then `child.kill()`, which is TerminateProcess on the direct child only,
+ *   as the last resort.
  *
  * On Windows a console child cannot be closed by taskkill without `/F`
  * (measured on Windows 10.0.19045 / Node 24: exit code 128, "can only be
- * terminated forcefully"), so the hard-kill fallback is the normal path there.
- * The attempt is still made first: GUI-subsystem children honour it, and the
- * watchdog document treats force-kill as the last resort.
+ * terminated forcefully"), so the forced tree kill is the normal path there. The
+ * graceful attempt is still made first: GUI-subsystem children honour it, and
+ * the watchdog document treats force-kill as the last resort.
  *
  * `timeoutMs` is a total budget, not a per-stage one: every stage is capped by
  * whatever is left of the budget, so a caller asking for 500 ms never waits the
  * fixed 3 s. A budget of 0 signals both stages without waiting in between.
+ *
+ * Both output pipes are drained from the moment the child exists (see
+ * `drainStream`). The engine writes `WATCHDOG_OK=<pid>` to stderr before it
+ * starts listening, and it calls `console.error` in hundreds of places; a pipe
+ * nobody reads fills up (64 KiB on Windows) and then blocks the engine's event
+ * loop forever, which would look like "ready but silently dead".
  */
 
 import { execFile, spawn } from "node:child_process";
@@ -41,6 +53,9 @@ const POSIX_KILL_GRACE_MS = 1000;
 /** Windows: tree-wide taskkill grace before TerminateProcess. */
 const WINDOWS_TASKKILL_GRACE_MS = 1500;
 
+/** Windows: forced tree-kill grace before the direct-child TerminateProcess. */
+const WINDOWS_FORCE_TASKKILL_GRACE_MS = 1000;
+
 /** Windows: TerminateProcess grace before giving up on the exit event. */
 const WINDOWS_KILL_GRACE_MS = 1000;
 
@@ -51,6 +66,20 @@ type ProcessExitInfo = {
 
 type ProcessExitListener = (info: ProcessExitInfo) => void;
 type ProcessErrorListener = (error: Error) => void;
+type ProcessStderrListener = (chunk: string) => void;
+
+/**
+ * Per-child spawn facts the stop path needs but `ChildProcess` does not carry.
+ *
+ * `detached` is the one that matters: on POSIX a detached child leads its own
+ * process group, so the stop path must signal `-pid` to take the engine's own
+ * descendants with it. Signalling `-pid` for a non-detached child would hit OUR
+ * group instead, which is why this is remembered per child rather than guessed.
+ */
+const spawnFacts = new WeakMap<ChildProcess, { detached: boolean }>();
+
+/** stderr subscribers per child; the baseline drain forwards to all of them. */
+const stderrListeners = new WeakMap<ChildProcess, Set<ProcessStderrListener>>();
 
 /**
  * In-flight graceful stops keyed by child. Two concurrent callers share one
@@ -81,6 +110,8 @@ export function startEngineProcess(spec: EngineSpawnSpec): ChildProcess {
     detached: spec.detached,
   });
 
+  spawnFacts.set(child, { detached: spec.detached });
+
   // A failed spawn (ENOENT, EACCES, ...) emits `error`; with no listener Node
   // rethrows it as an uncaught exception and takes the host down. This sink is
   // the baseline that keeps the process alive. It does not consume the event:
@@ -88,7 +119,59 @@ export function startEngineProcess(spec: EngineSpawnSpec): ChildProcess {
   // still receives the same error object.
   child.on("error", () => {});
 
+  drainStream(child.stdout);
+  drainStream(child.stderr, child);
+
   return child;
+}
+
+/**
+ * Keep one output pipe flowing so the child can never block on a full pipe.
+ *
+ * The listener exists from the moment the child exists, before any subscriber,
+ * because the engine may write at once: the watchdog marker on stderr arrives
+ * before the engine even listens. `waitForWsUrl` attaches its own `data`
+ * listener to the same stream, and EventEmitter delivers every chunk to every
+ * listener, so draining here cannot starve it.
+ *
+ * `onProcessStderr` subscribers are forwarded from the same baseline listener,
+ * so stderr has exactly one reader and a late subscriber still sees every chunk
+ * that arrives after it subscribes.
+ *
+ * The `error` sink is separate from the `ChildProcess` sink: a stream-level
+ * fault (EPIPE when the child dies mid-write, EIO) would otherwise be an
+ * uncaught exception that takes the host down.
+ */
+function drainStream(stream: NodeJS.ReadableStream | null, child?: ChildProcess): void {
+  if (stream === null) {
+    return;
+  }
+
+  stream.on("error", () => {
+    // The child is gone or the pipe broke; the exit event is the real signal.
+  });
+
+  stream.on("data", (chunk: unknown) => {
+    if (child === undefined) {
+      return;
+    }
+
+    const listeners = stderrListeners.get(child);
+
+    if (listeners === undefined || listeners.size === 0) {
+      return;
+    }
+
+    const text = typeof chunk === "string" ? chunk : String(chunk);
+
+    for (const listener of [...listeners]) {
+      try {
+        listener(text);
+      } catch {
+        // A subscriber's exception must not abort the drain of the pipe.
+      }
+    }
+  });
 }
 
 /**
@@ -126,9 +209,12 @@ export function stopGraceful(
 /**
  * Hard-kill the child without any graceful stage.
  *
- * Windows has no signals, so `child.kill()` is TerminateProcess. POSIX asks for
- * SIGKILL explicitly because the default SIGTERM is not a hard kill there. Safe
- * to call on an already exited child, and it never throws.
+ * Windows has no signals, so the tree is forced through `taskkill /T /F`
+ * (fire-and-forget, because this path must not wait) and `child.kill()` -
+ * TerminateProcess - follows as the direct-child guarantee. POSIX asks for
+ * SIGKILL explicitly because the default SIGTERM is not a hard kill there, and a
+ * detached child is killed as a process group so its descendants go too. Safe to
+ * call on an already exited child, and it never throws.
  */
 export function killProcess(child: ChildProcess): void {
   if (hasExited(child)) {
@@ -137,9 +223,10 @@ export function killProcess(child: ChildProcess): void {
 
   try {
     if (process.platform === "win32") {
+      requestTaskkill(child, true);
       child.kill();
     } else {
-      child.kill("SIGKILL");
+      signal(child, "SIGKILL");
     }
   } catch {
     // The child exited between the state check and the signal; nothing to do.
@@ -184,6 +271,31 @@ export function onProcessError(child: ChildProcess, cb: ProcessErrorListener): (
 }
 
 /**
+ * Subscribe to the child's stderr as text chunks. Returns an unsubscribe
+ * function.
+ *
+ * stderr is where the engine writes diagnostics and where the injected watchdog
+ * writes its `WATCHDOG_OK=<pid>` self-check marker, so the
+ * facade needs a way to see it without owning the pipe. The baseline drain
+ * installed by `startEngineProcess` stays, so removing the last subscriber never
+ * re-arms the "nobody reads stderr" blocking problem.
+ */
+export function onProcessStderr(child: ChildProcess, cb: ProcessStderrListener): () => void {
+  let listeners = stderrListeners.get(child);
+
+  if (listeners === undefined) {
+    listeners = new Set();
+    stderrListeners.set(child, listeners);
+  }
+
+  listeners.add(cb);
+
+  return () => {
+    listeners?.delete(cb);
+  };
+}
+
+/**
  * One graceful-stop sequence. Never rejects: each platform step degrades into
  * the next one, and the final result is always "resolved".
  */
@@ -191,9 +303,18 @@ async function stopGracefulOnce(child: ChildProcess, budgetMs: number): Promise<
   const deadline = Date.now() + budgetMs;
 
   if (process.platform === "win32") {
-    requestTaskkill(child);
+    requestTaskkill(child, false);
 
     if (await waitForExit(child, stageTimeout(deadline, WINDOWS_TASKKILL_GRACE_MS))) {
+      return;
+    }
+
+    // Forced, still tree-wide: the parent-side fallback. `child.kill()` alone is
+    // section 3.4). `child.kill()` alone is TerminateProcess on the direct child
+    // and would leave whatever the engine started behind.
+    requestTaskkill(child, true);
+
+    if (await waitForExit(child, stageTimeout(deadline, WINDOWS_FORCE_TASKKILL_GRACE_MS))) {
       return;
     }
 
@@ -213,29 +334,27 @@ async function stopGracefulOnce(child: ChildProcess, budgetMs: number): Promise<
 }
 
 /**
- * Ask Windows to close the child and its process tree without `/F`.
+ * Ask Windows to close the child, optionally forcing the whole tree.
  *
- * Failure is expected for console children (see the module comment) and is
- * swallowed on purpose: the caller falls through to the hard kill. The
- * execFile is fire-and-forget, but bounded by its own timeout so a wedged
- * taskkill cannot outlive the stop.
+ * Without `/F` failure is expected for console children (see the module comment)
+ * and is swallowed on purpose: the caller falls through to the forced stage.
+ * With `/F` this is the documented tree-wide fallback, so it also covers the
+ * descendants the engine started. The execFile is fire-and-forget, but bounded
+ * by its own timeout so a wedged taskkill cannot outlive the stop.
  */
-function requestTaskkill(child: ChildProcess): void {
+function requestTaskkill(child: ChildProcess, force: boolean): void {
   const pid = child.pid;
 
   if (pid === undefined || hasExited(child)) {
     return;
   }
 
+  const args = force ? ["/PID", String(pid), "/T", "/F"] : ["/PID", String(pid), "/T"];
+
   try {
-    execFile(
-      "taskkill",
-      ["/PID", String(pid), "/T"],
-      { windowsHide: true, timeout: WINDOWS_TASKKILL_GRACE_MS },
-      () => {
-        // Non-zero exit or spawn failure is the normal downgrade path.
-      },
-    );
+    execFile("taskkill", args, { windowsHide: true, timeout: WINDOWS_TASKKILL_GRACE_MS }, () => {
+      // Non-zero exit or spawn failure is the normal downgrade path.
+    });
   } catch {
     // execFile itself failed; the caller's hard kill is the fallback.
   }
@@ -243,10 +362,28 @@ function requestTaskkill(child: ChildProcess): void {
 
 /**
  * Send one signal, tolerating the child having exited in the meantime.
+ *
+ * A detached child leads its own process group, so the signal goes to `-pid` to
+ * take the engine's descendants with it. Signalling the
+ * group of a non-detached child would hit our own process group, so the fallback
+ * is the plain single-process signal.
  */
 function signal(child: ChildProcess, name: NodeJS.Signals): void {
   if (hasExited(child)) {
     return;
+  }
+
+  const pid = child.pid;
+  const detached = spawnFacts.get(child)?.detached === true;
+
+  if (detached && pid !== undefined) {
+    try {
+      process.kill(-pid, name);
+      return;
+    } catch {
+      // The group is already gone (ESRCH) or the platform refused; fall through
+      // to the direct signal so the child still gets a chance to stop.
+    }
   }
 
   try {

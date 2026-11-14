@@ -8,8 +8,10 @@
  *
  * Rules this file exists to enforce:
  *
- * - `ready` means "socket open AND app_server_info answered AND the version
- *   matched". A socket that merely opened is never ready (section 8, rule 2).
+ * - `ready` means "socket open AND app_server_info answered". A socket that
+ *   merely opened is never ready (section 8, rule 2). An untested engine build or
+ *   NOT gate `ready`: an unrecognised build is a warning, so it lands in
+ *   warning, so it lands in `degradations` instead (see `./degradations`).
  * - `failed` is terminal. A failed engine refuses a second `start` instead of
  *   reconnecting; reconnection belongs to B3 (section 8, rule 5).
  * - Token CONTENT never enters argv (rule 1). `start` writes the token file and
@@ -17,6 +19,9 @@
  *   the `--ws-token-file` option the host port already put there.
  * - Every transition writes the internal field first and only then notifies the
  *   subscribers, so a callback that reads `engine.state` observes the new value.
+ * - The facade reports what it cannot fix. A degraded token ACL, a missing
+ *   watchdog marker and an untested build/protocol are collected in
+ *   `degradations`; none of them turns a usable engine into a failure.
  *
  * Process start goes through `startEngineProcess` (`spawn.ts`). How the child
  * argv is composed is that module's contract: `[spec.bundlePath,
@@ -24,16 +29,26 @@
  * and the engine options in `argvPrefix`, which is the F-6 shape
  * `node haruyuki.js server ...`.
  *
- * `attach` is implemented inline on purpose (decision D-10): `attach.ts` 
- * is a sibling package written in the same wave, so this file must not import
- * it. W-13 replaces the inline body with a delegation to
- * `attachToExternalServer`.
+ * `attach` is implemented inline on purpose (decisions D-10 and D-17): `attach.ts`
+ *  was written in the same wave, and its `attachToExternalServer` is a
+ * PROBE - it closes the socket after the handshake - while the facade has to hand
+ * a live socket back. The two therefore stay separate, and this file never
+ * imports `attach.ts`.
  */
 
 import type { ChildProcess } from "node:child_process";
 
 import { connectEngine } from "./connection";
 import type { EngineSocket } from "./connection";
+import {
+  expectsWatchdog,
+  MarkerWatch,
+  tokenAclDegradation,
+  versionDegradations,
+  watchdogDegradation,
+  WATCHDOG_MARKER,
+  WATCHDOG_MARKER_GRACE_MS,
+} from "./degradations";
 import { toEngineError } from "./errors";
 import { requestAppServerInfo } from "./handshake";
 import { waitForWsUrl } from "./port-discovery";
@@ -41,13 +56,24 @@ import {
   killProcess,
   onProcessError,
   onProcessExit,
+  onProcessStderr,
   startEngineProcess,
   stopGraceful as stopChildGracefully,
 } from "./spawn";
+import {
+  assertSpawnSpec,
+  codeOf,
+  EngineStartError,
+  FaultSignal,
+  messageOf,
+  normalizeTimeout,
+  raceWithFault,
+} from "./start-internals";
 import { generateToken, removeTokenFile, writeTokenFile } from "./token";
 import type { TokenFile } from "./token";
 import type {
   AppServerInfo,
+  EngineDegradation,
   EngineError,
   EngineErrorCode,
   EngineSpawnSpec,
@@ -62,18 +88,6 @@ const DEFAULT_HANDSHAKE_TIMEOUT_MS = 5_000;
 
 /** Graceful-stop budget when the caller does not pass one (section 3.3 (c)). */
 const DEFAULT_STOP_TIMEOUT_MS = 5_000;
-
-/** The eight fields of the frozen spawn spec (section 3.3 (b)), in data order. */
-const SPAWN_SPEC_FIELDS = [
-  "exePath",
-  "env",
-  "argvPrefix",
-  "bundlePath",
-  "cwd",
-  "stdio",
-  "windowsHide",
-  "detached",
-] as const;
 
 /** Socket lifecycle exposed as `Engine.socketState` (section 3.3 (c)). */
 export type EngineSocketState = "idle" | "connecting" | "open" | "closed";
@@ -100,83 +114,6 @@ export type EngineAttachOptions = {
   expectedEngineVersion?: string;
 };
 
-/** One classified fault, either awaited or raised by a child-process callback. */
-type StartFault = {
-  code: EngineErrorCode;
-  detail: string;
-  wireHint?: string;
-};
-
-/**
- * One classified failure, thrown as the facade's rejection value.
- *
- * It is an `Error` (so Node and a debugger keep a stack) that also satisfies the
- * frozen `EngineError` shape: `code`, `detail` and an optional `wireHint`.
- * `isEngineError` accepts it unchanged, so `toEngineError(thrown)` round-trips
- * without a second classification pass.
- */
-class EngineStartError extends Error {
-  readonly code: EngineErrorCode;
-
-  readonly detail: string;
-
-  readonly wireHint?: string;
-
-  constructor(code: EngineErrorCode, detail: string, wireHint?: string) {
-    super(detail);
-    this.name = "EngineStartError";
-    this.code = code;
-    this.detail = detail;
-    if (wireHint !== undefined) {
-      this.wireHint = wireHint;
-    }
-  }
-}
-
-/**
- * A fault signal that can end an awaited start step early.
- *
- * A child can die between two awaited steps (or while one is pending), and a
- * dead process never produces a WebSocket URL or a handshake answer; without
- * this signal every such failure would wait out the full timeout and be
- * classified as a timeout instead of as the spawn failure it is. The promise is
- * single-shot and always carries a handled rejection, so a fault raised after
- * the start path finished cannot surface as an unhandled rejection.
- */
-class FaultSignal {
-  readonly promise: Promise<never>;
-
-  // Assigned by the promise executor below, which TypeScript cannot prove.
-  private reject!: (error: EngineStartError) => void;
-
-  private settled = false;
-
-  private failure: EngineStartError | null = null;
-
-  constructor() {
-    this.promise = new Promise<never>((_resolve, reject) => {
-      this.reject = reject;
-    });
-    this.promise.catch(() => undefined);
-  }
-
-  /** The classified fault, or `null` while the child is healthy. */
-  get raised(): EngineStartError | null {
-    return this.failure;
-  }
-
-  /** Raise the fault once; later calls are ignored because the first wins. */
-  fail(error: EngineStartError): void {
-    if (this.settled) {
-      return;
-    }
-
-    this.settled = true;
-    this.failure = error;
-    this.reject(error);
-  }
-}
-
 /**
  * The one engine facade.
  *
@@ -201,6 +138,10 @@ export class Engine {
   private tokenRemoval: Promise<void> | null = null;
 
   private lastFailureCode: EngineErrorCode | null = null;
+
+  private degradationList: EngineDegradation[] = [];
+
+  private watchdogWatch: MarkerWatch | null = null;
 
   private stopInFlight: Promise<void> | null = null;
 
@@ -237,6 +178,22 @@ export class Engine {
   }
 
   /**
+   * Safety and compatibility checks that did not hold, in the order they were
+   * discovered; empty when everything held.
+   *
+   * These are warnings by decision, never failures: docs/13 V-7 and B1-Q09 keep
+   * the engine usable with an untested build, R-5 keeps it usable with a degraded
+   * ACL, and R-3 keeps it usable without a working watchdog. What the host must
+   * not do is lose the fact silently, so every one of them lands here.
+   *
+   * Read it after `start` / `attach` resolves; a failed start reports the fault
+   * through `onError` instead.
+   */
+  get degradations(): readonly EngineDegradation[] {
+    return [...this.degradationList];
+  }
+
+  /**
    * Spawn one engine and drive it to `ready`.
    *
    * Order:
@@ -264,10 +221,12 @@ export class Engine {
       const token = generateToken();
       const tokenFile = await this.writeToken(options.tokenDir, token);
       this.tokenFilePath = tokenFile.path;
+      this.noteTokenAcl(tokenFile);
 
       const child = this.spawnEngine(options.spawnSpec, tokenFile.path);
       this.child = child;
       this.watchChild(child, fault);
+      this.watchdogWatch = this.watchWatchdog(child, options.spawnSpec);
 
       if (child.stdout === null) {
         throw new EngineStartError(
@@ -284,6 +243,8 @@ export class Engine {
         fault.promise,
       );
 
+      await this.settleWatchdog();
+
       this.transition("handshaking");
 
       const socket = await this.openSocket(url, token, fault);
@@ -295,7 +256,7 @@ export class Engine {
         fault.promise,
       );
 
-      assertExpectedVersion(info, options.expectedEngineVersion);
+      this.noteVersionMismatches(info, options.expectedEngineVersion);
 
       // A child that died between the handshake answer and this line would
       // otherwise be promoted to `ready`; the fault is checked once more here.
@@ -313,12 +274,12 @@ export class Engine {
   }
 
   /**
-   * Attach to an engine someone else started: connect, handshake, check the
-   * version. No process is spawned and no token file is written or deleted,
-   * because both belong to the external engine's owner.
+   * Attach to an engine someone else started: connect, handshake, report an
+   * untested version. No process is spawned and no token file is written or
+   * deleted, because both belong to the external engine's owner.
    *
-   * Inline by decision D-10 (see the file comment); W-13 replaces this body with
-   * a delegation to `attachToExternalServer`.
+   * Inline on purpose (see the file comment): `attach.ts` is a probe
+   * that closes its socket, while this entry has to keep one open.
    */
   async attach(options: EngineAttachOptions): Promise<AppServerInfo> {
     this.assertCanAttach();
@@ -335,7 +296,11 @@ export class Engine {
       const socket = await this.openSocket(options.url, options.token, fault);
       const info = await requestAppServerInfo(socket, DEFAULT_HANDSHAKE_TIMEOUT_MS);
 
-      assertExpectedVersion(info, options.expectedEngineVersion);
+      // A different build is a warning, not a veto: an untested combination keeps
+      // manual URL + token flow usable with an untested combination, and the
+      // mismatch is reported through `degradations` instead of ending the facade
+      // in the terminal `failed` state.
+      this.noteVersionMismatches(info, options.expectedEngineVersion);
 
       this.currentAppServerInfo = info;
       this.transition("ready");
@@ -359,7 +324,16 @@ export class Engine {
       return this.stopInFlight;
     }
 
-    if (this.currentState === "idle" || this.currentState === "closed") {
+    if (this.currentState === "idle") {
+      return;
+    }
+
+    if (this.currentState === "closed") {
+      // `kill()` starts the unlink without awaiting it (the emergency path must
+      // not block), so a later `stopGraceful` is the only place a caller can get
+      // proof that the token file is gone. Resolving early would make that
+      // promise meaningless.
+      await this.ensureTokenRemoved();
       return;
     }
 
@@ -444,6 +418,8 @@ export class Engine {
     this.latestFrameAt = null;
     this.currentAppServerInfo = null;
     this.lastFailureCode = null;
+    this.degradationList = [];
+    this.watchdogWatch = null;
     this.tokenRemoval = null;
     this.cleanupInFlight = null;
     this.stopInFlight = null;
@@ -633,6 +609,81 @@ export class Engine {
     return child !== null && (child.exitCode !== null || child.signalCode !== null);
   }
 
+  /**
+   * Record a degraded token-file ACL instead of dropping it.
+   *
+   * `writeTokenFile` degrades rather than throwing (R-5), which is right - a
+   * usable engine beats no engine - but it also means the file may keep the
+   * directory's inherited permissions, and on Windows that can be "Everyone can
+   * read". The facade cannot fix that, so it must not lose it either.
+   */
+  private noteTokenAcl(tokenFile: TokenFile): void {
+    const degraded = tokenAclDegradation(tokenFile);
+
+    if (degraded !== null) {
+      this.degradationList.push(degraded);
+    }
+  }
+
+  /**
+   * Watch the child's stderr for the watchdog self-check marker.
+   *
+   * The marker is only expected when the spawn spec actually preloads the
+   * watchdog: the headless host port composes `NODE_OPTIONS=--require
+   * "<abs>/watchdog.cjs"` , and a spec without it - a
+   * caller that deliberately runs without orphan protection - must not be
+   * reported as degraded.
+   */
+  private watchWatchdog(child: ChildProcess, spec: EngineSpawnSpec): MarkerWatch | null {
+    if (!expectsWatchdog(spec)) {
+      return null;
+    }
+
+    const watch = new MarkerWatch(WATCHDOG_MARKER);
+    onProcessStderr(child, (chunk) => {
+      watch.observe(chunk);
+    });
+
+    return watch;
+  }
+
+  /**
+   * Turn "no marker by now" into a `watchdog` degradation.
+   *
+   * Called once the WebSocket URL is known: the watchdog is preloaded before any
+   * engine code runs, so its marker has been written before the engine starts
+   * listening. The short wait only pays off in the degraded case (R-3: the fuse
+   * disables `--require`, or the path is wrong), where orphan protection is down
+   * to the parent process and the host has to be told.
+   */
+  private async settleWatchdog(): Promise<void> {
+    const watch = this.watchdogWatch;
+
+    if (watch === null || watch.found) {
+      return;
+    }
+
+    await watch.wait(WATCHDOG_MARKER_GRACE_MS);
+
+    if (watch.found) {
+      return;
+    }
+
+    this.degradationList.push(watchdogDegradation());
+  }
+
+  /**
+   * Record an untested engine build or wire protocol as a degradation.
+   *
+   * Neither is a failure: docs/13 B1-Q09 and Q49 decide that an untested
+   * combination still connects, and V-7 states the same for an external server.
+   * `PROTOCOL_MISMATCH` stays reserved for "the handshake never matched", which is
+   * what the classification table in no recursive section 3.3 (f) assigns to it.
+   */
+  private noteVersionMismatches(info: AppServerInfo, expected: string | undefined): void {
+    this.degradationList.push(...versionDegradations(info, expected));
+  }
+
   /** Connect and adopt the socket; `socketState` tracks the transport. */
   private async openSocket(url: string, token: string, fault: FaultSignal): Promise<EngineSocket> {
     this.currentSocketState = "connecting";
@@ -793,7 +844,11 @@ export class Engine {
 
     this.lastFailureCode = mapped.code;
 
-    if (this.currentState !== "failed") {
+    // A stop that started while this attempt was still in flight already owns the
+    // state: `closing`/`closed` is what the caller asked for, and a late start
+    // symptom must not rewrite it to the terminal `failed` (which would also
+    // block the next start). The rejection still reports the fault.
+    if (!this.isStopping()) {
       this.transition("failed");
       this.emitError(mapped);
     }
@@ -846,142 +901,4 @@ export class Engine {
       }
     }
   }
-}
-
-/** Run `work` and the fault signal in parallel; never leaves a rejection unhandled. */
-async function raceWithFault<T>(work: Promise<T>, fault: Promise<never>): Promise<T> {
-  const guarded = work.then(
-    (value) => ({ ok: true as const, value }),
-    (error: unknown) => ({ ok: false as const, error }),
-  );
-  const faulted = fault.then(
-    () => ({ ok: false as const, error: new Error("engine fault") }),
-    (error: unknown) => ({ ok: false as const, error }),
-  );
-
-  const result = await Promise.race([guarded, faulted]);
-
-  if (result.ok) {
-    return result.value;
-  }
-
-  throw result.error;
-}
-
-/** Compare the reported engine version with the caller's expectation. */
-function assertExpectedVersion(info: AppServerInfo, expected: string | undefined): void {
-  if (expected === undefined || expected === info.engineVersion) {
-    return;
-  }
-
-  throw new EngineStartError(
-    "PROTOCOL_MISMATCH",
-    `engine version mismatch: expected "${expected}", the engine reports "${info.engineVersion}"`,
-    info.engineVersion,
-  );
-}
-
-/** Validate the frozen eight-field spawn spec; throw `SPAWN_FAILED` with all faults. */
-function assertSpawnSpec(spec: unknown): void {
-  const problems = spawnSpecProblems(spec);
-
-  if (problems.length > 0) {
-    throw new EngineStartError("SPAWN_FAILED", `invalid spawn spec: ${problems.join("; ")}`);
-  }
-}
-
-/**
- * Collect the missing or mistyped spawn-spec fields as human sentences.
- *
- * Missing fields are reported first and on their own line, because a missing
- * field usually means the wrong object was passed and reporting types as well
- * would bury that.
- */
-function spawnSpecProblems(spec: unknown): string[] {
-  if (typeof spec !== "object" || spec === null || Array.isArray(spec)) {
-    return ["spawn spec is not an object"];
-  }
-
-  const record = spec as Record<string, unknown>;
-  const missing = SPAWN_SPEC_FIELDS.filter((field) => !(field in record));
-
-  if (missing.length > 0) {
-    return missing.map((field) => `missing field "${field}"`);
-  }
-
-  const problems: string[] = [];
-
-  for (const field of ["exePath", "bundlePath", "cwd"] as const) {
-    if (!isNonEmptyString(record[field])) {
-      problems.push(`"${field}" must be a non-empty string`);
-    }
-  }
-
-  if (!isStringRecord(record.env)) {
-    problems.push('"env" must be a record of string values');
-  }
-
-  const argvPrefix = record.argvPrefix;
-  if (!Array.isArray(argvPrefix) || argvPrefix.some((item) => typeof item !== "string")) {
-    problems.push('"argvPrefix" must be an array of strings');
-  }
-
-  if (record.stdio !== "pipe") {
-    problems.push('"stdio" must be "pipe"');
-  }
-
-  if (typeof record.windowsHide !== "boolean") {
-    problems.push('"windowsHide" must be a boolean');
-  }
-
-  if (typeof record.detached !== "boolean") {
-    problems.push('"detached" must be a boolean');
-  }
-
-  return problems;
-}
-
-/** True for a non-empty string. */
-function isNonEmptyString(value: unknown): value is string {
-  return typeof value === "string" && value.length > 0;
-}
-
-/** True for a record whose every value is a string. */
-function isStringRecord(value: unknown): value is Record<string, string> {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return false;
-  }
-
-  return Object.values(value as Record<string, unknown>).every((item) => typeof item === "string");
-}
-
-/**
- * Normalize a caller-supplied budget: a non-finite value falls back to the
- * documented default and a negative value means "no waiting".
- */
-function normalizeTimeout(value: number | undefined, fallback: number): number {
-  if (value === undefined || !Number.isFinite(value)) {
-    return fallback;
-  }
-
-  return Math.max(0, Math.trunc(value));
-}
-
-/** Readable message for a thrown value of unknown shape. */
-function messageOf(error: unknown): string {
-  if (error instanceof Error && error.message.length > 0) {
-    return error.message;
-  }
-
-  return String(error);
-}
-
-/** Read a Node fault code without trusting the thrown value. */
-function codeOf(error: unknown): string | undefined {
-  if (typeof error !== "object" || error === null || !("code" in error)) {
-    return undefined;
-  }
-
-  const code = (error as { code?: unknown }).code;
-  return typeof code === "string" && code.length > 0 ? code : undefined;
 }

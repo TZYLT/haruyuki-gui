@@ -41,6 +41,7 @@ import {
   readFileSync,
   rmdirSync,
   unlinkSync,
+  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -51,6 +52,18 @@ const ENGINE_VERSION = "0.6.0";
 
 /** npm package name of the engine build. */
 const ENGINE_PACKAGE = "haruyuki";
+
+/**
+ * Completion marker written into the unpacked package directory.
+ *
+ * Not inside `node_modules/`, because `npm install` rewrites that tree; not in
+ * `<outDir>/`, because the artifact is the unit that has to be complete. It is
+ * written last and only after the install exited 0, which is what makes the
+ * idempotent skip trustworthy.
+ */
+function completionMarker(packageDir) {
+  return path.join(packageDir, ".install-complete");
+}
 
 /** Script location: <repo>/scripts/engine/fetch-engine.mjs. */
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
@@ -248,13 +261,14 @@ function main() {
   log(`repo root  ${REPO_ROOT}`);
   log(`output dir ${outDir}`);
 
-  // Skip only when the artifact is both unpacked AND installed. The tarball
-  // ships no dependencies (F-2), so an extract that was interrupted before
-  // `npm install` finished would otherwise look "done" forever. Re-running the
-  // pack+extract over the existing tree is safe: tar overwrites, and the install
-  // then completes the tree.
+  // Skip only when a previous run recorded that BOTH stages finished. The tarball
+  // ships no dependencies (F-2), and `npm install` can fail after it has already
+  // written some of them, so "node_modules/ws exists" is not proof of completion:
+  // an interrupted install would look done forever and hand a half-installed
+  // artifact to the probe. The marker is written last, so its presence means the
+  // install step exited 0.
   const entryExists = existsSync(entryPoint);
-  const installComplete = existsSync(path.join(packageDir, "node_modules", "ws"));
+  const installComplete = existsSync(completionMarker(packageDir));
 
   if (entryExists && installComplete) {
     log(`already present, skipping network work: ${entryPoint}`);
@@ -264,7 +278,7 @@ function main() {
   }
 
   if (entryExists) {
-    log("artifact present but node_modules/ws is missing; completing the install");
+    log("artifact present but the install marker is missing; redoing pack + install");
   }
 
   mkdirSync(outDir, { recursive: true });
@@ -321,12 +335,32 @@ function main() {
     if (!existsSync(path.join(packageDir, "node_modules", "ws"))) {
       throw new Error("install finished but node_modules/ws is missing; the probe cannot connect");
     }
+
+    // Last step of the whole run: the marker is the only claim that both the
+    // extract and the install finished.
+    writeFileSync(completionMarker(packageDir), `${ENGINE_VERSION}\n`, "utf8");
   } finally {
-    // Single-point cleanup: drop the tarball, then remove the now-empty staging
-    // directory. No recursive delete.
-    if (tarballPath !== null && existsSync(tarballPath)) {
-      unlinkSync(tarballPath);
+    // Single-point cleanup: drop every tarball in the staging directory, then
+    // remove the now-empty directory. No recursive delete.
+    //
+    // The scan is not redundant with `tarballPath`: when `npm pack` fails or
+    // `findTarball` rejects the output, the path is still null and a `.tgz` may
+    // already be on disk. Unlinking only the recorded path would leave that
+    // tarball (a few hundred MB) in os.tmpdir() forever.
+    for (const name of readdirSync(stagingDir)) {
+      if (!name.endsWith(".tgz")) {
+        continue;
+      }
+
+      const stale = path.join(stagingDir, name);
+
+      try {
+        unlinkSync(stale);
+      } catch {
+        log(`could not remove the staging tarball: ${stale}`);
+      }
     }
+
     try {
       rmdirSync(stagingDir);
     } catch {

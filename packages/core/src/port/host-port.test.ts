@@ -119,7 +119,10 @@ describe("getRuntimeSpawnSpec", () => {
     expect(spec.bundlePath).toBe(bundlePath);
     expect(spec.stdio).toBe("pipe");
     expect(spec.windowsHide).toBe(true);
-    expect(spec.detached).toBe(false);
+    // POSIX builds a process group so the stop path can take the engine's
+    // the engine's descendants with it. Windows has no such group; there the
+    // stop path forces `taskkill /T /F` instead.
+    expect(spec.detached).toBe(process.platform !== "win32");
     expect(spec.env.HARUYUKI_HOME).toBe(engineHome);
 
     const nodeOptions = spec.env.NODE_OPTIONS;
@@ -134,6 +137,13 @@ describe("getRuntimeSpawnSpec", () => {
     expect(path.isAbsolute(watchdogPath)).toBe(true);
     expect(watchdogPath.endsWith("watchdog.cjs")).toBe(true);
     expect(watchdogPath).toMatch(/runtime[\\/]watchdog\.cjs$/);
+
+    // Windows only: a backslash in NODE_OPTIONS is an escape, so the preload
+    // would silently fail with MODULE_NOT_FOUND (measured on Windows). The
+    // forward-slash form is the whole point of the conversion.
+    if (process.platform === "win32") {
+      expect(watchdogPath).not.toContain("\\");
+    }
 
     // The token value never travels through the environment; only the token
     // file PATH may be passed later, by Engine.start.
@@ -152,6 +162,29 @@ describe("getRuntimeSpawnSpec", () => {
     }
 
     expect(result.reason).toContain(bundlePath);
+  });
+
+  it("refuses a relative bundle path", async () => {
+    const { root } = await createFixture();
+    const port = await createHeadlessHostPort({
+      bundlePath: path.join("nested", "engine.mjs"),
+      engineHome: path.join(root, "home"),
+      tokenDir: "temp",
+    });
+
+    const result = await port.getRuntimeSpawnSpec();
+
+    // The contract freezes an absolute engine JS bundle path. A relative path
+    // resolve against this process's cwd here and against the child's cwd
+    // (userData) at spawn time, so it would look valid and then fail with an
+    // ENOENT that blames the wrong thing.
+    expect(result.ok).toBe(false);
+
+    if (result.ok) {
+      throw new Error("expected a refusal for a relative bundle path");
+    }
+
+    expect(result.reason).toContain("absolute");
   });
 
   it("sets cwd to the existing userData directory", async () => {

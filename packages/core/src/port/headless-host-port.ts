@@ -143,6 +143,18 @@ export async function createHeadlessHostPort(
       // Existence is re-checked on every call: callers construct the port
       // before the engine artifact is unpacked, so a construction-time check
       // would refuse a bundle that appears moments later.
+      //
+      // The path must be absolute : `detached` creates "引擎 JS bundle 绝对
+      // 路径"). A relative one would resolve against the host's cwd here but
+      // against `paths.userData` in the child, so it would look valid and then
+      // fail at spawn time with an ENOENT nobody can explain.
+      if (!isAbsolute(options.bundlePath)) {
+        return {
+          ok: false,
+          reason: `engine bundle path must be absolute: ${options.bundlePath}`,
+        };
+      }
+
       if (!existsSync(options.bundlePath)) {
         return { ok: false, reason: `engine bundle not found: ${options.bundlePath}` };
       }
@@ -168,8 +180,12 @@ export async function createHeadlessHostPort(
         // signal, so both must be piped.
         stdio: "pipe",
         windowsHide: true,
-        // No process group: the parent owns graceful stop and kill in B1.
-        detached: false,
+        // POSIX gets its own process group so the stop path can signal the whole
+        // group and take the engine's descendants with it: `detached` creates
+        // "detached: POSIX 建进程组，供看门狗与杀树用"; section 4.2: without it
+        // "孤儿治理失效"). Windows has no process groups in this sense; there the
+        // stop path forces `taskkill /T /F` instead.
+        detached: process.platform !== "win32",
       };
 
       return { ok: true, spec };

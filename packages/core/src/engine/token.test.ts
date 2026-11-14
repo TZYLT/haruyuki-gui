@@ -174,6 +174,12 @@ describe("platform ACL", () => {
       // icacls normalizes a bare account name to "MACHINE\\user", so a substring
       // match on the current user is the stable assertion.
       expect(acl).toContain(userInfo().username.toLowerCase());
+      // The decisive assertion is the absence of the inherited flag: every ACE
+      // that came from the directory carries "(I)", so a file that kept them is
+      // not owner-only no matter which account names the localized output uses.
+      // A username substring alone would also be satisfied by the temp path the
+      // command echoes back.
+      expect(acl).not.toContain("(i)");
       // /inheritance:r must remove the directory's inherited groups.
       expect(acl).not.toContain("everyone");
       expect(acl).not.toContain("builtin\\users");
@@ -198,6 +204,7 @@ describe("platform ACL", () => {
       // Group names stay readable ASCII even when the console encoding mangles
       // the localized path portion of the output.
       expect(acl).toContain("(r)");
+      expect(acl).not.toContain("(i)");
       expect(acl).not.toContain("everyone");
       expect(acl).not.toContain("builtin\\users");
       expect(stdout.toLowerCase()).toContain(userInfo().username.toLowerCase());

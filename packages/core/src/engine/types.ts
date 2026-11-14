@@ -89,6 +89,29 @@ export type AppServerInfo = {
 };
 
 /**
+ * One safety or compatibility check that did not hold, but did not stop the
+ * engine either.
+ *
+ * Why this is a value and not an error: the engine can run with a degraded
+ * protection, and the host must be able to *report* it without turning a usable
+ * engine into a failure. Three cases are decided in the requirements:
+ *
+ * - `engine-version` / `protocol-version`: a build other than the tested one is a
+ *   warning, not a veto. The engine still connects.
+ * - `token-acl`: the exact platform ACL could not be applied, so the token file
+ *   keeps the directory's inherited permissions.
+ * - `watchdog`: the injected watchdog never printed its self-check marker, so
+ *   orphan protection is down to the parent.
+ *
+ * `detail` is for humans and logs only; nothing branches on it. `kind` is the
+ * stable value a consumer switches on.
+ */
+export type EngineDegradation = {
+  readonly kind: "engine-version" | "protocol-version" | "token-acl" | "watchdog";
+  readonly detail: string;
+};
+
+/**
  * Everything the host knows about how to start the engine, resolved by the host
  * port before the facade spawns anything.
  *
