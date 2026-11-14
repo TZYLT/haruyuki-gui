@@ -19,8 +19,10 @@
  * - Delivery is one `setTimeout(0)` macrotask, one turn coarser than the
  *   `ipc` double's `queueMicrotask`. The two
  *   granularities are the executable form of "cross-channel order is not
- *   guaranteed": post the same back-to-back pair to both doubles and the
- *   arrivals can invert.
+ *   guaranteed": post the same back-to-back pair to both doubles and, on the
+ *   combined timeline, the ipc arrival can overtake the postMessage one. Within
+ *   one double the order is always the post order - the inversion is between
+ *   shells over the same channel, which is what a merge of the two would see.
  * - `post`, `onFrame` and `close` are the frozen members, unchanged.
  */
 

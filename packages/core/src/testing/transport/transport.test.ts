@@ -206,6 +206,10 @@ describe.each(DOUBLES)("$name double", ({ create }) => {
       { label: "Infinity", value: frame("stream", 1, { value: Number.POSITIVE_INFINITY }) },
       { label: "Date", value: frame("stream", 1, { when: new Date("2024-01-01T00:00:00.000Z") }) },
       { label: "Map", value: frame("stream", 1, { labels: new Map([["a", 1]]) }) },
+      // `-0 === 0` and `every` skips holes, so both of these used to pass the
+      // round-trip check and reach the double as a modified frame.
+      { label: "negative zero", value: frame("stream", 1, { n: -0 }) },
+      { label: "sparse array", value: frame("stream", 1, { list: [, "a"] as unknown[] }) },
     ];
     const { double, frames, rejected } = record(create);
 
