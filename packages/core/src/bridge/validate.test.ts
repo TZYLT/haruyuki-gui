@@ -13,6 +13,8 @@
  * the hook, which is exactly when the decision needs re-reading.
  */
 
+import { runInNewContext } from "node:vm";
+
 import { describe, expect, it } from "vitest";
 
 import {
@@ -341,10 +343,46 @@ describe("toJSON is not honored", () => {
     };
 
     expect(JSON.stringify(value)).toBe('{"createdAt":"2024-01-01T00:00:00.000Z"}');
+
+    // `to-json`, not `function`: the path names the value that carries the hook
+    // rather than the method inside it. Reporting the method was an accident of
+    // walking own keys, and it stopped being accurate once the prototype chain
+    // is checked too (a class method has no own-key path to name).
     expect(findSerializationViolation(value)).toEqual({
-      path: "createdAt.toJSON",
-      kind: "function",
+      path: "createdAt",
+      kind: "to-json",
     });
+  });
+
+  it("refuses a toJSON inherited from a class prototype", () => {
+    // `Object.keys` never sees a prototype method, so the own-key walk let this
+    // through while `JSON.stringify` rewrote the payload to whatever the method
+    // returned. A class is the shape that actually appears in a codebase.
+    class Money {
+      constructor(private readonly cents: number) {}
+
+      toJSON(): string {
+        return `MONEY:${String(this.cents)}`;
+      }
+    }
+
+    const value = { price: new Money(100) };
+
+    expect(JSON.stringify(value)).toBe('{"price":"MONEY:100"}');
+    expect(findSerializationViolation(value)).toEqual({ path: "price", kind: "to-json" });
+  });
+
+  it("reports a throwing toJSON as a violation instead of letting it escape", () => {
+    class Exploding {
+      toJSON(): unknown {
+        throw new TypeError("toJSON blew up");
+      }
+    }
+
+    const value = { x: new Exploding() };
+
+    expect(() => JSON.stringify(value)).toThrow(TypeError);
+    expect(findSerializationViolation(value)).toEqual({ path: "x", kind: "to-json" });
   });
 
   it("keeps rejecting a Date even though it defines toJSON", () => {
@@ -358,5 +396,163 @@ describe("toJSON is not honored", () => {
     const value = { createdAt: new Date(0).toISOString() };
 
     expect(findSerializationViolation(value)).toBeNull();
+  });
+});
+
+describe("values JSON.stringify rewrites", () => {
+  it("refuses a non-finite number, which would become null on the wire", () => {
+    // `NaN` and both infinities are inside JSON's *grammar* but not its
+    // information: the peer cannot tell "not a number" from "absent". The
+    // transport double's faithful-copy check rejects them too, so a producer
+    // that let one through would order the two halves of the layer differently.
+    expect(JSON.stringify({ percent: Number.NaN })).toBe('{"percent":null}');
+    expect(findSerializationViolation({ percent: Number.NaN })).toEqual({
+      path: "percent",
+      kind: "non-finite",
+    });
+
+    expect(findSerializationViolation({ elapsed: Number.POSITIVE_INFINITY })).toEqual({
+      path: "elapsed",
+      kind: "non-finite",
+    });
+
+    expect(findSerializationViolation({ elapsed: Number.NEGATIVE_INFINITY })).toEqual({
+      path: "elapsed",
+      kind: "non-finite",
+    });
+
+    // `1e400` overflows to Infinity at parse time, so the literal spelling of a
+    // huge number reaches this check as the same value.
+    expect(findSerializationViolation(1e400)).toEqual({ path: "", kind: "non-finite" });
+  });
+
+  it("refuses the object types that flatten to {} on the wire", () => {
+    const cases: readonly { label: string; make: () => Record<string, unknown>; json: string }[] = [
+      { label: "a RegExp", make: () => ({ pattern: /a+/g }), json: '{"pattern":{}}' },
+      { label: "an Error", make: () => ({ failure: new Error("x") }), json: '{"failure":{}}' },
+      { label: "an ArrayBuffer", make: () => ({ raw: new ArrayBuffer(4) }), json: '{"raw":{}}' },
+      {
+        label: "a typed array",
+        make: () => ({ bytes: new Uint8Array([1, 2, 3]) }),
+        json: '{"bytes":{"0":1,"1":2,"2":3}}',
+      },
+    ];
+
+    for (const testCase of cases) {
+      const value = testCase.make();
+
+      // The wire value is demonstrably not the value handed in, which is what
+      // makes these violations rather than a matter of taste.
+      expect(JSON.stringify(value), testCase.label).toBe(testCase.json);
+      expect(findSerializationViolation(value), testCase.label).toEqual({
+        path: Object.keys(value)[0],
+        kind: "lossy-object",
+      });
+    }
+  });
+
+  it("still accepts plain objects and arrays", () => {
+    expect(findSerializationViolation({ a: 1, b: [2, 3] })).toBeNull();
+    expect(findSerializationViolation(Object.create(null))).toBeNull();
+  });
+
+  it("distinguishes an empty property name from the root", () => {
+    // `{"": value}` is legal JSON and a real field. Reporting it at "" made the
+    // error say "<root>", pointing the reader at the wrong level entirely.
+    const value = { "": new Date(0) };
+
+    expect(findSerializationViolation(value)).toEqual({ path: '[""]', kind: "date" });
+  });
+});
+
+describe("cross-realm values", () => {
+  it("refuses a Date, Map and Set created in another realm", () => {
+    // `instanceof` compares constructors, and a foreign realm has different
+    // ones. The renderer is a separate realm, so a value that crossed a
+    // structuredClone or a worker boundary fails every instanceof here. Before
+    // the tag check these were walked as empty objects and called valid, while
+    // JSON.stringify quietly flattened them.
+    const foreign = runInNewContext(
+      "({ d: new Date(0), m: new Map([[1, 2]]), s: new Set([1]) })",
+    ) as {
+      d: object;
+      m: object;
+      s: object;
+    };
+
+    expect(foreign.d instanceof Date).toBe(false);
+
+    expect(findSerializationViolation({ at: foreign.d })).toEqual({ path: "at", kind: "date" });
+    expect(findSerializationViolation({ at: foreign.m })).toEqual({ path: "at", kind: "map" });
+    expect(findSerializationViolation({ at: foreign.s })).toEqual({ path: "at", kind: "set" });
+  });
+});
+
+describe("hostile accessors", () => {
+  it("reports a throwing getter as a violation instead of throwing out", () => {
+    // The module promises a verdict for every input, and the caller can only
+    // branch on a coded error. A getter is caller code running inside the walk.
+    const value = Object.defineProperty({}, "boom", {
+      enumerable: true,
+      get(): never {
+        throw new Error("getter ran");
+      },
+    });
+
+    expect(findSerializationViolation(value)).toEqual({ path: "boom", kind: "hostile" });
+  });
+
+  it("reports a throwing ownKeys trap as a violation", () => {
+    const value = new Proxy(
+      {},
+      {
+        ownKeys(): never {
+          throw new Error("trap ran");
+        },
+      },
+    );
+
+    expect(findSerializationViolation(value)).toEqual({ path: "", kind: "hostile" });
+  });
+});
+
+describe("shared subtrees are walked once", () => {
+  it("validates a legal DAG without exponential time", () => {
+    // Every level doubles the number of paths to the leaf while the node count
+    // grows linearly. Walking per path instead of per node took over eight
+    // seconds at depth 26, which is far inside MAX_DEPTH: a reducer that shares
+    // one subtree between two fields could stall the send path for seconds.
+    const build = (levels: number): unknown => {
+      let node: unknown = { leaf: true };
+
+      for (let level = 0; level < levels; level += 1) {
+        node = { a: node, b: node };
+      }
+
+      return node;
+    };
+
+    const started = performance.now();
+    const verdict = findSerializationViolation(build(26));
+    const elapsed = performance.now() - started;
+
+    expect(verdict).toBeNull();
+    // Loose on purpose: the unprotected walk needs ~8 s at this size and doubles
+    // per level, while the memoised one is sub-millisecond. The bound only has to
+    // separate "linear in nodes" from "exponential in depth" without flaking on
+    // a loaded machine.
+    expect(elapsed).toBeLessThan(1000);
+  });
+
+  it("still reports a real cycle that shares a prefix with a clean subtree", () => {
+    const clean = { ok: true };
+    const cycle: Record<string, unknown> = { clean, self: null };
+
+    cycle["self"] = cycle;
+
+    expect(findSerializationViolation({ cycle, clean })).toEqual({
+      path: "cycle.self",
+      kind: "cycle",
+    });
   });
 });

@@ -87,7 +87,19 @@ export const MAX_DEPTH = 64 as const;
  * handed us a callback", and collapsing them would lose that.
  */
 export type SerializationViolationKind =
-  "date" | "map" | "set" | "bigint" | "undefined" | "function" | "symbol" | "cycle" | "depth";
+  | "date"
+  | "map"
+  | "set"
+  | "bigint"
+  | "undefined"
+  | "function"
+  | "symbol"
+  | "cycle"
+  | "depth"
+  | "non-finite"
+  | "to-json"
+  | "lossy-object"
+  | "hostile";
 
 /** The first offending node: where it is, and which class of value it is. */
 export interface FrameSerializationViolation {
@@ -144,6 +156,23 @@ function isContainer(value: unknown): value is object {
  * `Map` and `Set` are checked before the container branch, so they are never
  * walked as plain objects: doing so would flatten a `Map` to `{}` and then call
  * it valid.
+ *
+ * Two detections are deliberately belt-and-braces:
+ *
+ * - `instanceof` answers "same realm", which is the common case and the cheapest
+ *   check. The class test is then repeated on the internal tag, because the
+ *   renderer is a separate realm: a value that crossed a `structuredClone`, a
+ *   worker boundary or a `vm` context fails every `instanceof` against this
+ *   realm's constructors and would otherwise be walked as an empty object --
+ *   exactly the lossy rewrite this module exists to reject.
+ * - a non-finite number is inside JSON's *grammar* but not inside its
+ *   *information*: `JSON.stringify` writes `NaN` and both infinities as `null`,
+ *   so a peer that receives one cannot tell "not a number" from "absent". The
+ *   module header already promises to reject values that are rewritten on the
+ *   way out, and these are rewritten.
+ *
+ * @param value the candidate value
+ * @returns the violation kind, or `null` when the value is supported
  */
 function classifyUnsupported(value: unknown): SerializationViolationKind | null {
   const type = typeof value;
@@ -164,23 +193,104 @@ function classifyUnsupported(value: unknown): SerializationViolationKind | null 
     return "function";
   }
 
-  if (value instanceof Date) {
+  if (type === "number" && !Number.isFinite(value as number)) {
+    return "non-finite";
+  }
+
+  if (value instanceof Date || internalTag(value) === "[object Date]") {
     return "date";
   }
 
-  if (value instanceof Map) {
+  if (value instanceof Map || internalTag(value) === "[object Map]") {
     return "map";
   }
 
-  if (value instanceof Set) {
+  if (value instanceof Set || internalTag(value) === "[object Set]") {
     return "set";
+  }
+
+  // Anything that is not a plain object or an array is rewritten by
+  // `JSON.stringify` rather than copied: a `RegExp`, an `Error`, an
+  // `ArrayBuffer` and an `ArrayBufferView` all become `{}`, and a typed array
+  // becomes a plain object keyed by index. Enumerating the offenders one by one
+  // is how `Map` and `Set` were caught while their neighbours were missed; the
+  // tag is the one place that knows the difference and is already computed.
+  const tag = internalTag(value);
+
+  if (tag !== null && tag !== "[object Object]" && tag !== "[object Array]") {
+    return "lossy-object";
   }
 
   return null;
 }
 
-/** Append a property name to a path. */
+/**
+ * The `Object.prototype.toString` tag of a value, or `null` when it cannot be
+ * read without running caller code.
+ *
+ * The tag is realm-independent, which is the whole point: `instanceof` compares
+ * constructors, and a foreign realm has different ones.
+ *
+ * @param value any value
+ * @returns the tag, or `null` when the read throws
+ */
+function internalTag(value: unknown): string | null {
+  if (typeof value !== "object" || value === null) {
+    return null;
+  }
+
+  try {
+    return Object.prototype.toString.call(value);
+  } catch {
+    // A hostile `Symbol.toStringTag` getter must not escape as a raw error; the
+    // walk converts it into a `hostile` violation at the same path.
+    return null;
+  }
+}
+
+/**
+ * Whether a value carries its own `toJSON` anywhere on its prototype chain.
+ *
+ * `toJSON` is rejected rather than honoured (see the module header). The check
+ * has to walk the chain, not just the own keys, because the shape that actually
+ * appears in a codebase is a *class* with a method -- `class Money { toJSON() }`
+ * -- where the function lives on the prototype and `Object.keys` never sees it.
+ * Missing that case would let `JSON.stringify` silently rewrite the payload to
+ * whatever the method returns, including a value outside the JSON subset.
+ *
+ * @param value a value already known to be a non-null object and not a Date
+ * @returns `true` when calling the value's `toJSON` would run caller code
+ */
+function hasToJSON(value: object): boolean {
+  try {
+    return typeof (value as { toJSON?: unknown }).toJSON === "function";
+  } catch {
+    // A throwing getter is caller code running during validation; the caller
+    // reports it as `hostile` at this path.
+    throw new HostileRead();
+  }
+}
+
+/** Marker for "reading this value ran caller code that threw". */
+class HostileRead extends Error {}
+
+/**
+ * Append a property name to a path.
+ *
+ * An empty key renders as `[""]` rather than as nothing. Without that, a
+ * violation at `value[""]` produced the same path as a violation at `value`
+ * itself, and the error message said "<root>" for a field that is demonstrably
+ * not the root.
+ *
+ * @param path path to the containing value
+ * @param key the property name
+ * @returns the child's path
+ */
 function propertyPath(path: string, key: string): string {
+  if (key.length === 0) {
+    return `${path}[""]`;
+  }
+
   return path.length === 0 ? key : `${path}.${key}`;
 }
 
@@ -202,6 +312,7 @@ function findViolation(
   path: string,
   depth: number,
   ancestors: Set<object>,
+  cleared: WeakSet<object>,
 ): FrameSerializationViolation | null {
   if (depth > MAX_DEPTH) {
     return { path, kind: "depth" };
@@ -217,19 +328,44 @@ function findViolation(
     return null;
   }
 
+  // A subtree already proven clean needs no second walk. Without this, a legal
+  // DAG that shares one subtree under both branches is visited 2^depth times:
+  // a body 26 levels deep (well inside MAX_DEPTH) took over eight seconds, and
+  // the cost is exponential in depth rather than linear in nodes.
+  if (cleared.has(value)) {
+    return null;
+  }
+
   if (ancestors.has(value)) {
     return { path, kind: "cycle" };
   }
 
   ancestors.add(value);
 
-  const violation = Array.isArray(value)
-    ? findInArray(value, path, depth, ancestors)
-    : findInObject(value, path, depth, ancestors);
+  let violation: FrameSerializationViolation | null;
+
+  try {
+    violation = Array.isArray(value)
+      ? findInArray(value, path, depth, ancestors, cleared)
+      : findInObject(value, path, depth, ancestors, cleared);
+  } catch (error) {
+    // Reading a hostile getter or proxy trap ran caller code that threw. The
+    // module promises a verdict rather than an exception, and the caller can
+    // only branch on a coded error, so it becomes a violation here.
+    if (error instanceof HostileRead) {
+      violation = { path, kind: "hostile" };
+    } else {
+      throw error;
+    }
+  }
 
   // Removed on every exit path, including the failure one: a sibling may legally
   // hold the same sub-object, and only the current path defines a cycle.
   ancestors.delete(value);
+
+  if (violation === null) {
+    cleared.add(value);
+  }
 
   return violation;
 }
@@ -240,9 +376,18 @@ function findInArray(
   path: string,
   depth: number,
   ancestors: Set<object>,
+  cleared: WeakSet<object>,
 ): FrameSerializationViolation | null {
   for (let index = 0; index < value.length; index += 1) {
-    const violation = findViolation(value[index], indexPath(path, index), depth + 1, ancestors);
+    let element: unknown;
+
+    try {
+      element = value[index];
+    } catch {
+      return { path: indexPath(path, index), kind: "hostile" };
+    }
+
+    const violation = findViolation(element, indexPath(path, index), depth + 1, ancestors, cleared);
 
     if (violation !== null) {
       return violation;
@@ -257,17 +402,51 @@ function findInArray(
  *
  * That is exactly the set `JSON.stringify` visits, so a symbol-keyed or
  * non-enumerable value can neither reach the wire nor fail this check.
+ *
+ * `toJSON` is checked before the keys are read, on the value itself and on its
+ * prototype chain: it is the one thing `JSON.stringify` consults that is not a
+ * property it writes, so a value carrying one is rewritten rather than copied.
+ *
+ * @param value one object node
+ * @param path path to this node
+ * @param depth nesting depth of this node
+ * @param ancestors objects on the current path, for cycle detection
+ * @param cleared subtrees already proven clean
+ * @returns the first violation under this node, or `null`
  */
 function findInObject(
   value: object,
   path: string,
   depth: number,
   ancestors: Set<object>,
+  cleared: WeakSet<object>,
 ): FrameSerializationViolation | null {
-  const record = value as Record<string, unknown>;
+  if (hasToJSON(value)) {
+    return { path, kind: "to-json" };
+  }
 
-  for (const key of Object.keys(record)) {
-    const violation = findViolation(record[key], propertyPath(path, key), depth + 1, ancestors);
+  const record = value as Record<string, unknown>;
+  let keys: string[];
+
+  try {
+    keys = Object.keys(record);
+  } catch {
+    throw new HostileRead();
+  }
+
+  for (const key of keys) {
+    let child: unknown;
+
+    try {
+      child = record[key];
+    } catch {
+      // Named at the field that could not be read, which is the only position a
+      // human can act on; reporting the containing object instead would send
+      // them looking at the wrong level.
+      return { path: propertyPath(path, key), kind: "hostile" };
+    }
+
+    const violation = findViolation(child, propertyPath(path, key), depth + 1, ancestors, cleared);
 
     if (violation !== null) {
       return violation;
@@ -288,7 +467,7 @@ function findInObject(
  * @param value the value to inspect, normally a frame body or a whole frame
  */
 export function findSerializationViolation(value: unknown): FrameSerializationViolation | null {
-  return findViolation(value, "", 0, new Set<object>());
+  return findViolation(value, "", 0, new Set<object>(), new WeakSet<object>());
 }
 
 /**
