@@ -87,11 +87,22 @@ describe("BULK_OVER_LIMIT", () => {
     expect(DEFAULT_PAGE_BUDGET_BYTES).toBe(1024 * 1024);
   });
 
-  it("publishes a `more` that a bulk frame's cursor accepts", () => {
+  it("publishes a `more` a bulk frame's cursor accepts", () => {
     const page = createPager(8).paginate(["aaaa", "bbbb"], 0);
     const cursorMore: CursorMore = page.more;
 
-    expect(cursorMore).toBe(page.more);
+    // `cursorMore` is a compile-time proof that `more` is a boolean. Asserting
+    // `cursorMore === page.more` proved nothing beyond that -- the two are the
+    // same value by construction, so the case could not fail. What is worth
+    // pinning is the runtime side a cursor actually carries.
+    expect(typeof cursorMore).toBe("boolean");
+    expect(page.more).toBe(true);
+
+    // The last page must say `false`, or a consumer waits for a page that will
+    // never come.
+    const last = createPager(8).paginate(["aaaa"], 0);
+
+    expect(last.more as CursorMore).toBe(false);
   });
 });
 

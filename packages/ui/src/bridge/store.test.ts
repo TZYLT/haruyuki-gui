@@ -157,17 +157,29 @@ describe("getSnapshot reference stability", () => {
 
   it("iterates: every payload that changes something yields exactly one new reference", () => {
     const target = harness();
-    const seen = new Set<object>([target.store.getSnapshot()]);
+    const payloads = framesOf("handshake-accept.jsonl");
 
-    for (const payload of framesOf("handshake-accept.jsonl")) {
+    const references: object[] = [];
+
+    for (const payload of payloads) {
       target.entry.handle(payload);
-      seen.add(target.store.getSnapshot());
+      const first = target.store.getSnapshot();
+
+      // Read the same state twice in a row and it must be the SAME object. The
+      // previous assertion counted distinct references in a `Set`, which is also
+      // what a store with no cache produces: every read would be new, so the
+      // count matched either way. Identity within one state is what tells them
+      // apart.
+      expect(target.store.getSnapshot()).toBe(first);
+      references.push(first);
     }
 
-    // Three payloads, three distinct snapshots (the fifth read of a given state
-    // would repeat the previous reference, which the set would hide). The point
-    // is that a change is not silently flattened into the old object.
-    expect(seen.size).toBe(4);
+    // And a change does move the reference on, so a change is not flattened away.
+    for (let index = 1; index < references.length; index += 1) {
+      expect(references[index]).not.toBe(references[index - 1]);
+    }
+
+    expect(references.length).toBe(payloads.length);
   });
 
   it("gives two stores over the same entry their own caches", () => {
