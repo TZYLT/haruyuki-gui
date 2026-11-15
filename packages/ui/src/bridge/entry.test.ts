@@ -452,6 +452,164 @@ describe("duplicate pages (C5-R07)", () => {
   });
 });
 
+describe("a cursor the entry cannot read", () => {
+  it("refuses a page whose watermark is a string, rather than skipping the stale check", () => {
+    const entry = createFrameEntry(corpusOptions());
+
+    entry.handle(bulkPayload({ watermark: 100, token: "fresh" }, 1));
+    // Would be dropped as stale at 40, but `"40"` is not a number, and the old
+    // code treated "not a number" as "no cursor" -- accepting the page and
+    // counting it, while looking like it had one.
+    entry.handle(bulkPayload({ watermark: "40" as never, token: "stale" }, 2));
+
+    expect(entry.snapshot().perChannel.bulk).toBe(1);
+    expect(entry.violations()).toEqual([{ kind: "malformed-cursor" }]);
+  });
+
+  it("refuses a page whose token is not a string, rather than skipping dedup", () => {
+    const entry = createFrameEntry(corpusOptions());
+
+    // Three sends of one page. The old code accepted all three because a
+    // non-string token meant "no cursor", so the same page was applied (and
+    // counted) three times.
+    entry.handle(bulkPayload({ watermark: 7, token: 5 as never }, 1));
+    entry.handle(bulkPayload({ watermark: 7, token: 5 as never }, 2));
+    entry.handle(bulkPayload({ watermark: 7, token: 5 as never }, 3));
+
+    expect(entry.snapshot().perChannel.bulk).toBe(0);
+    expect(entry.violations()).toEqual([
+      { kind: "malformed-cursor" },
+      { kind: "malformed-cursor" },
+      { kind: "malformed-cursor" },
+    ]);
+  });
+
+  it("refuses a negative or fractional watermark", () => {
+    const entry = createFrameEntry(corpusOptions());
+
+    // A numeric but unusable watermark would enter the monotone comparison and
+    // make every later page ambiguous.
+    entry.handle(bulkPayload({ watermark: -1, token: "a" }, 1));
+    entry.handle(bulkPayload({ watermark: 1.5, token: "b" }, 2));
+
+    expect(entry.snapshot().perChannel.bulk).toBe(0);
+  });
+
+  it("still accepts a page with page.more and no cursor fields at all", () => {
+    const entry = createFrameEntry(corpusOptions());
+
+    // The distinction that matters: absent is not the same as malformed.
+    entry.handle(bulkPayload({ more: true }, 1));
+
+    expect(entry.snapshot().perChannel.bulk).toBe(1);
+    expect(entry.violations()).toEqual([]);
+  });
+});
+
+describe("handshake before the type table", () => {
+  it("still rejects an incompatible bridge when the table omits bridge.ready", () => {
+    // Downstream items inject only the types they decode (C5-Q24), so a table
+    // without `bridge.ready` is a legal configuration. Checking the table first
+    // switched the version guard off in exactly that configuration, and a peer
+    // on an incompatible bridge had its pages routed and rendered.
+    const entry = createFrameEntry(
+      corpusOptions({ frameTypes: new Set(["bulk.page", "term.output"]) }),
+    );
+
+    entry.handle(
+      JSON.stringify({
+        v: CORPUS_PROTOCOL_VERSION,
+        ch: "control",
+        seq: 1,
+        t: "bridge.ready",
+        body: { appVersion: "0.1.0", bridgeVersion: "999" },
+      }),
+    );
+    entry.handle(bulkPayload({ watermark: 1, token: "a" }, 2));
+
+    expect(entry.status()).toEqual({ state: "rejected", code: "BRIDGE_VERSION_MISMATCH" });
+    // And silent afterwards, which is the rest of the version guard.
+    expect(entry.snapshot().perChannel.bulk).toBe(0);
+  });
+
+  it("still accepts a matching bridge whose ready frame is not in the table", () => {
+    const entry = createFrameEntry(
+      corpusOptions({ frameTypes: new Set(["bulk.page", "term.output"]) }),
+    );
+
+    entry.handle(
+      JSON.stringify({
+        v: CORPUS_PROTOCOL_VERSION,
+        ch: "control",
+        seq: 1,
+        t: "bridge.ready",
+        body: { appVersion: "0.1.0", bridgeVersion: CORPUS_BRIDGE_VERSION },
+      }),
+    );
+
+    // Counted on its channel, and the frame is not reported as unregistered:
+    // the ready frame is this layer's business regardless of the table.
+    expect(entry.status()).toEqual({ state: "accepted" });
+    expect(entry.snapshot().perChannel.control).toBe(1);
+    expect(entry.violations()).toEqual([]);
+  });
+});
+
+describe("bounded diagnostics", () => {
+  it("keeps counting violations after the retained list is full", () => {
+    const entry = createFrameEntry(corpusOptions());
+
+    for (let index = 0; index < 400; index += 1) {
+      entry.handle("not a frame");
+    }
+
+    // The count stays truthful; the list is bounded. A peer that sends junk at
+    // frame rate is exactly the peer this layer exists to survive.
+    expect(entry.snapshot().violations).toBe(400);
+    expect(entry.violations().length).toBeLessThanOrEqual(256);
+    expect(entry.violations().length).toBeGreaterThan(0);
+  });
+
+  it("forgets dedup keys from snapshots older than the current watermark", () => {
+    const entry = createFrameEntry(corpusOptions());
+
+    for (let watermark = 1; watermark <= 200; watermark += 5) {
+      entry.handle(bulkPayload({ watermark, token: "page" }, watermark));
+    }
+
+    // The cursor only moves forward, so those pages can never be admitted
+    // again and their keys would accumulate for the life of the renderer. The
+    // current watermark stays, because its remaining pages still arrive.
+    expect(entry.snapshot().perChannel.bulk).toBeGreaterThan(0);
+    expect(entry.snapshot().violations).toBe(0);
+  });
+});
+
+describe("seq integrity", () => {
+  it("refuses a negative or fractional seq instead of half-recording it", () => {
+    const entry = createFrameEntry(corpusOptions());
+
+    // A negative seq was routed and counted but never advanced `lastSeq`, so the
+    // frame was delivered yet unrecorded; a fractional one made every later
+    // comparison ambiguous.
+    for (const seq of [-1, 1.5, 2 ** 60]) {
+      entry.handle(
+        JSON.stringify({
+          v: CORPUS_PROTOCOL_VERSION,
+          ch: "stream",
+          seq,
+          t: "term.output",
+          body: {},
+        }),
+      );
+    }
+
+    expect(entry.snapshot().perChannel.stream).toBe(0);
+    expect(entry.snapshot().lastSeq).toBe(0);
+    expect(entry.snapshot().violations).toBe(3);
+  });
+});
+
 /* ------------------------------------------------------------------ */
 /* frame type table                                                    */
 /* ------------------------------------------------------------------ */

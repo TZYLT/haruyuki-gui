@@ -89,6 +89,16 @@ const CHANNEL_NAMES: ReadonlySet<string> = new Set(CHANNELS);
  */
 const BRIDGE_VERSION_MISMATCH = "BRIDGE_VERSION_MISMATCH" as const;
 
+/**
+ * How many violations are kept verbatim.
+ *
+ * `snapshot().violations` counts every one ever recorded; this bounds only the
+ * list `violations()` returns. A renderer stays up for days and a broken peer
+ * can send junk at frame rate, so an unbounded diagnostic list is a memory leak
+ * with a friendly name. The newest entries are the ones a reader needs.
+ */
+const MAX_RECORDED_VIOLATIONS = 256;
+
 /** One side of the handshake verdict, as the frozen surface names it. */
 type FrameEntryState = "waiting" | "accepted" | "rejected";
 
@@ -228,6 +238,14 @@ class FrameEntryMachine implements FrameEntry {
   #perChannel: Record<FrameChannel, number> = { control: 0, stream: 0, bulk: 0 };
   #violations: Violation[] = [];
 
+  /**
+   * How many violations have been recorded, including ones no longer kept.
+   *
+   * `snapshot().violations` reports this rather than the array length, so the
+   * count a diagnostic reads stays truthful while the list stays bounded.
+   */
+  #violationCount = 0;
+
   /** Highest accepted watermark, or `null` before the first cursored page. */
   #highestWatermark: number | null = null;
 
@@ -309,7 +327,7 @@ class FrameEntryMachine implements FrameEntry {
         stream: this.#perChannel.stream,
         bulk: this.#perChannel.bulk,
       },
-      violations: this.#violations.length,
+      violations: this.#violationCount,
     };
   }
 
@@ -359,6 +377,22 @@ class FrameEntryMachine implements FrameEntry {
 
     this.#observeSeq(frame.seq);
 
+    // The handshake runs before the type table, not after it. The table is
+    // injected by the host and downstream items register only the types they
+    // decode, so a table without `bridge.ready` is a legal configuration -- and
+    // checking the table first meant that configuration silently switched the
+    // version guard off, letting a peer on an incompatible bridge have its pages
+    // routed and rendered. The verdict does not depend on whether this renderer
+    // has a decoder for the ready frame; it decides whether anything should be
+    // routed at all.
+    if (frame.ch === "control" && frame.t === "bridge.ready") {
+      this.#perChannel[frame.ch] += 1;
+      this.#touch();
+      this.#applyHandshake(frame.body);
+
+      return;
+    }
+
     if (this.#frameTypes !== null && !this.#frameTypes.has(frame.t)) {
       // No table entry means the renderer has no decoder for this payload, so
       // routing it would only make `perChannel` claim a frame nobody handled.
@@ -372,12 +406,6 @@ class FrameEntryMachine implements FrameEntry {
 
     this.#perChannel[frame.ch] += 1;
     this.#touch();
-
-    // Only a ready frame on the control channel can move the verdict; a ready
-    // frame anywhere else is a producer mistake this layer simply routes.
-    if (frame.ch === "control" && frame.t === "bridge.ready") {
-      this.#applyHandshake(frame.body);
-    }
   }
 
   /**
@@ -398,11 +426,18 @@ class FrameEntryMachine implements FrameEntry {
    * Apply the bulk cursor rules: the watermark and one page per
    * cursor).
    *
-   * A page with no usable cursor is accepted and counted. The recorded corpus
-   * contains such pages (`duplicate.jsonl`, `three-channels.jsonl` carry
+   * A page with no cursor field at all is accepted and counted. The recorded
+   * corpus contains such pages (`duplicate.jsonl`, `three-channels.jsonl` carry
    * `page.more` and nothing else), and its content is real: dropping a page for
    * a missing diagnostic field would lose data the user asked to see, while
    * keeping it costs only the two rules that need a cursor.
+   *
+   * A page that *carries* a cursor field of the wrong type is a different case
+   * and is refused. Accepting it would be worse than dropping it: the rules below
+   * are the only thing standing between a replayed or stale page and the screen,
+   * and a peer that sends `watermark: "40"` would skip both of them while looking
+   * like it had a cursor. This layer's whole job is to decide whether a payload
+   * is interpretable, and a cursor it cannot compare is not.
    *
    * @param frame a frame already known to be on the bulk channel
    * @returns `true` when the page is admitted, `false` when it was dropped
@@ -410,44 +445,95 @@ class FrameEntryMachine implements FrameEntry {
   #acceptBulkPage(frame: Envelope): boolean {
     const page = frame.page;
 
-    const watermark = page === null ? undefined : page["watermark"];
-    const token = page === null ? undefined : page["token"];
+    const hasWatermark = page !== null && "watermark" in page;
+    const hasToken = page !== null && "token" in page;
 
-    if (typeof watermark !== "number" || !Number.isFinite(watermark)) {
+    const watermark = hasWatermark ? page?.["watermark"] : undefined;
+    const token = hasToken ? page?.["token"] : undefined;
+
+    if (!hasWatermark && !hasToken) {
+      // No cursor at all: nothing to compare, so nothing to enforce.
       return true;
     }
 
-    if (typeof token !== "string") {
-      return true;
+    if (
+      hasWatermark &&
+      (typeof watermark !== "number" || !Number.isSafeInteger(watermark) || watermark < 0)
+    ) {
+      this.#record({ kind: "malformed-cursor" });
+
+      return false;
     }
+
+    if (hasToken && (typeof token !== "string" || token.length === 0)) {
+      this.#record({ kind: "malformed-cursor" });
+
+      return false;
+    }
+
+    const numericWatermark = hasWatermark ? (watermark as number) : null;
+    const stringToken = hasToken ? (token as string) : null;
 
     const highest = this.#highestWatermark;
 
     // A page from behind the cursor is a replayed or reordered page. Equal
     // is accepted: several pages of one snapshot share a watermark and are
     // told apart by their token.
-    if (highest !== null && watermark < highest) {
+    if (numericWatermark !== null && highest !== null && numericWatermark < highest) {
       this.#record({ kind: "stale-watermark" });
+
       return false;
     }
 
-    // C5-R07: the same cursor twice is the same page twice. The key cannot
-    // collide, because the watermark half is a number literal and therefore
-    // never contains the separator.
-    const key = `${String(watermark)}:${token}`;
+    // C5-R07: the same cursor twice is the same page twice. Deduplication needs
+    // both halves, so a page that names a watermark but no token is compared on
+    // the watermark alone and is not deduplicated -- stated here because the
+    // alternative (inventing a token) would make every such page a duplicate of
+    // the first.
+    if (numericWatermark !== null && stringToken !== null) {
+      // The key cannot collide: the watermark half is a number literal and
+      // therefore never contains the separator.
+      const key = `${String(numericWatermark)}:${stringToken}`;
 
-    if (this.#acceptedPages.has(key)) {
-      this.#record({ kind: "duplicate-page" });
-      return false;
+      if (this.#acceptedPages.has(key)) {
+        this.#record({ kind: "duplicate-page" });
+
+        return false;
+      }
+
+      this.#acceptedPages.add(key);
     }
 
-    this.#acceptedPages.add(key);
+    if (numericWatermark !== null && (highest === null || numericWatermark > highest)) {
+      this.#highestWatermark = numericWatermark;
 
-    if (highest === null || watermark > highest) {
-      this.#highestWatermark = watermark;
+      // Pages of an older snapshot can never be admitted again, so their keys
+      // are dead weight in a renderer that stays up for days.
+      this.#forgetPagesBefore(numericWatermark);
     }
 
     return true;
+  }
+
+  /**
+   * Drop dedup keys that belong to snapshots older than the current watermark.
+   *
+   * Calls arrive in watermark order often enough that this normally removes
+   * everything anyway; the guard is that a page can still arrive for the
+   * *current* watermark after it advances (pages of one snapshot interleave),
+   * so keys equal to the current watermark stay.
+   *
+   * @param watermark the watermark that just became current
+   */
+  #forgetPagesBefore(watermark: number): void {
+    for (const key of this.#acceptedPages) {
+      const separator = key.indexOf(":");
+      const keyed = Number(key.slice(0, separator));
+
+      if (Number.isFinite(keyed) && keyed < watermark) {
+        this.#acceptedPages.delete(key);
+      }
+    }
   }
 
   /**
@@ -499,6 +585,16 @@ class FrameEntryMachine implements FrameEntry {
    */
   #record(violation: Violation): void {
     const t = violation.t;
+
+    this.#violationCount += 1;
+
+    // The list is bounded and the count is not. A peer that keeps sending junk
+    // is exactly the peer this module was written to survive, so it must not be
+    // able to grow the renderer's memory by sending more of it: the newest
+    // entries are the ones worth keeping, and the oldest are dropped.
+    if (this.#violations.length >= MAX_RECORDED_VIOLATIONS) {
+      this.#violations.shift();
+    }
 
     this.#violations.push(
       t === undefined
@@ -595,7 +691,11 @@ function readEnvelope(value: unknown, expectedProtocolVersion: number): Envelope
 
   const seq = record["seq"];
 
-  if (typeof seq !== "number" || !Number.isFinite(seq)) {
+  // A safe non-negative integer, not merely a finite number. The issuer hands
+  // out exactly those, so anything else is a producer bug: a negative number
+  // routes but never advances `lastSeq` (a frame delivered yet unrecorded), and
+  // a fraction makes every later comparison ambiguous.
+  if (typeof seq !== "number" || !Number.isSafeInteger(seq) || seq < 0) {
     return { verdict: "malformed" };
   }
 
