@@ -194,6 +194,7 @@ import { FRAME_PROTOCOL_VERSION, FRAME_TYPES } from "@haruyuki/protocol";
 
 import { BATCH_WINDOW_DEFAULT_MS, createBatchWindow } from "./batch";
 import type { BatchWindow } from "./batch";
+import type { HandshakeState } from "./handshake";
 import { createBulkPlanner } from "./planner";
 import type { BulkPlanner, PlannedPage, SnapshotCursor } from "./planner";
 import { BridgeQueueOverflowError, DEFAULT_LIMITS, createBoundedQueue } from "./queue";
@@ -286,6 +287,23 @@ export interface FrameSenderOptions {
    * `BRIDGE_QUEUE_OVERFLOW`.
    */
   limits?: Partial<Record<FrameChannel, number>>;
+
+  /**
+   * The handshake this sender answers with, when the host wires one.
+   *
+   * Optional, and omitting it keeps the previous behaviour exactly: the sender
+   * emits whatever it is given. Passing it is what makes the silence after a
+   * production path rather than only in `./handshake`'s own tests -- the rule
+   * says nothing is sent after a `bridge.reject`, and a rule the sender does not
+   * consult is not a rule.
+   *
+   * The sender calls {@link HandshakeState.receive} for a `bridge.ready` frame
+   * and emits the reply it asks for, then refuses every later `send` once the
+   * outcome is `rejected`. It does not decide the verdict itself: version
+   * matching is the handshake's job, and the acceptance criteria give it that
+   * name.
+   */
+  handshake?: HandshakeState;
 }
 
 /** The sender a host holds for one bridge session. */
@@ -409,6 +427,9 @@ export function createFrameSender(options: FrameSenderOptions): FrameSender {
 
   const transport = options.transport;
 
+  /** The handshake this sender answers with, when the host wired one. */
+  const handshake = options.handshake;
+
   /** Accepted types; copied from the caller's set so later mutation cannot widen it. */
   const frameTypes: ReadonlySet<string> =
     options.frameTypes === undefined ? DEFAULT_FRAME_TYPES : new Set(options.frameTypes);
@@ -480,6 +501,27 @@ export function createFrameSender(options: FrameSenderOptions): FrameSender {
       throw closedError();
     }
 
+    // After a reject this side is silent. The check is first because it is
+    // the cheapest and the most final: a rejected bridge must not spend a number,
+    // stage a payload or produce a diagnostic for frames nobody will read.
+    if (handshake !== undefined && handshake.outcome.state === "rejected") {
+      throw rejectedError();
+    }
+
+    dispatch(frame);
+  }
+
+  /**
+   * The pipeline itself, without the two lifecycle guards.
+   *
+   * Split from `send` for one caller: the handshake's own reply. A reject is
+   * decided by the same call that must then send it, so routing that reply
+   * through the public entry point would have the guard refuse the very frame
+   * that announces the refusal.
+   *
+   * @param frame the frame to emit; it is read, never mutated
+   */
+  function dispatch(frame: Frame): void {
     assertSerializable(frame);
 
     if (frame.v !== FRAME_PROTOCOL_VERSION) {
@@ -522,6 +564,35 @@ export function createFrameSender(options: FrameSenderOptions): FrameSender {
 
     if (waitsForWindow(frame)) {
       submitToWindow(frame);
+
+      return;
+    }
+
+    // A `bridge.ready` is offered to the handshake, which answers with the one
+    // frame this side is allowed to send back -- or with nothing, when it is
+    // still waiting or has already answered. The reply goes through
+    // `dispatch`, the same path every other frame takes, so it is validated,
+    // numbered and delivered by exactly one implementation.
+    if (handshake !== undefined && frame.t === "bridge.ready") {
+      const reply = handshake.receive(frame.body);
+
+      if (reply.action === "none" || reply.body === undefined) {
+        // No reply: the ready is not forwarded either. It is the peer's
+        // announcement, addressed to this side.
+        return;
+      }
+
+      // `dispatch`, not `send`: the handshake has just decided to reject, so the
+      // public entry point is already closed by its own reject guard. The reply is
+      // the one frame that guard must let through.
+      dispatch({
+        v: FRAME_PROTOCOL_VERSION,
+        ch: "control",
+        seq: 0,
+        t: reply.action === "accept" ? "bridge.accept" : "bridge.reject",
+        body: reply.body,
+        reqId: (frame as Frame & { readonly reqId?: string }).reqId ?? reply.action,
+      } as Frame);
 
       return;
     }
@@ -826,6 +897,26 @@ export function createFrameSender(options: FrameSenderOptions): FrameSender {
     );
 
     error.name = "BridgeSenderClosedError";
+
+    return error;
+  }
+
+  /**
+   * The error `send` throws once the handshake has rejected the bridge.
+   *
+   * Carries no code, for the same reason the closed error does not: the four
+   * codes describe frame rejections, and a rejected bridge is a session state.
+   * It is a throw rather than a silent drop because `send` never fails quietly,
+   * and a producer that keeps sending after a reject has a wiring bug the caller
+   * needs to see.
+   */
+  function rejectedError(): Error {
+    const error = new Error(
+      "frame sender is muted: the bridge handshake rejected the peer, and no frame may follow " +
+        "after a reject; nothing was sent, and no further frame will be until a new session",
+    );
+
+    error.name = "BridgeSenderRejectedError";
 
     return error;
   }
