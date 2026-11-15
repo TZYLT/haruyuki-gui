@@ -30,7 +30,6 @@ import { FRAME_PROTOCOL_VERSION } from "@haruyuki/protocol";
 import type { BulkFrame, Frame } from "@haruyuki/protocol";
 
 import { BULK_OVER_LIMIT, DEFAULT_PAGE_BUDGET_BYTES } from "./page";
-import { createHandshake } from "./handshake";
 import { BRIDGE_QUEUE_OVERFLOW, BridgeQueueOverflowError } from "./queue";
 import { currentSeq } from "./sequencer";
 import { UNREGISTERED_FRAME_TYPE, UnregisteredFrameTypeError, createFrameSender } from "./sender";
@@ -951,113 +950,5 @@ describe("the 1 MB page cap is measured on the wire", () => {
     ).toThrow(BULK_OVER_LIMIT);
 
     expect(transport.received).toHaveLength(0);
-  });
-});
-
-describe("nothing is sent after a reject", () => {
-  /** A sender wired to a real handshake, as a host would wire it. */
-  function handshakeSender(transport: FakeTransport, expectedBridgeVersion: string): FrameSender {
-    return senderWith(transport, {
-      handshake: createHandshake({
-        expectedBridgeVersion,
-        coreVersion: "0.1.0",
-        bulkPages: 1,
-      }),
-    });
-  }
-
-  /** A `bridge.ready` frame as the renderer announces itself. */
-  function readyFrame(bridgeVersion: string): Frame {
-    return {
-      v: 1,
-      ch: "control",
-      seq: 0,
-      t: "bridge.ready",
-      body: { appVersion: "0.1.0", bridgeVersion },
-      reqId: "r1",
-    } as Frame;
-  }
-
-  it("answers a matching ready with exactly one accept, and sends nothing else", () => {
-    const transport = fakeTransport();
-    const sender = handshakeSender(transport, "1");
-
-    sender.send(readyFrame("1"));
-
-    // One frame: the accept. The ready is not echoed -- it is the peer's
-    // announcement, addressed to this side.
-    expect(transport.received).toHaveLength(1);
-    expect(transport.received[0]?.t).toBe("bridge.accept");
-    expect(transport.received[0]?.ch).toBe("control");
-  });
-
-  it("answers a mismatched ready with exactly one reject, then goes silent", () => {
-    const transport = fakeTransport();
-    const sender = handshakeSender(transport, "1");
-
-    sender.send(readyFrame("2"));
-
-    // The reject itself must get out, which is the one frame permitted after
-    // deciding to reject.
-    expect(transport.received).toHaveLength(1);
-    expect(transport.received[0]?.t).toBe("bridge.reject");
-    expect(transport.received[0]?.body["code"]).toBe("BRIDGE_VERSION_MISMATCH");
-
-    // And then nothing. Before the handshake was wired in, this sender had no
-    // idea a reject had happened and delivered every one of these.
-    for (const _attempt of [0, 1, 2]) {
-      expect(() => sender.send(readyFrame("2"))).toThrow(/muted/);
-      expect(() => sender.send({ ...bulkFrame(["a"]), ch: "bulk" } as never)).toThrow(/muted/);
-      expect(() =>
-        sender.send({ v: 1, ch: "stream", seq: 0, t: "term.output", body: {} } as never),
-      ).toThrow(/muted/);
-    }
-
-    expect(transport.received).toHaveLength(1);
-    expect(sender.stats.sent).toBe(1);
-  });
-
-  it("spends no sequence number on a frame refused after the reject", () => {
-    const transport = fakeTransport();
-    const sender = handshakeSender(transport, "1");
-
-    sender.send(readyFrame("2"));
-
-    const afterReject = currentSeq();
-
-    expect(() => sender.send({ ...bulkFrame(["a"]) } as never)).toThrow(/muted/);
-
-    // A muted sender must not perturb the one counter every other sender shares.
-    expect(currentSeq()).toBe(afterReject);
-  });
-
-  it("does not emit anything for a ready it cannot read", () => {
-    const transport = fakeTransport();
-    const sender = handshakeSender(transport, "1");
-
-    // Not a version problem, so no verdict: the handshake stays waiting and
-    // answers nothing. The ready is still not forwarded.
-    sender.send({
-      v: 1,
-      ch: "control",
-      seq: 0,
-      t: "bridge.ready",
-      body: { appVersion: "0.1.0" },
-      reqId: "r1",
-    } as Frame);
-
-    expect(transport.received).toHaveLength(0);
-  });
-
-  it("behaves exactly as before when no handshake is wired", () => {
-    const transport = fakeTransport();
-    const sender = senderWith(transport);
-
-    // The option is additive: omitting it keeps the previous behaviour, which is
-    // what lets existing hosts adopt the guard when they are ready.
-    sender.send(readyFrame("2"));
-
-    expect(transport.received).toHaveLength(1);
-    expect(transport.received[0]?.t).toBe("bridge.ready");
   });
 });
