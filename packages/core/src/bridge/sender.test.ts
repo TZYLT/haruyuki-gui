@@ -29,7 +29,7 @@ import { describe, expect, it } from "vitest";
 import { FRAME_PROTOCOL_VERSION } from "@haruyuki/protocol";
 import type { BulkFrame, Frame } from "@haruyuki/protocol";
 
-import { BULK_OVER_LIMIT } from "./page";
+import { BULK_OVER_LIMIT, DEFAULT_PAGE_BUDGET_BYTES } from "./page";
 import { BRIDGE_QUEUE_OVERFLOW, BridgeQueueOverflowError } from "./queue";
 import { currentSeq } from "./sequencer";
 import { UNREGISTERED_FRAME_TYPE, UnregisteredFrameTypeError, createFrameSender } from "./sender";
@@ -501,8 +501,30 @@ describe("bulk paging", () => {
     // `${watermark}:${token}`, and every page of one snapshot shares the
     // watermark, so a shared token would make the renderer drop pages 2..n as
     // duplicates of page 1.
-    expect(tokens).toEqual(["snap-multi#1", "snap-multi#2", "snap-multi#3"]);
+    //
+    // The derived name is length-prefixed rather than a bare `#<n>` suffix. A
+    // suffix lets the caller collide with the derivation: token "a" on a
+    // two-page snapshot and token "a#1" on a one-page snapshot both produce
+    // `a#1`, and the second snapshot vanished as a duplicate.
+    expect(tokens).toEqual(["10:snap-multi#1", "10:snap-multi#2", "10:snap-multi#3"]);
     expect(new Set(tokens).size).toBe(3);
+  });
+
+  it("cannot be made to collide with a token the caller chose", () => {
+    const transport = fakeTransport();
+    const sender = senderWith(transport);
+
+    // Two snapshots at the same watermark. The second names itself exactly the
+    // way the first one's second page is named by a naive `#<n>` derivation.
+    sender.send(bulkFrame(singlePageItems(2), { watermark: 12, token: "a", more: true }));
+    sender.send(bulkFrame(["z"], { watermark: 12, token: "a#1", more: true }));
+
+    const keys = transport.received.map(
+      (frame) => `${String(frame.page?.watermark)}:${String(frame.page?.token)}`,
+    );
+
+    // Every page is distinguishable, so the renderer keeps the whole snapshot.
+    expect(new Set(keys).size).toBe(keys.length);
   });
 
   it("sends an empty snapshot as one empty page rather than nothing", () => {
@@ -517,18 +539,57 @@ describe("bulk paging", () => {
     expect(transport.received[0]?.page?.more).toBe(false);
   });
 
-  it("mints a watermark when the caller supplied no usable one", () => {
+  it("mints a watermark when the caller supplied none", () => {
     const transport = fakeTransport();
     const sender = senderWith(transport);
 
     const expected = nextNumbers(1);
 
-    sender.send(bulkFrame(["alpha"], { watermark: Number.NaN, token: "", more: true }));
+    // No `page` key at all: absence is the only way to say "I did not number
+    // this snapshot", now that 0 is a real watermark. An `undefined` value would
+    // be rejected by the serializability guard, correctly -- `undefined` is not
+    // JSON -- so the key is simply not written.
+    const { page: _omitted, ...unpaged } = bulkFrame(["alpha"]);
 
-    // The snapshot's first `seq` stands in for a missing watermark, and the
+    sender.send(unpaged as BulkFrame);
+
+    // The snapshot's first `seq` stands in for an absent watermark, and the
     // token follows it, so a newer snapshot compares strictly greater.
     expect(transport.received[0]?.page?.watermark).toBe(expected[0]);
     expect(transport.received[0]?.page?.token).toBe(`snap-${String(expected[0])}`);
+  });
+
+  it("treats zero as a real watermark rather than as absent", () => {
+    const transport = fakeTransport();
+    const sender = senderWith(transport);
+
+    sender.send(bulkFrame(["alpha"], { watermark: 0, token: "zero", more: false }));
+
+    // 0 is a non-negative safe integer, so it survives. Conflating it with
+    // "absent" would silently renumber a snapshot the caller had numbered.
+    expect(transport.received[0]?.page?.watermark).toBe(0);
+    expect(transport.received[0]?.page?.token).toBe("zero");
+  });
+
+  it("replaces a negative or fractional watermark instead of shipping it", () => {
+    const transport = fakeTransport();
+    const sender = senderWith(transport);
+
+    // The renderer drops any page behind its cursor, and its cursor only moves
+    // forward: a negative watermark is dropped on arrival, and a fractional one
+    // makes every later comparison ambiguous. Both are unusable, so both are
+    // widened to "absent" and replaced by the snapshot's own seq rather than
+    // shipped.
+    sender.send(bulkFrame(["alpha"], { watermark: -1, token: "neg", more: false }));
+    sender.send(bulkFrame(["beta"], { watermark: 1.5, token: "frac", more: false }));
+
+    const watermarks = transport.received.map((frame) => frame.page?.watermark);
+
+    expect(
+      watermarks.every((value) => typeof value === "number" && Number.isSafeInteger(value)),
+    ).toBe(true);
+    expect(watermarks).not.toContain(-1);
+    expect(watermarks).not.toContain(1.5);
   });
 
   it("delivers a body that is not a list as one whole page", () => {
@@ -758,5 +819,136 @@ describe("end to end", () => {
     }
 
     expect(transport.received).toHaveLength(2);
+  });
+
+  it("keeps an own __proto__ field when it copies a body onto each page", () => {
+    const transport = fakeTransport();
+    const sender = senderWith(transport);
+
+    // A body that arrived through JSON.parse can carry an own "__proto__" key.
+    // Copying with `body[key] = value` sets the prototype instead of creating a
+    // field, so the field vanished from the page -- silent data loss in the one
+    // layer whose job is to not have any.
+    const body = JSON.parse('{"__proto__":{"note":"kept"},"items":["a","b"]}') as Record<
+      string,
+      unknown
+    >;
+
+    sender.send({ ...bulkFrame([]), body });
+
+    for (const frame of transport.received) {
+      expect(Object.keys(frame.body)).toContain("__proto__");
+    }
+  });
+});
+
+describe("frame metadata the contract fixes", () => {
+  it("refuses a protocol version other than the one this sender emits", () => {
+    const transport = fakeTransport();
+    const sender = senderWith(transport);
+
+    // The peer drops any other version as a mismatch, so accepting it here meant
+    // counting a frame as sent that the renderer would never route.
+    expect(() => sender.send({ ...bulkFrame(["a"]), v: 9 } as never)).toThrow(RangeError);
+    expect(transport.received).toHaveLength(0);
+    expect(sender.stats.sent).toBe(0);
+  });
+
+  it("refuses a type sent on a channel its row does not declare", () => {
+    const transport = fakeTransport();
+    const sender = senderWith(transport);
+
+    // The table's channel was never read, so both of these shipped. `bulk.page`
+    // on `stream` bypassed paging entirely and put a 1.8 MB payload on the wire;
+    // `term.output` on `bulk` was sliced into pages, losing the fixed-slice
+    // semantics the terminal depends on.
+    expect(() => sender.send({ ...bulkFrame(["a"]), ch: "stream" } as never)).toThrow(
+      /registered on the "bulk" channel/,
+    );
+
+    expect(() =>
+      sender.send({ v: 1, ch: "bulk", seq: 0, t: "term.output", body: {} } as never),
+    ).toThrow(/registered on the "stream" channel/);
+
+    expect(transport.received).toHaveLength(0);
+  });
+});
+
+describe("backlog accounting for a snapshot that cannot fit", () => {
+  it("refuses an oversized snapshot as one atomic unit, and keeps refusing", () => {
+    const transport = fakeTransport();
+    const sender = senderWith(transport);
+
+    // One item per page, and far more pages than the bulk limit allows. The unit
+    // is atomic: the whole snapshot either fits the backlog or none of it is
+    // staged, so this can never be sent and a retry can never succeed.
+    //
+    // The page count is asked for before the pages are built. That is a peak
+    // memory property rather than a timing one -- measuring each item dominates
+    // either way -- so it is asserted by construction in `send`, not here.
+    const items = Array.from({ length: 400 }, () => "x".repeat(600 * 1024));
+
+    expect(() => sender.send({ ...bulkFrame([]), body: items } as never)).toThrow(
+      BRIDGE_QUEUE_OVERFLOW,
+    );
+
+    expect(transport.received).toHaveLength(0);
+
+    // Nothing is left behind, so a retry after a flush gets the same honest
+    // answer instead of a partially accepted unit. This is the property that
+    // makes the refusal recoverable-or-not answerable: there is no stuck state.
+    sender.flush();
+
+    expect(() => sender.send({ ...bulkFrame([]), body: items } as never)).toThrow(
+      BRIDGE_QUEUE_OVERFLOW,
+    );
+
+    expect(transport.received).toHaveLength(0);
+  });
+
+  it("still sends a snapshot that fits the backlog", () => {
+    const transport = fakeTransport();
+    const sender = senderWith(transport);
+
+    // The mirror of the case above: the count is used to admit, not only to
+    // refuse, so a paging change that always refused would fail here.
+    const items = Array.from({ length: 3 }, () => "x".repeat(600 * 1024));
+
+    sender.send({ ...bulkFrame([]), body: items } as never);
+
+    expect(transport.received).toHaveLength(3);
+  });
+});
+
+describe("the 1 MB page cap is measured on the wire", () => {
+  it("keeps every page within the budget even when the body is heavy", () => {
+    const transport = fakeTransport();
+    const sender = senderWith(transport);
+
+    // The snapshot repeats a 900 KB sibling field on every page, and each item
+    // is 30 KB. Pricing only `items` let each page put ~1.9 MB on the wire.
+    const meta = "m".repeat(900 * 1024);
+    const items = Array.from({ length: 40 }, () => "x".repeat(30 * 1024));
+
+    sender.send({ ...bulkFrame([]), body: { meta, items } } as never);
+
+    expect(transport.received.length).toBeGreaterThan(0);
+
+    for (const payload of transport.payloads) {
+      expect(new TextEncoder().encode(payload).byteLength).toBeLessThanOrEqual(
+        DEFAULT_PAGE_BUDGET_BYTES,
+      );
+    }
+  });
+
+  it("refuses an item that cannot fit a page even alone", () => {
+    const transport = fakeTransport();
+    const sender = senderWith(transport);
+
+    expect(() =>
+      sender.send({ ...bulkFrame([]), body: ["x".repeat(2 * 1024 * 1024)] } as never),
+    ).toThrow(BULK_OVER_LIMIT);
+
+    expect(transport.received).toHaveLength(0);
   });
 });

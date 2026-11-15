@@ -190,11 +190,12 @@
  */
 
 import type { Frame, FrameChannel } from "@haruyuki/protocol";
-import { FRAME_TYPES } from "@haruyuki/protocol";
+import { FRAME_PROTOCOL_VERSION, FRAME_TYPES } from "@haruyuki/protocol";
 
 import { BATCH_WINDOW_DEFAULT_MS, createBatchWindow } from "./batch";
 import type { BatchWindow } from "./batch";
-import { BULK_OVER_LIMIT, DEFAULT_PAGE_BUDGET_BYTES, createPager } from "./page";
+import { createBulkPlanner } from "./planner";
+import type { BulkPlanner, PlannedPage, SnapshotCursor } from "./planner";
 import { BridgeQueueOverflowError, DEFAULT_LIMITS, createBoundedQueue } from "./queue";
 import { nextSeq } from "./sequencer";
 import { assertSerializable } from "./validate";
@@ -239,35 +240,11 @@ export class UnregisteredFrameTypeError extends Error {
  * Thrown by `send` for a bulk snapshot whose first unpaged item cannot fit a
  * page even on its own.
  *
- * The pager answers that case with an empty page and `more: true` (it cannot
- * know whether the caller can still make progress), so the decision -- and the
- * error code -- belong here, around the pager rather than inside it.
+ * Re-exported from `./planner`, which is where the decision now lives: it owns
+ * the page budget, so it owns the refusal. The name is kept here because callers
+ * catch it next to `send` and because it shipped in this module's public surface.
  */
-export class BulkOverLimitError extends Error {
-  /** Branch on this rather than on `message`. */
-  readonly code = BULK_OVER_LIMIT;
-
-  /** Index of the first item that does not fit a page on its own. */
-  readonly offset: number;
-
-  /** The page budget the item was measured against, in UTF-8 bytes. */
-  readonly budget: number;
-
-  /**
-   * @param offset index of the offending item within the snapshot
-   * @param budget the page budget it does not fit
-   */
-  constructor(offset: number, budget: number) {
-    super(
-      `bulk snapshot cannot be paged: the item at offset ${String(offset)} does not fit a page ` +
-        `budget of ${String(budget)} bytes on its own, so no sequence of pages covers it; split ` +
-        "the item itself, or send it as a page you know exceeds the budget",
-    );
-    this.name = "BulkOverLimitError";
-    this.offset = offset;
-    this.budget = budget;
-  }
-}
+export { BulkOverLimitError } from "./planner";
 
 /** Construction options for {@link createFrameSender}. */
 export interface FrameSenderOptions {
@@ -398,7 +375,7 @@ const COALESCING: ReadonlyMap<string, string> = new Map(
  * cap; the frozen options have no budget field, so a caller that needs a
  * needs a different split pages the snapshot itself.
  */
-const PAGER = createPager();
+const PLANNER = createBulkPlanner();
 
 /** What one emitted frame needs from its plan, before a number is assigned. */
 interface PlannedEmission {
@@ -408,12 +385,6 @@ interface PlannedEmission {
   readonly more: boolean | null;
   /** The snapshot cursor the caller supplied, when it supplied a usable one. */
   readonly cursor: SnapshotCursor | null;
-}
-
-/** A caller-supplied snapshot cursor, with unusable halves widened to `null`. */
-interface SnapshotCursor {
-  readonly watermark: number | null;
-  readonly token: string | null;
 }
 
 /**
@@ -511,6 +482,15 @@ export function createFrameSender(options: FrameSenderOptions): FrameSender {
 
     assertSerializable(frame);
 
+    if (frame.v !== FRAME_PROTOCOL_VERSION) {
+      throw new RangeError(
+        `unsupported frame protocol version: ${String(frame.v)}; this sender emits ` +
+          `FRAME_PROTOCOL_VERSION ${String(FRAME_PROTOCOL_VERSION)}, and a frame carrying any ` +
+          "other value would be dropped by the peer as a version mismatch after this side had " +
+          "already counted it as sent",
+      );
+    }
+
     if (!frameTypes.has(frame.t)) {
       throw new UnregisteredFrameTypeError(frame.t);
     }
@@ -522,6 +502,24 @@ export function createFrameSender(options: FrameSenderOptions): FrameSender {
       );
     }
 
+    // The table declares a channel for every registered type, and the envelope
+    // declares another. Until this check existed both were accepted and the
+    // table's half was never read: `bulk.page` on `stream` shipped a single
+    // 1.8 MB payload with no paging and no limit, and `term.output` on `bulk` was
+    // sliced into three frames, losing the fixed-slice semantics the terminal
+    // depends on. The declared channel is what every consumer routes on, so a
+    // mismatch is a producer bug that must stop here.
+    const declared = FRAME_TYPES[frame.t as keyof typeof FRAME_TYPES] as
+      { readonly ch: FrameChannel } | undefined;
+
+    if (declared !== undefined && declared.ch !== frame.ch) {
+      throw new RangeError(
+        `frame type "${frame.t}" is registered on the "${declared.ch}" channel but was sent on ` +
+          `"${frame.ch}"; the registered channel is what every consumer routes on, so the two ` +
+          "must agree",
+      );
+    }
+
     if (waitsForWindow(frame)) {
       submitToWindow(frame);
 
@@ -529,11 +527,19 @@ export function createFrameSender(options: FrameSenderOptions): FrameSender {
     }
 
     // Planning can still refuse the frame (`BULK_OVER_LIMIT`), and the capacity
-    // check can refuse the unit (`BRIDGE_QUEUE_OVERFLOW`); both run before a
+    // check can refuse the unit (`BRIDGE_QUEUE_OVERFLOW`). Both run before a
     // single number is issued.
+    //
+    // The page count is asked for before the pages are built: a snapshot of four
+    // thousand pages that cannot fit the backlog is refused without first
+    // materialising four thousand bodies, which took seconds and gigabytes for
+    // an answer that is a division.
+    const count = frame.ch === "bulk" ? PLANNER.countPages(frame) : 1;
+
+    assertCapacity(frame.ch, count);
+
     const plan = planEmissions(frame);
 
-    assertCapacity(frame.ch, plan.length);
     emit(frame, plan);
   }
 
@@ -607,8 +613,8 @@ export function createFrameSender(options: FrameSenderOptions): FrameSender {
    * Turn one frame into the emissions it produces, without numbering any.
    *
    * A non-bulk frame is exactly one emission. A bulk frame is split by the
-   * pager, which is the only part that decides where a page ends; this function
-   * only decides what each page's body and cursor look like.
+   * planner, which is the only part that decides where a page ends and what that
+   * page costs on the wire; this function only asks it.
    *
    * @param frame a frame whose type is registered and whose value is serializable
    * @returns one emission per frame to send, never empty
@@ -619,40 +625,13 @@ export function createFrameSender(options: FrameSenderOptions): FrameSender {
       return [{ body: frame.body, more: null, cursor: null }];
     }
 
-    const cursor = readCursor(frame);
-    const items = readPageItems(frame.body);
+    const planned = PLANNER.plan(frame);
 
-    if (items === null) {
-      // Nothing to page: deliver the body as it stands, in one frame.
-      return [{ body: frame.body, more: false, cursor }];
-    }
-
-    if (items.length === 0) {
-      // An empty snapshot is one empty page, not silence.
-      return [{ body: pageBody(frame.body, [], 1), more: false, cursor }];
-    }
-
-    const emissions: PlannedEmission[] = [];
-    let offset = 0;
-
-    while (offset < items.length) {
-      const page = PAGER.paginate(items, offset);
-
-      if (page.items.length === 0) {
-        // The pager's only empty-with-more answer: the item at `offset` does not
-        // fit a page on its own, so no page sequence covers this snapshot.
-        throw new BulkOverLimitError(offset, DEFAULT_PAGE_BUDGET_BYTES);
-      }
-
-      emissions.push({
-        body: pageBody(frame.body, page.items, emissions.length + 1),
-        more: page.more,
-        cursor,
-      });
-      offset += page.items.length;
-    }
-
-    return emissions;
+    return planned.pages.map((page: PlannedPage) => ({
+      body: page.body,
+      more: page.more,
+      cursor: planned.cursor,
+    }));
   }
 
   /**
@@ -742,10 +721,10 @@ export function createFrameSender(options: FrameSenderOptions): FrameSender {
       body: planned.body,
       page: {
         watermark,
-        // One token per page: the renderer deduplicates on the
-        // (watermark, token) pair, so a shared token would make it drop every
-        // page after the first.
-        token: count === 1 ? base : `${base}#${String(index + 1)}`,
+        // One token per page, derived so it cannot collide with a name the
+        // caller could have chosen. See `derivedToken` for why `#<n>` alone is
+        // not enough.
+        token: count === 1 ? base : derivedToken(base, index + 1),
         more: planned.more,
       },
     };
@@ -887,87 +866,24 @@ function mintedToken(watermark: number): string {
 }
 
 /**
- * Read the cursor a caller put on a bulk frame.
+ * Derive the token for one page of a multi-page snapshot.
  *
- * A caller-supplied watermark and token are optional here: an unusable half is
- * widened to `null` and replaced at emission time, which keeps one bad field
- * from costing the whole snapshot.
+ * A shared token per snapshot is not an option: the renderer deduplicates a page
+ * on `` `${watermark}:${token}` `` (C5-R07), so one token would make it drop
+ * every page after the first and the snapshot would arrive one page long.
  *
- * @param frame the caller's frame
- * @returns the readable halves, or `null` when the frame carries no cursor
+ * Appending `#<n>` to the caller's token is not an option either. The caller
+ * chooses the base, so `token: "a"` on a two-page snapshot and `token: "a#1"` on
+ * a one-page snapshot both produce `a#1` at the same watermark -- a real
+ * collision, which silently dropped a whole snapshot. The derived name is
+ * therefore length-prefixed: a caller cannot construct `5:a#1` by appending,
+ * because the digits before the first `:` are a length it would have to write
+ * and the base it writes is its own token.
+ *
+ * @param base the caller's token, or the minted one
+ * @param page the 1-based page index
+ * @returns the token for this page
  */
-function readCursor(frame: Frame): SnapshotCursor | null {
-  const candidate = (frame as Frame & { readonly page?: unknown }).page;
-
-  if (candidate === null || typeof candidate !== "object" || Array.isArray(candidate)) {
-    return null;
-  }
-
-  const record = candidate as Record<string, unknown>;
-  const watermark = record["watermark"];
-  const token = record["token"];
-
-  return {
-    watermark: typeof watermark === "number" && Number.isFinite(watermark) ? watermark : null,
-    token: typeof token === "string" && token.length > 0 ? token : null,
-  };
-}
-
-/**
- * The list of items a bulk body offers for paging.
- *
- * Two shapes are accepted: the body IS the array, or the body carries an
- * `items` array. Anything else has nothing to split and is delivered whole.
- *
- * @param body the caller's bulk body
- * @returns the items, or `null` when this body is not a list
- */
-function readPageItems(body: unknown): readonly unknown[] | null {
-  if (Array.isArray(body)) {
-    return body as readonly unknown[];
-  }
-
-  if (body === null || typeof body !== "object") {
-    return null;
-  }
-
-  const items = (body as Record<string, unknown>)["items"];
-
-  return Array.isArray(items) ? (items as readonly unknown[]) : null;
-}
-
-/**
- * Build one page's body.
- *
- * Snapshot-level fields are repeated on every page so a page can be read on its
- * own -- a page is independently resumable, and a page that refers to fields it
- * does not carry is not. `page` and `items` are the two keys this layer owns, so
- * the caller's versions of them are replaced rather than inherited.
- *
- * @param original the caller's body
- * @param items this page's slice
- * @param page the 1-based page number
- * @returns the body to put on the wire
- */
-function pageBody(
-  original: unknown,
-  items: readonly unknown[],
-  page: number,
-): Record<string, unknown> {
-  const body: Record<string, unknown> = {};
-
-  if (!Array.isArray(original) && original !== null && typeof original === "object") {
-    const record = original as Record<string, unknown>;
-
-    for (const key of Object.keys(record)) {
-      if (key !== "items" && key !== "page") {
-        body[key] = record[key];
-      }
-    }
-  }
-
-  body["page"] = page;
-  body["items"] = items;
-
-  return body;
+function derivedToken(base: string, page: number): string {
+  return `${String(base.length)}:${base}#${String(page)}`;
 }

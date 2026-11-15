@@ -30,12 +30,7 @@ export const BRIDGE_LAYER = "bridge" as const;
  * vocabulary -- a caller that catches `BRIDGE_QUEUE_OVERFLOW` also has to be
  * able to name `UNREGISTERED_FRAME_TYPE` and `BULK_OVER_LIMIT`.
  */
-export {
-  BulkOverLimitError,
-  UNREGISTERED_FRAME_TYPE,
-  UnregisteredFrameTypeError,
-  createFrameSender,
-} from "./sender";
+export { UNREGISTERED_FRAME_TYPE, UnregisteredFrameTypeError, createFrameSender } from "./sender";
 export type { FrameSender, FrameSenderOptions } from "./sender";
 
 /* The serializer guard: what "a body must be JSON" means, and its error. */
@@ -76,6 +71,17 @@ export type { BatchWindow, BatchWindowOptions } from "./batch";
  */
 export { BULK_OVER_LIMIT, DEFAULT_PAGE_BUDGET_BYTES, createPager } from "./page";
 export type { PageResult, Pager } from "./page";
+
+/*
+ * The bulk planner: how one snapshot becomes the pages that go on the wire.
+ *
+ * Separate from the pager because the two measure different things: the pager
+ * prices a list of items, the planner prices a whole frame (envelope, repeated
+ * snapshot fields and cursor included), which is the unit the contract's 1 MB
+ * cap actually applies to.
+ */
+export { BulkOverLimitError, createBulkPlanner, readCursor } from "./planner";
+export type { BulkPlan, BulkPlanner, PlannedPage, SnapshotCursor } from "./planner";
 
 /* The handshake machine and its three frozen bodies. */
 export { BRIDGE_VERSION_MISMATCH, createHandshake, evaluateReady } from "./handshake";
