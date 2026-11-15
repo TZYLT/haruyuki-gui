@@ -13,9 +13,11 @@
  * - construction, so the discriminated union is proven usable from both sides
  *   and a consumer can assign either channel to the plain `Frame`.
  *
- * The frame type literals below are all rows of `FRAME_TYPES` on purpose:
- * `scripts/check-frame.mjs` scans this file like any other source, and an
- * invented literal here would be an unregistered frame type in the repository.
+ * The frame type literals below are all rows of `FRAME_TYPES` on purpose. The
+ * gate does NOT require it: `scripts/check-frame.mjs` skips `*.test.ts(x)`,
+ * because a test legitimately writes literals nobody should register. Using real
+ * rows here keeps the example frames honest, and it is a convention this file
+ * keeps for its own readers rather than a rule the gate enforces.
  */
 
 import { describe, expect, it } from "vitest";
@@ -64,7 +66,7 @@ describe("FRAME_TYPES", () => {
     }
   });
 
-  it("carries all five columns on every row", () => {
+  it("carries all four columns on every row", () => {
     // The columns are required by `satisfies Record<string, FrameTypeSpec>`, so
     // this is a runtime second opinion: it also proves no row was written with
     // an undefined or inherited value.

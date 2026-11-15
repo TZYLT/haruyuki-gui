@@ -273,6 +273,24 @@ describe("check-frame: false positives", () => {
 
     expect(run.status, run.output).toBe(0);
   });
+
+  it("still reports a backtick literal that is not registered", () => {
+    const root = writeTree({
+      ...EMPTY_PACKAGES,
+      // The registered case above passes whether or not template literals are
+      // read at all, so it cannot tell "supports backticks" from "ignores the
+      // line". An UNREGISTERED backtick literal can: it is only reported when
+      // the branch really reads the value.
+      "packages/core/src/send.ts":
+        "export const frame = { ch: `bulk`, v: 1, t: `bulk.pgae`, body: {} };\n",
+      "packages/protocol/src/frame/frame-types.ts": TABLE,
+    });
+
+    const run = runGateAt(root);
+
+    expect(run.status, run.output).toBe(1);
+    expect(run.output).toContain("bulk.pgae");
+  });
 });
 
 describe("check-frame: row requirements", () => {
@@ -290,5 +308,106 @@ describe("check-frame: row requirements", () => {
     expect(run.status, run.output).toBe(1);
     expect(run.output).toContain("frame-summary");
     expect(run.output).toContain("bridge.ready");
+  });
+});
+
+describe("check-frame: unreadable source is not clean source", () => {
+  it("sees a frame literal written in a .tsx file", () => {
+    // Parsing a .tsx file as .ts turns JSX into a syntax error. The recovered
+    // tree drops the element, so a literal inside a JSX attribute used to be
+    // invisible and the gate reported PASS. Every .tsx file in the repository
+    // parsed with errors before this case existed.
+    const root = writeTree({
+      ...EMPTY_PACKAGES,
+      "packages/ui/src/bridge/pane.tsx":
+        "export function Pane(): unknown {\n" +
+        '  return <div data-f={{ v: 1, ch: "stream", seq: 3, t: "typo.in.tsx", body: {} }} />;\n' +
+        "}\n",
+      "packages/protocol/src/frame/frame-types.ts": TABLE,
+    });
+
+    const run = runGateAt(root);
+
+    expect(run.status, run.output).toBe(1);
+    expect(run.output).toContain("typo.in.tsx");
+  });
+
+  it("treats a spread frame type as unreadable instead of registered", () => {
+    const root = writeTree({
+      ...EMPTY_PACKAGES,
+      // The channel arrives through the spread, so the old "must share an object
+      // literal with ch/v/seq/body" rule classified the whole object as
+      // unrelated and said nothing. A transposed letter reached the wire.
+      "packages/core/src/send.ts":
+        'const envelope = { ch: "stream", v: 1, seq: 3 };\n' +
+        'export const frame = { t: "typo.in.spread", ...envelope };\n',
+      "packages/protocol/src/frame/frame-types.ts": TABLE,
+    });
+
+    const run = runGateAt(root);
+
+    expect(run.status, run.output).toBe(1);
+    expect(run.output).toContain("frame-type-unresolved");
+    expect(run.output).toContain("typo.in.spread");
+  });
+
+  it("refuses a table assembled through a spread instead of reporting it empty", () => {
+    const root = writeTree({
+      ...EMPTY_PACKAGES,
+      // Reporting "empty table" here would be a wrong diagnosis, and reporting
+      // PASS would silently unregister every row. Exit 2 says "the gate cannot
+      // read this", which is the only honest answer.
+      "packages/protocol/src/frame/frame-types.ts": `const EXTRA = {
+  "bulk.page": { ch: "bulk", coalescible: "never", since: "C5", summary: "one page" },
+} as const;
+
+export const FRAME_TYPES = {
+  ...EXTRA,
+  "bridge.ready": { ch: "control", coalescible: "never", since: "C5", summary: "ready" },
+} as const satisfies Record<string, FrameTypeSpec>;
+`,
+    });
+
+    const run = runGateAt(root);
+
+    expect(run.status, run.output).toBe(2);
+    expect(run.output).toContain("spreads");
+  });
+
+  it("does not report a summary it cannot read as a missing summary", () => {
+    const root = writeTree({
+      ...EMPTY_PACKAGES,
+      // A shared constant is correct TypeScript. Saying "has no summary" would
+      // block a legal refactor, so the two cases get different rule ids.
+      "packages/protocol/src/frame/frame-types.ts": `const READY_SUMMARY = "renderer announces itself";
+
+export const FRAME_TYPES = {
+  "bridge.ready": { ch: "control", coalescible: "never", since: "C5", summary: READY_SUMMARY },
+} as const satisfies Record<string, FrameTypeSpec>;
+`,
+    });
+
+    const run = runGateAt(root);
+
+    expect(run.status, run.output).toBe(1);
+    expect(run.output).toContain("frame-summary-unresolved");
+    expect(run.output).not.toContain("has no summary");
+  });
+
+  it("does not mistake a version stamp for a frame envelope", () => {
+    const root = writeTree({
+      ...EMPTY_PACKAGES,
+      // `v` and `seq` are ordinary short keys. Keying on them flagged an SVG
+      // theme descriptor and an onboarding step as unregistered frame types.
+      "packages/core/src/theme.ts":
+        'export const svg = { v: 2, t: "dark.high-contrast", label: "theme" };\n' +
+        'export const step = { seq: 3, t: "onboarding.welcome", text: "hi" };\n',
+      "packages/protocol/src/frame/frame-types.ts": TABLE,
+    });
+
+    const run = runGateAt(root);
+
+    expect(run.status, run.output).toBe(0);
+    expect(run.output).toContain("PASS");
   });
 });

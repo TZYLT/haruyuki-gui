@@ -16,7 +16,7 @@
  *        fixtures and hosts branch on them.
  *
  *   Row shape is deliberately NOT checked here. `satisfies Record<string,
- *   FrameTypeSpec>` already proves every existing row has the five fields, and
+ *   FrameTypeSpec>` already proves every existing row has the four fields, and
  *   a hand-rolled copy of that check would be a weaker second opinion. What
  *   the compiler cannot see is the set of rows against the set of uses.
  *
@@ -44,7 +44,15 @@ import ts from "typescript";
 
 import { toPosix, runGate } from "./lib/gate-cli.mjs";
 
-/** Directories that hold workspace source. Mirrors check-boundaries' scan set. */
+/**
+ * Directories that hold workspace source.
+ *
+ * Narrower than `check-boundaries`' scan set on purpose: that gate also reads
+ * `scripts/`, while this one reads only the packages whose code can emit a
+ * frame. A gate scripts/ file writing a frame type is rare enough that the
+ * difference is not worth a second dialect, but the two sets are NOT the same
+ * and this comment says so rather than claiming a mirror.
+ */
 const SCAN_DIRS = ["packages", "apps"];
 
 /** File extensions the scan reads. */
@@ -95,12 +103,24 @@ const RULES = {
   emptyTable: "frame-table-empty",
   unregistered: "frame-type-unregistered",
   badSummary: "frame-summary",
+  unresolvedSummary: "frame-summary-unresolved",
+  unresolvedLiteral: "frame-type-unresolved",
 };
+
+/**
+ * The three channel names of the frozen envelope.
+ *
+ * Used to tell a frame-shaped object from an unrelated one that happens to have
+ * a `t` key: the channel set is closed - `control`, `stream` and `bulk`.
+ */
+const CHANNEL_VALUES = new Set(["control", "stream", "bulk"]);
 
 /**
  * @typedef {object} FrameTypeRow
  * @property {string} type the literal key, e.g. "bridge.ready"
- * @property {string | null} summary the `summary` property, or null when absent
+ * @property {{ kind: "literal", value: string } |
+ *   { kind: "unresolved", text: string } |
+ *   { kind: "missing" }} summary the `summary` property's readability
  * @property {number} line 1-based line of the key
  */
 
@@ -118,7 +138,40 @@ const RULES = {
  * @returns {ts.SourceFile}
  */
 function parseSource(fileName, text) {
-  return ts.createSourceFile(fileName, text, ts.ScriptTarget.ESNext, true, ts.ScriptKind.TS);
+  const kind = scriptKindOf(fileName);
+  const source = ts.createSourceFile(fileName, text, ts.ScriptTarget.ESNext, true, kind);
+
+  // A file the parser could not read is not a file with nothing to report. TSX
+  // in a `.ts` parse is the concrete case: JSX is a syntax error there, the
+  // recovered tree drops the elements, and every literal inside a JSX attribute
+  // becomes invisible. Reporting that as PASS is the one failure mode this gate
+  // must never have, so it is a hard error instead.
+  if (source.parseDiagnostics.length > 0) {
+    const first = source.parseDiagnostics[0];
+
+    throw new Error(
+      `cannot parse ${fileName}: ${ts.flattenDiagnosticMessageText(first.messageText, " ")} ` +
+        "at line " +
+        String(source.getLineAndCharacterOfPosition(first.start).line + 1) +
+        "; the frame gate cannot certify a file it could not read",
+    );
+  }
+
+  return source;
+}
+
+/**
+ * The parser dialect for one file, by extension.
+ *
+ * `.tsx` must be parsed as TSX or JSX becomes a syntax error; everything else
+ * stays TS. `.js`/`.mjs`/`.cjs` are not scanned at all (see SOURCE_EXTENSIONS),
+ * so no dialect has to be chosen for them.
+ *
+ * @param {string} fileName absolute or repo-relative path
+ * @returns {ts.ScriptKind}
+ */
+function scriptKindOf(fileName) {
+  return fileName.toLowerCase().endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
 }
 
 /**
@@ -226,10 +279,25 @@ function readFrameTypes(root) {
     }
 
     if (!ts.isObjectLiteralExpression(node)) {
-      return;
+      throw new Error(
+        `FRAME_TYPES is not an object literal in ${FRAME_TYPES_FILE}; the gate reads the table ` +
+          "statically and cannot resolve a reference or a call, so a table assembled some other " +
+          "way would be reported as empty",
+      );
     }
 
     for (const property of node.properties) {
+      // A spread would smuggle rows past the reader: the object would look
+      // populated while the gate saw none of them, which is the "clean table
+      // with no rows" failure the empty-table rule exists to prevent.
+      if (ts.isSpreadAssignment(property)) {
+        throw new Error(
+          `FRAME_TYPES spreads another object in ${FRAME_TYPES_FILE}; the gate resolves rows ` +
+            "statically and cannot follow a spread, so those rows would be silently unregistered " +
+            "",
+        );
+      }
+
       const name = propertyName(property);
 
       if (name === null || !ts.isPropertyAssignment(property)) {
@@ -243,12 +311,22 @@ function readFrameTypes(root) {
   }
 
   /**
+   * Read one row's `summary`, distinguishing "absent" from "not a literal".
+   *
+   * The distinction matters because the two need different answers. A row with
+   * no `summary` is a real violation: the field is printed in diagnostics. A row
+   * whose `summary` is a shared constant or an interpolated template is correct
+   * code the gate simply cannot read, and reporting that as "has no summary"
+   * would fail a merge over a legal refactor.
+   *
    * @param {ts.Expression} initializer
-   * @returns {string | null}
+   * @returns {{ kind: "literal", value: string } |
+   *   { kind: "unresolved", text: string } |
+   *   { kind: "missing" }}
    */
   function summaryOf(initializer) {
     if (!ts.isObjectLiteralExpression(initializer)) {
-      return null;
+      return { kind: "unresolved", text: "the row is not an object literal" };
     }
 
     for (const property of initializer.properties) {
@@ -256,21 +334,50 @@ function readFrameTypes(root) {
         continue;
       }
 
-      return literalText(property.initializer);
+      const value = literalText(property.initializer);
+
+      return value === null
+        ? { kind: "unresolved", text: property.initializer.getText(source) }
+        : { kind: "literal", value };
     }
 
-    return null;
+    return { kind: "missing" };
   }
 
   visit(source);
 
   for (const row of rows) {
-    if (row.summary === null || row.summary.trim() === "") {
+    if (row.summary.kind === "missing") {
       problems.push({
         line: row.line,
         rule: RULES.badSummary,
         message:
           `frame type "${row.type}" has no summary; every row carries a one-line English ` +
+          "summary because it is printed in diagnostics",
+      });
+
+      continue;
+    }
+
+    if (row.summary.kind === "unresolved") {
+      problems.push({
+        line: row.line,
+        rule: RULES.unresolvedSummary,
+        message:
+          `frame type "${row.type}" has a summary this gate cannot read statically ` +
+          `(saw ${row.summary.text}); write it as a plain string literal, or move the value ` +
+          "into the row, so the diagnostic text stays reviewable here",
+      });
+
+      continue;
+    }
+
+    if (row.summary.value.trim() === "") {
+      problems.push({
+        line: row.line,
+        rule: RULES.badSummary,
+        message:
+          `frame type "${row.type}" has an empty summary; every row carries a one-line English ` +
           "summary because it is printed in diagnostics",
       });
     }
@@ -347,20 +454,25 @@ function isDirectory(absolute) {
  * Find every frame-type literal written in one source file.
  *
  * Two shapes are collected:
- *   { t: "bridge.ready" }             an object-literal property named `t`
- *   { type: "bridge.ready" }          the same, spelled out
+ *   { ch: "control", t: "bridge.ready" }   an object literal naming a channel
+ *   { ch: "control", type: "bridge.ready" } the same, spelled out
  *
  * Computed values (`t: name`, `` t: `x.${y}` ``) are skipped: they cannot be
  * resolved without running the program, and reporting them would punish every
  * parameterised construction.
  *
+ * A literal whose object forwards a spread instead of naming a channel is
+ * reported as unresolved rather than skipped: `{ t: "typo", ...envelope }` is a
+ * real frame and the gate cannot read its channel, so silence would let the
+ * typo through.
+ *
  * @param {string} fileName absolute path, for diagnostics only
  * @param {string} text file contents
- * @returns {{ value: string, line: number }[]}
+ * @returns {{ value: string, line: number, unresolved: boolean }[]}
  */
 function findFrameTypeLiterals(fileName, text) {
   const source = parseSource(fileName, text);
-  /** @type {{ value: string, line: number }[]} */
+  /** @type {{ value: string, line: number, unresolved: boolean }[]} */
   const literals = [];
 
   /**
@@ -370,31 +482,63 @@ function findFrameTypeLiterals(fileName, text) {
     if (ts.isPropertyAssignment(node)) {
       const name = propertyName(node);
 
-      // `type` is a common identifier, so it is only trusted inside an object
-      // literal that already looks like a frame: the other keys `ch`/`seq`/`v`
-      // are what make `type` a frame type here. `t` alone is unambiguous
-      // enough for the frame contract, but the same guard keeps a stray
-      // `{ t: "..." }` in unrelated code from matching.
+      // `t` is a common short key and `type` is everywhere, so a literal alone
+      // says nothing. What makes an object a frame envelope is the channel: the
+      // frozen `Frame` shape has `ch` and the three channel names are a closed
+      // set, so requiring one of them is both precise and cheap. The older
+      // "any of ch/v/seq/body" test matched unrelated objects such as a version
+      // stamp `{ v: 2, t: "dark.high-contrast" }`.
       if (name === "t" || name === "type") {
         const value = literalText(node.initializer);
 
         if (value !== null && ts.isObjectLiteralExpression(node.parent)) {
-          const frameLike = node.parent.properties.some((property) => {
-            const key = propertyName(property);
+          const line = source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1;
+          const channel = channelOf(node.parent);
 
-            return key === "ch" || key === "v" || key === "seq" || key === "body";
-          });
-
-          if (frameLike) {
-            const line = source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1;
-
-            literals.push({ value, line });
+          if (channel !== null) {
+            literals.push({ value, line, unresolved: false });
+          } else if (hasSpread(node.parent)) {
+            // `{ t: "typo", ...envelope }` carries the channel in the spread.
+            // The gate cannot follow it, so it must say so rather than treat the
+            // object as unrelated: silence here is exactly how a transposed
+            // letter would reach the wire.
+            literals.push({ value, line, unresolved: true });
           }
         }
       }
     }
 
     ts.forEachChild(node, visit);
+  }
+
+  /**
+   * The channel an object literal declares, when it names one directly.
+   *
+   * @param {ts.ObjectLiteralExpression} node
+   * @returns {string | null}
+   */
+  function channelOf(node) {
+    for (const property of node.properties) {
+      if (propertyName(property) !== "ch" || !ts.isPropertyAssignment(property)) {
+        continue;
+      }
+
+      const value = literalText(property.initializer);
+
+      return value !== null && CHANNEL_VALUES.has(value) ? value : null;
+    }
+
+    return null;
+  }
+
+  /**
+   * Whether an object literal forwards part of itself from somewhere else.
+   *
+   * @param {ts.ObjectLiteralExpression} node
+   * @returns {boolean}
+   */
+  function hasSpread(node) {
+    return node.properties.some((property) => ts.isSpreadAssignment(property));
   }
 
   visit(source);
@@ -453,6 +597,20 @@ export function collectViolations(root) {
     const text = readFileSync(path.join(root, file), "utf8");
 
     for (const literal of findFrameTypeLiterals(path.join(root, file), text)) {
+      if (literal.unresolved) {
+        violations.push({
+          file,
+          line: literal.line,
+          rule: RULES.unresolvedLiteral,
+          message:
+            `frame type "${literal.value}" is built from a spread, so this gate cannot see ` +
+            "which channel or whether the type is registered; name `ch` directly in the " +
+            "object literal or register the type",
+        });
+
+        continue;
+      }
+
       if (registered.has(literal.value)) {
         continue;
       }
