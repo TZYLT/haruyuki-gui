@@ -51,6 +51,10 @@ export const zhCN = {
   "error.shell.bridgeDenied": "应用请求了一项它没有的能力",
   "error.shell.settingsCorrupt": "设置文件无法读取，已改用默认值",
   "error.shell.engineUnavailable": "引擎未能启动",
+  "error.shell.engineCrashed": "引擎意外停止",
+  "error.shell.diagnosticExportFailed": "诊断包导出失败",
+  "error.shell.staleEngineFound": "上次运行留下的引擎进程仍在运行",
+  "error.shell.staleEngineCleanFailed": "无法结束上次留下的引擎进程",
 
   // ------------------------------------------------------------------ a11y
   "a11y.action.delete": "删除",

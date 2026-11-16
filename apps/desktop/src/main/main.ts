@@ -28,8 +28,21 @@
  *   the log path.
  */
 
-import { app, BrowserWindow, crashReporter, Menu, protocol, session, shell } from "electron";
+import {
+  app,
+  BrowserWindow,
+  crashReporter,
+  dialog,
+  ipcMain,
+  Menu,
+  protocol,
+  session,
+  shell,
+} from "electron";
+import { release as osRelease } from "node:os";
 import path from "node:path";
+
+import { createTranslator } from "@haruyuki/ui/i18n/core";
 
 /**
  * This file's directory at runtime.
@@ -52,7 +65,21 @@ import { APP_NAME, chooseLocale } from "./i18n.js";
 import { buildMenuTemplate } from "./menu.js";
 import { createLogger, type Logger } from "./log.js";
 import { handleRendererGone, installMainCrashHandlers } from "./crash/capture.js";
-import { crashDirFor, type CrashRecord, type CrashVersions } from "./crash/records.js";
+import {
+  crashDirFor,
+  readCrashRecords,
+  type CrashRecord,
+  type CrashVersions,
+} from "./crash/records.js";
+import { collectDiagnostics, type DiagnosticsEngineFacts } from "./diagnostics/collect.js";
+import {
+  runDiagnosticsExport,
+  type DiagnosticsExportContext,
+  type DiagnosticsExportLabels,
+} from "./diagnostics/export.js";
+import { registerDiagnosticsIpc } from "./diagnostics/ipc.js";
+import { getSessionDiagnosticsSource } from "./diagnostics/session.js";
+import { writeZip } from "./diagnostics/zip.js";
 import { runBootSupervision, type StaleCandidate } from "./supervision/boot.js";
 import { startEngineHost, stopEngineHost, type EngineHost } from "./supervision/engine-host.js";
 import { installQuitSupervisor, type QuitSupervisor } from "./supervision/quit.js";
@@ -599,6 +626,64 @@ async function createWindow(allowedDevtools: boolean, locale: string): Promise<B
   return window;
 }
 
+/** MiB with one decimal, for the two native dialogs. */
+function formatMb(bytes: number): string {
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/**
+ * The engine facts a diagnostic bundle reports.
+ *
+ * Read at export time rather than cached: an engine that crashed a minute ago
+ * must still contribute its version and stderr tail. `expectedVersion` is
+ * `null` because `engine-host` does not expose the expected version; guessing
+ * one would put a fact in the bundle that the shell never observed.
+ */
+function diagnosticsEngineFacts(): DiagnosticsEngineFacts {
+  const engine = engineHost?.engine ?? null;
+  const info = engine?.appServerInfo ?? null;
+
+  return {
+    version: info?.engineVersion ?? null,
+    protocolVersion: info?.protocolVersion ?? null,
+    backend: info?.backend ?? null,
+    watchdog: engineHost?.watchdog ?? "unknown",
+    degradations: engine === null ? [] : [...engine.degradations],
+    expectedVersion: null,
+    stderrTail: engine?.stderrTail() ?? [],
+  };
+}
+
+/**
+ * The native dialogs' copy.
+ *
+ * `main.ts` owns these strings because Electron's dialogs are main-process
+ * APIs; the failure line uses the catalogue's `error.shell.diagnosticExportFailed`.
+ * The remaining labels are English placeholders until the diagnostics panel
+ * keys land in the same catalogue wave (`33` section 5.3).
+ */
+function diagnosticsLabels(locale: string): DiagnosticsExportLabels {
+  const t = createTranslator(locale);
+  const exportFailed = t("error.shell.diagnosticExportFailed");
+
+  return {
+    saveTitle: "Export diagnostics",
+    zipFilterName: "Zip archive",
+    capTitle: "Diagnostic bundle is larger than 50 MB",
+    capMessage: (bytes, max) =>
+      `The bundle would be ${formatMb(bytes)}, over the ${formatMb(max)} limit.`,
+    capFull: "Save everything",
+    capReduce: "Reduce to the limit",
+    capCancel: t("common.action.cancel"),
+    successTitle: "Diagnostics exported",
+    successMessage: (file, bytes) => `Saved ${formatMb(bytes)} to ${file}`,
+    openFolder: "Open folder",
+    close: "Close",
+    failureTitle: exportFailed,
+    failureMessage: (detail) => `${exportFailed}: ${detail}`,
+  };
+}
+
 /**
  * Build and start the shell.
  *
@@ -739,6 +824,69 @@ async function main(): Promise<void> {
   mainWindow.setTitle(APP_NAME);
 
   logger.info("shell.ready", { locale, allowRoot });
+
+  // D4's three diagnostics channels. Registered after the window exists so a
+  // menu/crash-page "open" has a webContents, and before the engine starts so a
+  // crash during start-up can already be exported. No second engine, window or
+  // preload member is involved: the channels are the only extension.
+  registerDiagnosticsIpc({
+    ipcMain,
+    getWindow: () => mainWindow,
+    sessionAvailable: getSessionDiagnosticsSource() !== null,
+    logger,
+    app,
+    export: (run) => {
+      const context: DiagnosticsExportContext = {
+        userData,
+        logsDir: app.getPath("logs"),
+        crashDumpsDir: app.getPath("crashDumps"),
+        appVersion: app.getVersion(),
+        commit: null,
+        electron: process.versions.electron ?? "unknown",
+        chrome: process.versions.chrome ?? "unknown",
+        node: process.versions.node,
+        platform: process.platform,
+        arch: process.arch,
+        release: osRelease(),
+        locale,
+        theme: settings.theme,
+        settings,
+        engine: diagnosticsEngineFacts(),
+        crashes: readCrashRecords(crashDirFor(userData)),
+        sessionSource: getSessionDiagnosticsSource(),
+      };
+
+      return runDiagnosticsExport({ options: run.options }, context, {
+        now: () => new Date(),
+        onEvent: run.onEvent,
+        abortSignal: run.signal,
+        collect: collectDiagnostics,
+        writeZip,
+        labels: diagnosticsLabels(locale),
+        showSaveDialog: async (options) => {
+          const result =
+            mainWindow === null
+              ? await dialog.showSaveDialog(options)
+              : await dialog.showSaveDialog(mainWindow, options);
+
+          return { canceled: result.canceled, filePath: result.filePath };
+        },
+        showMessageBox: async (options) => {
+          const result =
+            mainWindow === null
+              ? await dialog.showMessageBox(options)
+              : await dialog.showMessageBox(mainWindow, options);
+
+          return { response: result.response };
+        },
+        openPath: async (target) => {
+          const failure = await shell.openPath(target);
+
+          if (failure !== "") throw new Error(failure);
+        },
+      });
+    },
+  });
 
   // The window never waits for the engine (docs/33 section 5.5 item 9). A
   // missing bundle resolves as a skip and leaves the window exactly as it was.

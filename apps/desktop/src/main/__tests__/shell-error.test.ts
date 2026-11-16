@@ -19,6 +19,7 @@
 
 import { describe, expect, it } from "vitest";
 
+import { ENGINE_ERROR_CODES, type EngineErrorCode } from "@haruyuki/core";
 import { en } from "@haruyuki/ui/i18n/core";
 
 import {
@@ -26,11 +27,12 @@ import {
   isShellErrorCode,
   messageKeyOf,
   shellError,
+  toShellError,
   type ShellErrorCode,
 } from "../../shared/shell-error.js";
 
 describe("the shell error codes", () => {
-  it("is exactly the five the requirement names", () => {
+  it("is exactly the nine the two requirement waves name", () => {
     // Asserted as literals rather than by importing something, because the point
     // is that this list is frozen. Changing it is a contract change.
     expect([...SHELL_ERROR_CODES]).toEqual([
@@ -39,6 +41,10 @@ describe("the shell error codes", () => {
       "BRIDGE_CHANNEL_DENIED",
       "SHELL_SETTINGS_CORRUPT",
       "ENGINE_PROBE_FAILED",
+      "ENGINE_CRASHED",
+      "DIAGNOSTIC_EXPORT_FAILED",
+      "STALE_ENGINE_FOUND",
+      "STALE_ENGINE_CLEAN_FAILED",
     ]);
   });
 
@@ -107,6 +113,36 @@ describe("shellError", () => {
     }
 
     expect(seen.size).toBe(SHELL_ERROR_CODES.length);
+  });
+});
+
+describe("toShellError", () => {
+  it("maps every B1 start/connect code to ENGINE_PROBE_FAILED", () => {
+    for (const code of ENGINE_ERROR_CODES) {
+      expect(toShellError(code), code).toBe("ENGINE_PROBE_FAILED");
+    }
+  });
+
+  it("never invents ENGINE_CRASHED from a start failure", () => {
+    // Crash detection is D4's runtime observation (`state === "failed"` after
+    // `ready`), not a translation of B1's probe code. Mixing them would put the
+    // crash page in front of an engine that simply did not start.
+    for (const code of ENGINE_ERROR_CODES) {
+      expect(toShellError(code)).not.toBe("ENGINE_CRASHED");
+    }
+  });
+
+  it("returns only codes the shell set declares", () => {
+    for (const code of ENGINE_ERROR_CODES) {
+      expect(SHELL_ERROR_CODES).toContain(toShellError(code));
+    }
+  });
+
+  it("falls back for a code from a newer B1 instead of throwing", () => {
+    // The code crosses a module/process boundary and must not turn a diagnostics
+    // path into a second failure while it reports the first.
+    expect(() => toShellError("FUTURE_B1_CODE" as EngineErrorCode)).not.toThrow();
+    expect(toShellError("FUTURE_B1_CODE" as EngineErrorCode)).toBe("ENGINE_PROBE_FAILED");
   });
 });
 

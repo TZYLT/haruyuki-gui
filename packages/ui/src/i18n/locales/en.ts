@@ -54,6 +54,10 @@ export const en = {
   "error.shell.bridgeDenied": "The application asked for a capability it does not have",
   "error.shell.settingsCorrupt": "Your settings could not be read, so defaults are in use",
   "error.shell.engineUnavailable": "The engine did not start",
+  "error.shell.engineCrashed": "The engine stopped unexpectedly",
+  "error.shell.diagnosticExportFailed": "The diagnostic bundle could not be exported",
+  "error.shell.staleEngineFound": "An engine process from an earlier run is still running",
+  "error.shell.staleEngineCleanFailed": "The leftover engine process could not be ended",
 
   // ------------------------------------------------------------------ a11y
   "a11y.action.delete": "Delete",

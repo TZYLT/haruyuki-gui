@@ -18,12 +18,26 @@
  * catalogue. This module names the key; `@haruyuki/ui` owns the text.
  */
 
+// Erased at build time (`verbatimModuleSyntax`): the preload bundle still has no
+// runtime dependency on `@haruyuki/core`. This is the one type the code-to-code
+// mapping below needs, and the route puts the mapping here rather than in B1.
+import type { EngineErrorCode } from "@haruyuki/core";
+
 /**
  * What can go wrong in the shell itself.
  *
  * Frozen, and closed: every code is expected to acquire a message, and a code
  * with no message is a string that reaches a user untranslated. Adding one is a
  * contract change, not a refactor.
+ *
+ * D4 adds four runtime outcomes of supervision and diagnostics
+ * (`ENGINE_CRASHED`, `DIAGNOSTIC_EXPORT_FAILED`, `STALE_ENGINE_FOUND`,
+ * `STALE_ENGINE_CLEAN_FAILED`); the five earlier ones are unchanged.
+ *
+ * `ENGINE_CRASHED` is produced by D4 itself when a *running* engine exits
+ * unexpectedly. It is deliberately not a value `toShellError` can return: that
+ * function maps start/connect failures, and a crash is a separate observation
+ * made after the engine was already ready (`33` section 4.2, `R-13`).
  */
 export const SHELL_ERROR_CODES = [
   "APP_PROTOCOL_DENIED",
@@ -31,6 +45,10 @@ export const SHELL_ERROR_CODES = [
   "BRIDGE_CHANNEL_DENIED",
   "SHELL_SETTINGS_CORRUPT",
   "ENGINE_PROBE_FAILED",
+  "ENGINE_CRASHED",
+  "DIAGNOSTIC_EXPORT_FAILED",
+  "STALE_ENGINE_FOUND",
+  "STALE_ENGINE_CLEAN_FAILED",
 ] as const;
 
 /** One shell error code. */
@@ -55,6 +73,10 @@ export const SHELL_ERROR_MESSAGE_KEYS = {
   BRIDGE_CHANNEL_DENIED: "error.shell.bridgeDenied",
   SHELL_SETTINGS_CORRUPT: "error.shell.settingsCorrupt",
   ENGINE_PROBE_FAILED: "error.shell.engineUnavailable",
+  ENGINE_CRASHED: "error.shell.engineCrashed",
+  DIAGNOSTIC_EXPORT_FAILED: "error.shell.diagnosticExportFailed",
+  STALE_ENGINE_FOUND: "error.shell.staleEngineFound",
+  STALE_ENGINE_CLEAN_FAILED: "error.shell.staleEngineCleanFailed",
 } as const satisfies Record<ShellErrorCode, string>;
 
 /**
@@ -95,6 +117,39 @@ export function messageKeyOf(code: ShellErrorCode): string {
  */
 export function shellError(code: ShellErrorCode, detail: string): ShellError {
   return { code, detail, messageKey: messageKeyOf(code) };
+}
+
+/**
+ * Map a start/connect failure onto the shell's code.
+ *
+ * B1 classifies where the attempt failed; the shell has one user-visible code
+ * for "the engine did not start" (`ENGINE_PROBE_FAILED`). Keeping the five
+ * branches explicit, rather than casting, is what lets a reviewer see that no
+ * B1 code is silently dropped. B2's `EngineClientErrorCode` extends this same
+ * function when it lands (`RD-11`): the page must never read B2's `CODE_TO_KEY`.
+ *
+ * `ENGINE_CRASHED` is not a return value. It describes a process that had
+ * already reached `ready` and then died, which is not a start/connect failure;
+ * D4 raises it directly from the crash path.
+ *
+ * A code this build does not know falls back to `ENGINE_PROBE_FAILED` instead
+ * of throwing: the input crosses a process boundary, and a diagnostics/recovery
+ * path must not become a second crash while reporting the first.
+ *
+ * @param code a B1 engine failure code
+ * @returns the shell code the page renders for that failure
+ */
+export function toShellError(code: EngineErrorCode): ShellErrorCode {
+  switch (code) {
+    case "SPAWN_FAILED":
+    case "PORT_NOT_FOUND":
+    case "AUTH_FAILED":
+    case "PROTOCOL_MISMATCH":
+    case "TIMEOUT":
+      return "ENGINE_PROBE_FAILED";
+    default:
+      return "ENGINE_PROBE_FAILED";
+  }
 }
 
 /**

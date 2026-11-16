@@ -67,19 +67,38 @@ export type BridgeChannelName = keyof typeof BRIDGE_CHANNELS;
 export const BRIDGE_GLOBAL_NAME = "haruyuki" as const;
 
 /**
+ * The three diagnostics commands D4 adds to the control channel.
+ *
+ * They are named here so the allowlist and `main/diagnostics/ipc.ts` cannot
+ * drift into two spellings of one channel. They are still ordinary entries in
+ * the allowlist below: naming a constant is not a permission of its own.
+ */
+export const DIAGNOSTICS_CHANNELS = {
+  export: "bridge:control.diagnostics.export",
+  relaunch: "bridge:control.diagnostics.relaunch",
+  quit: "bridge:control.diagnostics.quit",
+} as const;
+
+/**
  * The channels the main process answers.
  *
- * D1 registers exactly one, because the shell has no real IPC yet. `ping` is
- * there so the bridge has something to allow *and* something to deny -- with an
- * empty list every call would be refused and the accept path would be untested
- * code. D3 appends `bridge:<channel>.<domain>.<action>` entries and registers
- * the matching `ipcMain.handle`; nothing else about this module changes.
+ * D1 registers one, because the shell had no real IPC yet. `ping` stays: it is
+ * the channel that makes the allow *and* deny paths exercisable -- with an empty
+ * list every call would be refused and the accept path would be untested code.
+ * D4 appends the three diagnostics commands (`33` section 4.3); each is
+ * `<channel>.<domain>.<action>` and is registered by
+ * `main/diagnostics/ipc.ts`. No preload member is added for them.
  *
  * Frozen at runtime as well as in the type, because the same array is handed to
  * the renderer through the bridge and read as a diagnostic: a renderer that
  * could push into it would be able to change what the preload then accepts.
  */
-export const CHANNEL_ALLOWLIST: readonly string[] = Object.freeze(["bridge:control.app.ping"]);
+export const CHANNEL_ALLOWLIST: readonly string[] = Object.freeze([
+  "bridge:control.app.ping",
+  DIAGNOSTICS_CHANNELS.export,
+  DIAGNOSTICS_CHANNELS.relaunch,
+  DIAGNOSTICS_CHANNELS.quit,
+]);
 
 /**
  * Why a channel name was refused.

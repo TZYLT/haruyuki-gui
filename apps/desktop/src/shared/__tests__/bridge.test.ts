@@ -178,8 +178,13 @@ describe("allowlist", () => {
     expect(CHANNEL_ALLOWLIST).toHaveLength(length);
   });
 
-  it("registers the single channel D1 answers", () => {
-    expect(CHANNEL_ALLOWLIST).toEqual([PING]);
+  it("registers ping plus the D4 diagnostics channels", () => {
+    expect(CHANNEL_ALLOWLIST).toEqual([
+      PING,
+      "bridge:control.diagnostics.export",
+      "bridge:control.diagnostics.relaunch",
+      "bridge:control.diagnostics.quit",
+    ]);
   });
 
   it("contains only names the validator accepts", () => {
