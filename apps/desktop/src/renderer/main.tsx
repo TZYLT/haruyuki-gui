@@ -21,6 +21,7 @@ import { createRoot } from "react-dom/client";
 import { LocaleProvider, applyTheme, type ThemeAttrs } from "@haruyuki/ui";
 import { SamplePage } from "@haruyuki/ui/examples";
 
+import { DiagnosticsPanel } from "./diagnostics-panel.js";
 import { ErrorBoundary, RendererErrorPage } from "./error-page.js";
 
 /**
@@ -51,8 +52,17 @@ declare global {
  *
  * Every value is validated here. The URL is not secret, and a malformed one must
  * produce the default page rather than an exception before the first render.
+ *
+ * `panel` is the one route the shell has so far. It is a query parameter rather than
+ * something main sets, because a direct load of `?panel=diagnostics` is how the panel is
+ * exercised without the menu -- and because main's URL builder is shared machinery this
+ * work does not need to grow a second parameter into.
  */
-function bootPayload(): { theme: ThemeAttrs; locale: string } {
+function bootPayload(): {
+  theme: ThemeAttrs;
+  locale: string;
+  panel: "diagnostics" | null;
+} {
   const params = new URLSearchParams(window.location.search);
   const mode = params.get("theme") === "dark" ? "dark" : "light";
   const contrast = params.get("contrast") === "high" ? "high" : "normal";
@@ -61,6 +71,7 @@ function bootPayload(): { theme: ThemeAttrs; locale: string } {
   return {
     theme: { mode, contrast },
     locale: requested !== null && requested !== "" ? requested : "en",
+    panel: params.get("panel") === "diagnostics" ? "diagnostics" : null,
   };
 }
 
@@ -78,7 +89,11 @@ applyTheme(boot.theme);
 /**
  * The mounted shell.
  *
- * @returns the sample page inside its providers
+ * Two routes for now: the sample page proves the component library renders inside the
+ * sandbox, and the diagnostics panel is the first real surface. Both sit under the same
+ * providers so a route cannot quietly opt out of the theme or the catalogue.
+ *
+ * @returns the routed page inside its providers
  */
 function Shell(): ReactElement {
   const [locale] = useState(boot.locale);
@@ -95,7 +110,19 @@ function Shell(): ReactElement {
       <ErrorBoundary
         fallback={(error, reset) => <RendererErrorPage error={error} onRetry={reset} />}
       >
-        <SamplePage locale={locale} />
+        {boot.panel === "diagnostics" ? (
+          <DiagnosticsPanel initialOpen />
+        ) : (
+          <>
+            <SamplePage locale={locale} />
+            {/*
+             * Mounted hidden on the default route so the menu's `open` message has a
+             * listener without reloading the page. The panel renders nothing until
+             * that message arrives (`initialOpen` is false).
+             */}
+            <DiagnosticsPanel initialOpen={false} />
+          </>
+        )}
       </ErrorBoundary>
     </LocaleProvider>
   );

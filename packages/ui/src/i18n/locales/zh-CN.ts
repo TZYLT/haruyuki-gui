@@ -26,6 +26,26 @@ export const zhCN = {
   "common.state.empty": "暂无内容",
   "common.state.error": "出错了",
 
+  // ------------------------------------------------------------ diagnostics
+  "common.diagnostics.title": "导出诊断",
+  "common.diagnostics.sessionContent":
+    "包含当前会话最近 200 条消息（含工具名、参数与结果；不含 API key 或 token）",
+  "common.diagnostics.minidump": "包含崩溃转储（minidump）；其中可能含有内存中的敏感数据",
+  "common.diagnostics.export": "导出",
+  "common.diagnostics.cancel": "取消",
+  "common.diagnostics.close": "关闭",
+  "common.diagnostics.noSession": "当前没有活动会话",
+  "common.diagnostics.emptySessionNote":
+    "当前构建没有会话来源，诊断包中会写入一个空占位文件并注明这一点",
+  "common.diagnostics.phaseCollect": "正在收集文件",
+  "common.diagnostics.phaseCompress": "正在压缩诊断包",
+  "common.diagnostics.phaseWrite": "正在写入压缩包",
+  "common.diagnostics.progress": "正在处理：{done}/{total}",
+  "common.diagnostics.exported": "已导出到 {path}（{size} 字节）",
+  "common.diagnostics.failed": "导出失败",
+  "common.diagnostics.retry": "重试",
+  "common.diagnostics.bridgeUnavailable": "诊断桥不可用，无法导出诊断包",
+
   // ------------------------------------------------------------- component
   "component.input.placeholder": "请输入",
   "component.select.placeholder": "请选择",

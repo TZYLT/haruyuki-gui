@@ -29,6 +29,31 @@ export const en = {
   "common.state.empty": "Nothing here yet",
   "common.state.error": "Something went wrong",
 
+  // ------------------------------------------------------------ diagnostics
+  // The panel's own vocabulary. The two option labels carry their scope and risk
+  // in the same sentence rather than in a tooltip: what a checkbox includes is
+  // the one thing a user must not have to go looking for.
+  "common.diagnostics.title": "Export diagnostics",
+  "common.diagnostics.sessionContent":
+    "Include the most recent 200 messages from this session (tool names, arguments and results; never API keys or tokens)",
+  "common.diagnostics.minidump":
+    "Include the crash dump (minidump); it may contain sensitive data from memory",
+  "common.diagnostics.export": "Export",
+  "common.diagnostics.cancel": "Cancel",
+  "common.diagnostics.close": "Close",
+  "common.diagnostics.noSession": "No active session",
+  "common.diagnostics.emptySessionNote":
+    "This build has no session source, so the bundle will contain an empty placeholder with a note saying so",
+  "common.diagnostics.phaseCollect": "Collecting files",
+  "common.diagnostics.phaseCompress": "Compressing the bundle",
+  "common.diagnostics.phaseWrite": "Writing the archive",
+  "common.diagnostics.progress": "Working: {done} of {total}",
+  "common.diagnostics.exported": "Exported to {path} ({size} bytes)",
+  "common.diagnostics.failed": "Export failed",
+  "common.diagnostics.retry": "Retry",
+  "common.diagnostics.bridgeUnavailable":
+    "The diagnostics bridge is unavailable, so the bundle cannot be exported",
+
   // ------------------------------------------------------------- component
   "component.input.placeholder": "Enter a value",
   "component.select.placeholder": "Select an option",
