@@ -49,11 +49,14 @@ export default defineConfig({
     target: "node24",
     lib: {
       entry: {
-        // Three probes, three entry points. All are test artifacts and none ships.
+        // Four probes, four entry points. All are test artifacts and none ships.
         "engine-probe": path.resolve(PACKAGE_DIR, "scripts/engine-probe.ts"),
         "coldstart-probe": path.resolve(PACKAGE_DIR, "scripts/coldstart-probe.ts"),
         "gui-host-probe": path.resolve(PACKAGE_DIR, "scripts/gui-host-probe.ts"),
         "bootstrap-probe": path.resolve(PACKAGE_DIR, "scripts/bootstrap-probe.ts"),
+        // The P11 supervision probe: drives the product's own supervision, crash
+        // and diagnostics modules from a real main process.
+        "supervision-probe": path.resolve(PACKAGE_DIR, "scripts/supervision-probe.ts"),
       },
       formats: ["cjs"],
       fileName: (_format, entryName) => `${entryName}.cjs`,

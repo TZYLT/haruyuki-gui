@@ -16,6 +16,7 @@
     "typecheck": "tsc --noEmit",
     "build:probe": "vite build --config vite.probe.mts",
     "smoke:engine": "node scripts/smoke-engine.mjs",
+    "smoke:supervision": "node scripts/supervision-smoke.mjs",
     "verify:gui-host": "node scripts/verify-gui-host.mjs",
     "verify:bootstrap-error": "node scripts/verify-bootstrap-error.mjs"
   },
