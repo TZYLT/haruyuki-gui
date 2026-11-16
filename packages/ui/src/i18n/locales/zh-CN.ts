@@ -115,6 +115,17 @@ export const zhCN = {
   "error.shell.staleEngineFound": "上次运行留下的引擎进程仍在运行",
   "error.shell.staleEngineCleanFailed": "无法结束上次留下的引擎进程",
   "error.shell.unsupportedType": "这种文件无法预览",
+  "error.runtimeMissing": "找不到随包引擎",
+  "error.runtimeMismatch": "引擎校验失败",
+  "error.runtimeSpawn": "引擎没能启动",
+  "error.runtimeExternalFallback": "外部引擎已不可用，已回退随包引擎",
+  "error.runtimeChoose": "选择引擎目录",
+  "error.runtimeUseBundled": "改用随包引擎",
+  "error.runtimeOpenLog": "打开日志",
+  "error.runtimePath": "引擎路径",
+  "error.runtimeExpected": "期望 sha256",
+  "error.runtimeActual": "实际 sha256",
+  "error.runtimeLogPath": "日志目录",
 
   // ------------------------------------------------------------------ a11y
   "a11y.action.delete": "删除",

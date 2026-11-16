@@ -134,6 +134,17 @@ export const en = {
   "error.shell.staleEngineFound": "An engine process from an earlier run is still running",
   "error.shell.staleEngineCleanFailed": "The leftover engine process could not be ended",
   "error.shell.unsupportedType": "This kind of file cannot be previewed",
+  "error.runtimeMissing": "The bundled engine is missing",
+  "error.runtimeMismatch": "The engine failed its integrity check",
+  "error.runtimeSpawn": "The engine did not start",
+  "error.runtimeExternalFallback": "The external engine is unavailable; using the bundled engine",
+  "error.runtimeChoose": "Choose engine folder",
+  "error.runtimeUseBundled": "Use bundled engine",
+  "error.runtimeOpenLog": "Open logs",
+  "error.runtimePath": "Engine path",
+  "error.runtimeExpected": "Expected sha256",
+  "error.runtimeActual": "Actual sha256",
+  "error.runtimeLogPath": "Log directory",
 
   // ------------------------------------------------------------------ a11y
   "a11y.action.delete": "Delete",
