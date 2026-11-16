@@ -178,8 +178,14 @@ describe("allowlist", () => {
     expect(CHANNEL_ALLOWLIST).toHaveLength(length);
   });
 
-  it("registers the single channel D1 answers", () => {
-    expect(CHANNEL_ALLOWLIST).toEqual([PING]);
+  it("registers D1's channel and D2's one addition, and nothing else", () => {
+    // The count is part of the contract: the red condition is a second prefix
+    // appearing, and a list that quietly grew is how that happens unnoticed.
+    //
+    // D2 appends exactly one channel -- the dropped-file report -- because the preload
+    // has to send something and `channel-name v1` freezes the bridge's *members*, not its
+    // channel list. Anything beyond these two is a third item's entry.
+    expect(CHANNEL_ALLOWLIST).toEqual([PING, "bridge:control.resource.dropped"]);
   });
 
   it("contains only names the validator accepts", () => {

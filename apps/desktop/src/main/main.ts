@@ -28,7 +28,18 @@
  *   the log path.
  */
 
-import { app, BrowserWindow, dialog, Menu, Notification, protocol, session, shell } from "electron";
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  Menu,
+  Notification,
+  protocol,
+  safeStorage,
+  session,
+  shell,
+} from "electron";
 import path from "node:path";
 
 /**
@@ -49,6 +60,9 @@ import { createMediaHandler, MEDIA_PRIVILEGES, MEDIA_SCHEME } from "./media-prot
 import { MEDIA_TYPE_POLICY } from "./media-mime.js";
 import { mediaAccessPath, readMediaAccess, skipsPositionCheck } from "./media-access.js";
 import { createDesktopMembers, type DesktopMembersResult } from "./host-members.js";
+import { createDesktopSecrets, type SecretsPort } from "./secrets.js";
+import { DROPPED_FILES_CHANNEL } from "../shared/bridge.js";
+import { validateDroppedPayload } from "./dropped-files.js";
 import { APP_HOST, APP_SCHEME, APP_PRIVILEGES, createProtocolHandler } from "./protocol.js";
 import { shellError } from "../shared/shell-error.js";
 import { CSP, headersFor, shouldApplyFallbackCsp } from "./csp.js";
@@ -140,6 +154,23 @@ let mediaAccessMtime = -1;
  * and pretending otherwise would mean a port whose dependencies are half-built.
  */
 let desktopMembers: DesktopMembersResult | null = null;
+
+/** The secure store, built after ready because `safeStorage` needs a ready app. */
+let desktopSecrets: SecretsPort | null = null;
+
+/**
+ * Which storage backend `safeStorage` chose.
+ *
+ * Wrapped because `getSelectedStorageBackend` exists on Linux only. On Windows and
+ * macOS the question is moot -- encryption is always available -- so a platform that
+ * has no such call is reported as "not basic_text", which is the correct answer there.
+ */
+function chosenStorageBackend(): string {
+  const backend = (safeStorage as { getSelectedStorageBackend?: () => string })
+    .getSelectedStorageBackend;
+
+  return typeof backend === "function" ? backend.call(safeStorage) : "unknown";
+}
 
 /**
  * The shutdown registry.
@@ -582,6 +613,31 @@ async function createWindow(allowedDevtools: boolean, locale: string): Promise<B
  * effects that matter to the process.
  */
 async function main(): Promise<void> {
+  // The application's own name, set before anything asks for a path.
+  //
+  // Without this, `app.getName()` falls back to `package.json`'s `name` and
+  // `app.getPath("userData")` resolves to a *shared* `...\Roaming\Electron`
+  // directory -- the same one every other unpackaged Electron application on this
+  // machine uses. Three things live under `userData` and each one makes that a
+  // problem rather than an untidiness:
+  //
+  //   `media-access.json` holds the position-trust decision. Living in a shared
+  //   directory means another Electron application can flip a security switch that
+  //   turns the file viewer into a whole-disk browser (R-069, E-114).
+  //
+  //   `shell-settings.json` is the shell's own; two applications would overwrite each
+  //   other's window geometry and locale.
+  //
+  //   The engine's state, token directory and default file tree are all
+  //   `HARUYUKI_HOME`, which is this same root.
+  //
+  // **This must stay the first statement in `main()`.** `app.setName` only affects
+  // paths resolved *after* it, and every `getPath` call in this file is inside a
+  // function that runs later. Moving a `getPath` to module scope would silently
+  // undo this, and the symptom would be a duplicated settings directory rather than
+  // an error.
+  app.setName(APP_NAME);
+
   logger = createLogger({ logDir: app.getPath("logs"), minLevel: "info" });
   logger.info("shell.boot", {
     electron: process.versions.electron,
@@ -639,6 +695,42 @@ async function main(): Promise<void> {
       },
     }),
   );
+
+  // The secure store. Built after ready because `safeStorage` is only usable then,
+  // and synchronous because its construction touches no disk: if it wrote on
+  // construction, a plaintext file could appear before the user was ever asked.
+  desktopSecrets = createDesktopSecrets({
+    userData: app.getPath("userData"),
+    safeStorage,
+    // `getSelectedStorageBackend` rather than `isEncryptionAvailable`: on Linux with
+    // the `basic_text` backend the latter answers `true` while only obfuscating, so
+    // deriving the answer from it would silently skip the consent prompt that the
+    // requirement exists to guarantee (D2-Q05).
+    keyringAvailable: chosenStorageBackend() !== "basic_text",
+    consent: async ({ storePath }) => {
+      // The question is asked only when the user is about to store something in
+      // plaintext, and it names the file: "encrypted" versus "plaintext in
+      // C:\...\secrets.json" is a decision a person can make, where "your secrets may
+      // be at risk" is not.
+      //
+      // A modal dialog with three answers, because the three outcomes are genuinely
+      // different: accept for good, accept this once, or nothing is stored.
+      const answer = await dialog.showMessageBox({
+        type: "warning",
+        title: APP_NAME,
+        message: "This machine has no system keyring.",
+        detail: `Credentials will be saved in plain text to ${storePath}. Any program that can read that directory can read them.`,
+        buttons: ["Save anyway (do not ask again)", "Save this time only", "Do not save"],
+        defaultId: 2,
+        cancelId: 2,
+      });
+
+      if (answer.response === 0) return "allow-always";
+      if (answer.response === 1) return "allow-once";
+
+      return "deny";
+    },
+  });
 
   // The operating-system-facing members. Built here rather than at module scope
   // because every dependency below needs a ready app: `Notification` before ready
@@ -710,6 +802,45 @@ async function main(): Promise<void> {
       },
     }),
   );
+
+  // Drag-drop: the one channel this item adds.
+  //
+  // The preload has already converted the drop to `{name, path}[]`, because a `File`
+  // cannot cross into this process at all. What arrives here is therefore untrusted
+  // data that claims to describe files, and it is re-checked rather than believed:
+  // the requirement is explicit that the main process validates the path again
+  // (section 4.6 item 7).
+  //
+  // `on` rather than `handle`: the preload sends, nothing awaits a reply.
+  ipcMain.on(DROPPED_FILES_CHANNEL, (event, payload: unknown) => {
+    const report = validateDroppedPayload(payload);
+
+    if (report === null) {
+      logger?.warn("drop.rejected", { detail: "payload did not match {name, path}[]" });
+
+      return;
+    }
+
+    // The readable set grows by what the user just dropped on the window. That is a
+    // real authorisation: the gesture is the user's own, and the alternative -- asking
+    // them to also pick it from a dialog -- would be asking twice for one decision.
+    const accepted = report.entries.flatMap((entry) =>
+      entry.path === undefined ? [] : [entry.path],
+    );
+
+    if (accepted.length > 0) {
+      setReadableRootsForMedia([...readableRootsForMedia, ...accepted]);
+    }
+
+    // The reply goes back on the same channel so the page learns what was accepted.
+    // It is a `send` in both directions because the page did not ask a question.
+    event.sender.send(DROPPED_FILES_CHANNEL, {
+      entries: report.entries,
+      // A count rather than a boolean: "2 of 3 were usable" tells a caller what to
+      // say, where `ok: true` would claim more than happened.
+      acceptedCount: accepted.length,
+    });
+  });
 
   // The fallback. `protocol.handle` already sets the policy on its own responses;
   // this catches anything the session loads that did not come through the handler.

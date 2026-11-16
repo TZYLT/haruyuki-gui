@@ -204,6 +204,34 @@ async function main() {
     report(label, passed, detail);
   }
 
+  // The application's own name, and the consequence that made it a security
+  // question rather than a cosmetic one. Asserted as an exact tail rather than "not
+  // Electron": another app's name would pass a negative check while still colliding.
+  const appName = result["appName"];
+  check("app name is the brand name", appName === "Haruyuki", String(appName));
+
+  const userDataPath =
+    typeof result["pathsResolved"] === "object" && result["pathsResolved"] !== null
+      ? result["pathsResolved"]["userData"]
+      : undefined;
+  check(
+    "userData ends in Haruyuki, not Electron",
+    typeof userDataPath === "string" && /[\\/]Haruyuki$/.test(userDataPath),
+    String(userDataPath),
+  );
+
+  // The switch that made this a security question: `media-access.json` must live in a
+  // directory only this application uses, or another Electron app can flip it.
+  const accessPath = result["mediaAccessPath"];
+  check(
+    "media-access.json is inside that directory",
+    typeof accessPath === "string" &&
+      typeof userDataPath === "string" &&
+      accessPath.startsWith(userDataPath) &&
+      !accessPath.includes("Electron"),
+    String(accessPath),
+  );
+
   // The four roots resolve, and the engine's home accepts a write.
   const resolved = result["pathsResolved"];
   check(

@@ -41,10 +41,14 @@ import {
   ensurePaths,
 } from "../src/main/host-port.js";
 import { createDesktopMembers } from "../src/main/host-members.js";
+import { APP_NAME } from "../src/main/i18n.js";
+import { mediaAccessPath } from "../src/main/media-access.js";
 
 /** Everything the probe reports. */
 interface ProbeResult {
+  appName?: string;
   pathsResolved?: Record<string, string>;
+  mediaAccessPath?: string;
   pathsWritable?: boolean;
   pathsProblem?: string;
   capabilities?: Record<string, boolean>;
@@ -103,12 +107,20 @@ function finish(code: number): void {
 
 /** Run every stage, keeping whatever completed. */
 async function main(): Promise<void> {
+  // The real startup does this, and it has to happen before `whenReady` for the paths
+  // to resolve under it. The probe repeats it rather than importing `main.ts` (which
+  // starts the whole shell) so that the assertion below is about the name, not about
+  // whether the probe happened to run the same code.
+  app.setName(APP_NAME);
+
   await app.whenReady();
 
   // --- paths: composed correctly is not the same as usable -------------------
   try {
     const paths = desktopPaths((name) => app.getPath(name));
+    result.appName = app.getName();
     result.pathsResolved = { ...paths };
+    result.mediaAccessPath = mediaAccessPath(paths.userData);
 
     await ensurePaths(paths);
 

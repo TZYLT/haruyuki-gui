@@ -67,6 +67,25 @@ export type BridgeChannelName = keyof typeof BRIDGE_CHANNELS;
 export const BRIDGE_GLOBAL_NAME = "haruyuki" as const;
 
 /**
+ * The channel a dropped file is reported on.
+ *
+ * Declared here rather than in `preload/drop.ts` because two sides need the same
+ * string -- the preload sends it and the main process registers a handler for it --
+ * and a second spelling would be a channel that never receives anything.
+ */
+export const DROPPED_FILES_CHANNEL = "bridge:control.resource.dropped" as const;
+
+/**
+ * What a drop reports.
+ *
+ * `path` is absent rather than empty for an entry the preload could not locate: one
+ * shape to handle instead of two spellings of "no path".
+ */
+export interface DroppedFileReport {
+  readonly entries: readonly { name: string; path?: string }[];
+}
+
+/**
  * The channels the main process answers.
  *
  * D1 registers exactly one, because the shell has no real IPC yet. `ping` is
@@ -79,7 +98,14 @@ export const BRIDGE_GLOBAL_NAME = "haruyuki" as const;
  * the renderer through the bridge and read as a diagnostic: a renderer that
  * could push into it would be able to change what the preload then accepts.
  */
-export const CHANNEL_ALLOWLIST: readonly string[] = Object.freeze(["bridge:control.app.ping"]);
+export const CHANNEL_ALLOWLIST: readonly string[] = Object.freeze([
+  "bridge:control.app.ping",
+  // D2's one addition. The drop listener runs inside the preload (a `File` cannot be
+  // read from the main process at all), so this channel carries an already-converted
+  // already-converted `{name, path}[]` rather than files. The bridge is frozen at
+  // *members*; channels grow, members do not.
+  DROPPED_FILES_CHANNEL,
+]);
 
 /**
  * Why a channel name was refused.
