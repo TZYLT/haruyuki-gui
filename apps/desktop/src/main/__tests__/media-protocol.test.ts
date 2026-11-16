@@ -31,6 +31,9 @@ import {
   toWebStream,
   type MediaTypePolicy,
 } from "../media-protocol.js";
+import { MEDIA_TYPE_POLICY } from "../media-mime.js";
+import { messageKeyOf } from "../../shared/shell-error.js";
+import { en } from "@haruyuki/ui/i18n/core";
 
 /** A policy that serves everything as text, for tests about transport only. */
 const TEXT_ONLY: MediaTypePolicy = { contentTypeFor: () => "text/plain; charset=utf-8" };
@@ -307,6 +310,103 @@ describe("the containment predicate is shared, not copied", () => {
   });
 });
 
+describe("the real policy composed with the real handler", () => {
+  // The response headers are asserted end to end below. Every
+  // test above uses a stub policy, which checks the handler's plumbing but never the
+  // composition -- so a table that stopped mapping `.pdf` correctly, or a header that
+  // stopped being set, would pass all of them.
+  //
+  // These two cases use `MEDIA_TYPE_POLICY`, the same object `main.ts` passes.
+  const { tmpdir } = require("node:os") as typeof import("node:os");
+  const { writeFileSync, mkdtempSync } = require("node:fs") as typeof import("node:fs");
+  const { join } = require("node:path") as typeof import("node:path");
+
+  /** Serve one real file through the real table. */
+  async function serve(name: string, content = "x") {
+    const dir = mkdtempSync(join(tmpdir(), "d2-compose-"));
+    const file = join(dir, name);
+    writeFileSync(file, content);
+
+    const handler = createMediaHandler({
+      types: MEDIA_TYPE_POLICY,
+      readableRoots: () => [dir],
+      trustAllPaths: () => false,
+    });
+
+    return handler(new Request(`${MEDIA_SCHEME}://${MEDIA_HOST}/${encodeURIComponent(file)}`));
+  }
+
+  it("serves a PDF as application/pdf with nosniff and inline", async () => {
+    // The delivery half. Whether the viewer can then draw it is a separate,
+    // unresolved question (T-16) and is deliberately not asserted here.
+    const response = await serve("doc.pdf", "%PDF-1.5\n");
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("application/pdf");
+    expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(response.headers.get("content-disposition")).toBe("inline");
+    expect(response.headers.get("cache-control")).toBe("no-store");
+  });
+
+  it("serves every text extension as exactly text/plain with a charset", async () => {
+    // The header is asserted to be exactly equal for each extension. The table's own
+    // this asserts what a request actually returns.
+    for (const name of ["a.txt", "a.md", "a.json", "a.log", "a.ts", "a.html", "a.js", "a.svg"]) {
+      const response = await serve(name);
+
+      expect(response.status, name).toBe(200);
+      expect(response.headers.get("content-type"), name).toBe("text/plain; charset=utf-8");
+      expect(response.headers.get("x-content-type-options"), name).toBe("nosniff");
+    }
+  });
+
+  it("refuses an executable type through the real table, with the right key", async () => {
+    // The message key must be the type-refusal one, not "you may not read this": the
+    // two are different answers and the wrong one sends a user looking for a permission
+    // problem that does not exist.
+    const failures: { code: string; messageKey: string }[] = [];
+
+    const dir = mkdtempSync(join(tmpdir(), "d2-compose2-"));
+    const file = join(dir, "a.exe");
+    writeFileSync(file, "MZ");
+
+    const handler = createMediaHandler({
+      types: MEDIA_TYPE_POLICY,
+      readableRoots: () => [dir],
+      trustAllPaths: () => false,
+      onFailure: (error) => failures.push({ code: error.code, messageKey: error.messageKey }),
+    });
+
+    const response = await handler(
+      new Request(`${MEDIA_SCHEME}://${MEDIA_HOST}/${encodeURIComponent(file)}`),
+    );
+
+    expect(response.status).toBe(415);
+    expect(failures).toEqual([
+      { code: "MEDIA_TYPE_DENIED", messageKey: "error.shell.unsupportedType" },
+    ]);
+  });
+});
+
+describe("the refusal's message key is derived, never spelled", () => {
+  it("names a key the catalogue actually declares, for every refusal", async () => {
+    // `shell-error.ts` says the key is "Always derived, never supplied". This module
+    // spelled one by hand for a while and spelled it wrong, which the log would have
+    // recorded as a different kind of refusal. Asserted against the catalogue so a
+    // hand-written key that does not exist fails here rather than at render time.
+    for (const code of [
+      "MEDIA_TYPE_DENIED",
+      "APP_PROTOCOL_DENIED",
+      "APP_PROTOCOL_NOT_FOUND",
+    ] as const) {
+      const key = messageKeyOf(code);
+
+      expect(key, code).toMatch(/^error\.shell\./);
+      expect(en, code).toHaveProperty(key);
+    }
+  });
+});
+
 describe("the boundary has exactly one definition", () => {
   it("declares resolveInside once in the shell, and imports it everywhere else", () => {
     // The grep assertion. A second containment implementation would be a
@@ -441,6 +541,53 @@ describe("the handler's refusals", () => {
 
     expect(response.status).toBe(404);
     expect(failures).toContain("APP_PROTOCOL_NOT_FOUND");
+  });
+
+  it("answers 416 for a range against an empty file, instead of throwing", async () => {
+    // The suffix form used to answer `{start: 0, end: -1}` for an empty file, and
+    // `createReadStream` throws `ERR_OUT_OF_RANGE` on that -- synchronously, inside the
+    // handler, which surfaces as a failed load with no status rather than the 416 this
+    // module intends for an unhonourable range.
+    const { tmpdir } = require("node:os") as typeof import("node:os");
+    const { writeFileSync, mkdtempSync } = require("node:fs") as typeof import("node:fs");
+    const { join } = require("node:path") as typeof import("node:path");
+
+    const dir = mkdtempSync(join(tmpdir(), "d2-empty-"));
+    const file = join(dir, "empty.txt");
+    writeFileSync(file, "");
+
+    const { handler } = handlerWith(TEXT_ONLY, [dir]);
+
+    for (const range of ["bytes=-5", "bytes=0-", "bytes=0-0"]) {
+      const response = await handler(
+        new Request(`${MEDIA_SCHEME}://${MEDIA_HOST}/${encodeURIComponent(file)}`, {
+          headers: { range },
+        }),
+      );
+
+      expect(response.status, range).toBe(416);
+      expect(response.headers.get("content-range"), range).toBe("bytes */0");
+    }
+  });
+
+  it("serves an empty file whole when no range is asked", async () => {
+    // The control: an empty file is a legitimate 200 with a zero length, so the fix
+    // above must not have turned "empty" into "unreadable".
+    const { tmpdir } = require("node:os") as typeof import("node:os");
+    const { writeFileSync, mkdtempSync } = require("node:fs") as typeof import("node:fs");
+    const { join } = require("node:path") as typeof import("node:path");
+
+    const dir = mkdtempSync(join(tmpdir(), "d2-empty2-"));
+    const file = join(dir, "empty.txt");
+    writeFileSync(file, "");
+
+    const { handler } = handlerWith(TEXT_ONLY, [dir]);
+    const response = await handler(
+      new Request(`${MEDIA_SCHEME}://${MEDIA_HOST}/${encodeURIComponent(file)}`),
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-length")).toBe("0");
   });
 
   it("answers 404 for a file that is not there", async () => {

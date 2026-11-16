@@ -42,6 +42,7 @@ import path from "node:path";
 import { Readable } from "node:stream";
 
 import { isInside, resolveInside } from "./protocol.js";
+import { shellError } from "../shared/shell-error.js";
 import type { ShellError } from "../shared/shell-error.js";
 
 /** The scheme. Frozen: a rename is a contract change. */
@@ -242,6 +243,12 @@ export function parseRange(header: string | null, size: number): ByteRange | nul
     const suffix = Number(endText);
     if (suffix <= 0) return "invalid";
 
+    // An empty file has no last byte. Without this guard the answer is
+    // `{start: 0, end: -1}`, and `createReadStream` throws `ERR_OUT_OF_RANGE` on it --
+    // synchronously, inside the protocol handler, which surfaces as a failed load with
+    // no status rather than as the 416 this module intends for an unhonourable range.
+    if (size === 0) return "invalid";
+
     return { start: Math.max(0, size - suffix), end: size - 1 };
   }
 
@@ -284,11 +291,12 @@ export function createMediaHandler(deps: MediaHandlerDeps) {
     const recovered = pathFromMediaUrl(request.url);
 
     if (!recovered.ok) {
-      deps.onFailure?.({
-        code: "APP_PROTOCOL_NOT_FOUND",
-        detail: `unusable media URL: ${request.url} (${recovered.reason})`,
-        messageKey: "error.shell.resourceMissing",
-      });
+      deps.onFailure?.(
+        shellError(
+          "APP_PROTOCOL_NOT_FOUND",
+          `unusable media URL: ${request.url} (${recovered.reason})`,
+        ),
+      );
 
       return new Response(null, { status: 404 });
     }
@@ -305,11 +313,9 @@ export function createMediaHandler(deps: MediaHandlerDeps) {
       const inside = roots.some((root) => isInside(path.resolve(root), filePath));
 
       if (!inside) {
-        deps.onFailure?.({
-          code: "APP_PROTOCOL_DENIED",
-          detail: `path outside the readable set: ${filePath}`,
-          messageKey: "error.shell.resourceDenied",
-        });
+        deps.onFailure?.(
+          shellError("APP_PROTOCOL_DENIED", `path outside the readable set: ${filePath}`),
+        );
 
         return new Response(null, { status: 403 });
       }
@@ -320,11 +326,17 @@ export function createMediaHandler(deps: MediaHandlerDeps) {
     const contentType = deps.types.contentTypeFor(filePath);
 
     if (contentType === null) {
-      deps.onFailure?.({
-        code: "MEDIA_TYPE_DENIED",
-        detail: `type not served: ${path.extname(filePath).toLowerCase() || "(none)"}`,
-        messageKey: "error.shell.resourceDenied",
-      });
+      // Derived, never spelled: `shell-error.ts` is the only source for the
+      // code-to-key mapping, and this module spelled the wrong key here for a while --
+      // reporting a type refusal under the "you may not read this" message. The
+      // logging in `main.ts` prints `messageKey`, so the mistake was that a refusal of
+      // one kind was recorded as a refusal of another.
+      deps.onFailure?.(
+        shellError(
+          "MEDIA_TYPE_DENIED",
+          `type not served: ${path.extname(filePath).toLowerCase() || "(none)"}`,
+        ),
+      );
 
       return new Response(null, { status: 415 });
     }
@@ -335,11 +347,7 @@ export function createMediaHandler(deps: MediaHandlerDeps) {
       const info = await stat(filePath);
 
       if (!info.isFile()) {
-        deps.onFailure?.({
-          code: "APP_PROTOCOL_NOT_FOUND",
-          detail: `not a file: ${filePath}`,
-          messageKey: "error.shell.resourceMissing",
-        });
+        deps.onFailure?.(shellError("APP_PROTOCOL_NOT_FOUND", `not a file: ${filePath}`));
 
         return new Response(null, { status: 404 });
       }
@@ -349,11 +357,9 @@ export function createMediaHandler(deps: MediaHandlerDeps) {
       // A file that exists but cannot be read is "not found" from the page's
       // point of view; the detail keeps the reason, because permissions and a
       // race with a rebuild need different fixes.
-      deps.onFailure?.({
-        code: "APP_PROTOCOL_NOT_FOUND",
-        detail: `unreadable: ${filePath} (${String(error)})`,
-        messageKey: "error.shell.resourceMissing",
-      });
+      deps.onFailure?.(
+        shellError("APP_PROTOCOL_NOT_FOUND", `unreadable: ${filePath} (${String(error)})`),
+      );
 
       return new Response(null, { status: 404 });
     }
