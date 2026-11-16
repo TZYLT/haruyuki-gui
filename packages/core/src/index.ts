@@ -17,6 +17,9 @@
  *   guard, the sequencer, the bounded queue, the pager, the batching window,
  *   the handshake and the sender that assembles them. The renderer's consumer
  *   half lives in `@haruyuki/ui/bridge`.
+ * - `./supervision`: the runtime-marker, process-evidence and reclaim primitives
+ *   shared by the desktop shell and, later, the VSCode shell (docs/33-D4). They
+ *   are policy-free: the shell decides when to write a marker or kill a process.
  *
  * The placeholder constant stays: it is the package's self-identity, and removing
  * it would break the "not a barrel" shape this file has to keep (see
@@ -28,3 +31,4 @@ export * from "./bridge/index.js";
 export * from "./engine";
 export * from "./port/host-port";
 export * from "./port/headless-host-port";
+export * from "./supervision/index.js";
