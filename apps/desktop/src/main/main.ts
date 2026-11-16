@@ -28,7 +28,7 @@
  *   the log path.
  */
 
-import { app, BrowserWindow, Menu, protocol, session, shell } from "electron";
+import { app, BrowserWindow, crashReporter, Menu, protocol, session, shell } from "electron";
 import path from "node:path";
 
 /**
@@ -51,6 +51,11 @@ import { CSP, headersFor, shouldApplyFallbackCsp } from "./csp.js";
 import { APP_NAME, chooseLocale } from "./i18n.js";
 import { buildMenuTemplate } from "./menu.js";
 import { createLogger, type Logger } from "./log.js";
+import { handleRendererGone, installMainCrashHandlers } from "./crash/capture.js";
+import { crashDirFor, type CrashRecord, type CrashVersions } from "./crash/records.js";
+import { runBootSupervision, type StaleCandidate } from "./supervision/boot.js";
+import { startEngineHost, stopEngineHost, type EngineHost } from "./supervision/engine-host.js";
+import { installQuitSupervisor, type QuitSupervisor } from "./supervision/quit.js";
 import {
   DEFAULT_SETTINGS,
   isWindowVisible,
@@ -83,6 +88,21 @@ let logger: Logger | null = null;
 
 /** The one window. Held so the activate handler can focus rather than rebuild. */
 let mainWindow: BrowserWindow | null = null;
+
+/**
+ * The one engine host, kept so B2/E4 receive the same `Engine` instance and so
+ * the quit supervisor can stop it. P4 starts it; it is not a second engine.
+ */
+let engineHost: EngineHost | null = null;
+
+/** Ambiguous stale engines from boot; P10's cleanup menu reads this list. */
+let staleCandidates: readonly StaleCandidate[] = [];
+
+/** The most recent engine crash, kept for P9's crash page; no page switch yet. */
+let lastEngineCrash: CrashRecord | null = null;
+
+/** Installed once, before the window; the host is attached after the async start. */
+let quitSupervisor: QuitSupervisor | null = null;
 
 /** Parsed settings, loaded once and kept in step with the window. */
 let settings: ShellSettings = DEFAULT_SETTINGS;
@@ -331,6 +351,84 @@ function rememberGeometry(window: BrowserWindow): void {
 }
 
 /**
+ * Versions attached to every crash record.
+ *
+ * Read at crash time rather than cached at boot: `app.getVersion()` is cheap and
+ * a record should describe the build that actually crashed.
+ */
+function crashVersions(): CrashVersions {
+  return {
+    version: app.getVersion(),
+    electron: process.versions.electron ?? "unknown",
+    node: process.versions.node,
+    platform: process.platform,
+    arch: process.arch,
+  };
+}
+
+/** Forward a supervision event into the shell log; never let logging throw. */
+function logSupervision(event: string, detail?: Record<string, unknown>): void {
+  logger?.info(event, detail);
+}
+
+/**
+ * Start the engine without blocking the window.
+ *
+ * A missing bundle or a failed start is logged and nothing else: it is not a
+ * crash and must not open the engine crash page (`R-13`). On success the host
+ * is kept for B2/E4 and the quit supervisor learns about it, so a normal exit
+ * stops the process and clears the marker.
+ */
+async function startShellEngine(userData: string): Promise<void> {
+  const result = await startEngineHost({
+    userData,
+    appVersion: app.getVersion(),
+    appPath: app.getAppPath(),
+    onLog: logSupervision,
+    onCrash: (record) => {
+      // P9 owns switching to the crash page. Until then the record is kept and
+      // logged, which is all the requirement asks of this layer.
+      lastEngineCrash = record;
+
+      logger?.error("supervision.engine.crash", {
+        code: record.code,
+        exitCode: record.engine?.exitCode ?? null,
+        signal: record.engine?.signal ?? null,
+      });
+    },
+  });
+
+  if (!result.ok) {
+    logger?.warn("supervision.engine.start", {
+      state: result.reason === "missing-bundle" ? "skipped" : "failed",
+      reason: result.reason,
+      ...(result.detail === undefined ? {} : { detail: result.detail }),
+    });
+
+    return;
+  }
+
+  const accepted = quitSupervisor?.setHost(result.host) ?? true;
+
+  // If the user quit while the engine was still starting, the quit sequence
+  // already ran with `host: null`. Attaching now would leave the engine
+  // unowned after the app exits, so stop it here and do not publish the host.
+  if (!accepted) {
+    const stopped = await stopEngineHost(result.host);
+
+    logger?.warn("supervision.engine.start", {
+      state: "stopped-after-quit",
+      stopped: stopped.stopped,
+      ...(stopped.reason === undefined ? {} : { reason: stopped.reason }),
+    });
+
+    return;
+  }
+
+  engineHost = result.host;
+}
+
+/**
  * Create the window and load the shell.
  *
  * @param allowedDevtools whether the inspector may be opened
@@ -405,6 +503,30 @@ async function createWindow(allowedDevtools: boolean, locale: string): Promise<B
 
   window.on("closed", () => {
     mainWindow = null;
+  });
+
+  // P3 records every renderer death; P9 owns the crash page and the rebuild
+  // loop. Until then this only writes the record and logs it, so a renderer
+  // that keeps dying cannot be mistaken for a window that needs rebuilding.
+  window.webContents.on("render-process-gone", (_event, details) => {
+    void handleRendererGone(
+      { reason: details.reason, exitCode: details.exitCode ?? null },
+      {
+        dir: crashDirFor(app.getPath("userData")),
+        versions: crashVersions(),
+        onCrash: (record) => {
+          logger?.error("supervision.renderer.crash", {
+            code: record.code,
+            reason: record.renderer?.reason ?? "",
+            exitCode: record.renderer?.exitCode ?? null,
+          });
+        },
+      },
+    ).catch((error: unknown) => {
+      logger?.warn("supervision.renderer.crash.failed", {
+        detail: error instanceof Error ? error.message : String(error),
+      });
+    });
   });
 
   // External links go to the user's browser. Without this an `https://` link in
@@ -484,6 +606,20 @@ async function createWindow(allowedDevtools: boolean, locale: string): Promise<B
  * effects that matter to the process.
  */
 async function main(): Promise<void> {
+  const userData = app.getPath("userData");
+
+  // P3 first, before ready (docs/33 section 5.5): a crash during start-up is
+  // still a crash worth recording. The dump path is set before the reporter
+  // starts so an early crash has somewhere to land.
+  app.setPath("crashDumps", path.join(userData, "crash-dumps"));
+  crashReporter.start({ uploadToServer: false, compress: false, rateLimit: false });
+  installMainCrashHandlers({
+    dir: crashDirFor(userData),
+    versions: crashVersions(),
+    onFatal: (code) => app.exit(code),
+    onUnhandled: (detail) => logger?.warn("crash.unhandled-rejection", { detail }),
+  });
+
   logger = createLogger({ logDir: app.getPath("logs"), minLevel: "info" });
   logger.info("shell.boot", {
     electron: process.versions.electron,
@@ -560,6 +696,32 @@ async function main(): Promise<void> {
 
   settings = await loadSettings();
 
+  // Boot supervision runs before the menu and the window (docs/33 section
+  // 5.5): a stale engine must be gone, or listed for P10, before the user can
+  // ask about it. Its failures are logged inside and never abort the boot.
+  const boot = await runBootSupervision({
+    userData,
+    appVersion: app.getVersion(),
+    onLog: logSupervision,
+  });
+
+  staleCandidates = boot.stale;
+
+  logger.info("supervision.boot", {
+    stale: boot.stale.length,
+    reclaimed: boot.reclaimed.length,
+    candidates: boot.stale.map((candidate) => candidate.pid),
+  });
+
+  // Installed once with a null host so a quit before the engine start finishes
+  // still clears the boot marker. The host is attached on start success.
+  quitSupervisor = installQuitSupervisor({
+    host: engineHost,
+    userData,
+    app,
+    onLog: logSupervision,
+  });
+
   const locale = chooseLocale(settings.locale, app.getLocale());
 
   Menu.setApplicationMenu(
@@ -577,6 +739,16 @@ async function main(): Promise<void> {
   mainWindow.setTitle(APP_NAME);
 
   logger.info("shell.ready", { locale, allowRoot });
+
+  // The window never waits for the engine (docs/33 section 5.5 item 9). A
+  // missing bundle resolves as a skip and leaves the window exactly as it was.
+  void startShellEngine(userData).catch((error: unknown) => {
+    logger?.warn("supervision.engine.start", {
+      state: "failed",
+      reason: "unexpected",
+      detail: error instanceof Error ? error.message : String(error),
+    });
+  });
 
   app.on("activate", () => {
     // macOS: clicking the dock icon with no window open reopens one. Reusing the
@@ -655,3 +827,23 @@ void main().catch((error: unknown) => {
 });
 
 export { bootstrapErrorHtml };
+
+/**
+ * Stale-engine candidates from the last boot scan.
+ *
+ * P10's cleanup menu reads this through the existing main module; it is not a
+ * renderer bridge and adds no channel.
+ */
+export function getStaleEngineCandidates(): readonly StaleCandidate[] {
+  return staleCandidates;
+}
+
+/** The most recent engine crash record, for P9's crash page. */
+export function getLastEngineCrash(): CrashRecord | null {
+  return lastEngineCrash;
+}
+
+/** The single engine host, for B2/E4 to consume instead of constructing one. */
+export function getEngineHost(): EngineHost | null {
+  return engineHost;
+}
