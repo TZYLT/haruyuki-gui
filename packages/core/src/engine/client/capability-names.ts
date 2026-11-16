@@ -91,6 +91,22 @@ export interface CapabilityEntry {
    * and the command must not be waited on.
    */
   readonly optionalRequestId: boolean;
+  /**
+   * The registered name of the frame that acknowledges this command, or
+   * `undefined` when no reply frame exists at all.
+   *
+   * Read this as a *diagnostic*, not as a decision: whether an answer is owed is
+   * answered by {@link CapabilityEntry.completion} and
+   * {@link tracksInFlightWith}. This field exists so that a real timeout can name
+   * the frame it was waiting for, instead of a reader having to re-derive it.
+   *
+   * `undefined` means "no reply frame is registered for this capability" - the
+   * two silent watchers, the five id-less commands and the duplex wire. It never
+   * means "this build forgot the name": the projection fills it for every
+   * capability that has one, and the tests fail if a reply appears that the
+   * projection cannot name.
+   */
+  readonly replyWire: string | undefined;
 }
 
 /**
@@ -232,6 +248,62 @@ function scopeCarrierFor(name: CapabilityName, scope: CapabilityScope): ScopeCar
 }
 
 /**
+ * The reply frame's default suffix: a capability whose wire is `X` is normally
+ * acknowledged by `X_response`.
+ *
+ * These suffixes are contract *vocabulary*, not wire ids: neither this token nor
+ * `accepted` below is a wire id on its own, and neither is spelled out as one
+ * here. The full reply name is assembled from the wire id this table already
+ * holds plus one of these suffixes, which keeps `client/` free of wire literals
+ * while still naming the frame.
+ */
+const DEFAULT_REPLY_SUFFIX = "response";
+
+/**
+ * Capabilities whose reply frame does not follow the default suffix.
+ *
+ * There is exactly one, and it matters more than its size suggests: sending a
+ * message is the product's core action, and its acknowledgement carries the
+ * `accepted` suffix rather than the default one. A reader that derived the reply
+ * from the default rule would look for a frame that never arrives - the send
+ * would still work, and every message would be reported as a timeout.
+ *
+ * The map is a suffix table rather than a list of full wire ids on purpose: it
+ * records the *shape* of the exception (this capability answers with a different
+ * trailing token) instead of copying a wire id into `client/`. The tests compare
+ * the assembled names with `snapshot.json` and fail if the exception count or the
+ * exception's identity changes.
+ */
+const REPLY_SUFFIX_EXCEPTIONS: ReadonlyMap<CapabilityName, string> = new Map<
+  CapabilityName,
+  string
+>([["message.send", "accepted"]]);
+
+/**
+ * Assemble the acknowledgement frame name for one capability.
+ *
+ * `undefined` exactly when no reply frame exists: the two silent watchers, the
+ * five commands without a request id and the duplex wire. Every other capability
+ * answers, so it gets a name.
+ *
+ * @param name capability name
+ * @param wire the capability's wire id
+ * @param completion how the end of the command is observed
+ * @returns the reply frame name, or `undefined` when none exists
+ */
+function replyWireFor(
+  name: CapabilityName,
+  wire: string,
+  completion: CompletionMode,
+): string | undefined {
+  if (completion !== "response") {
+    return undefined;
+  }
+  const suffix = REPLY_SUFFIX_EXCEPTIONS.get(name) ?? DEFAULT_REPLY_SUFFIX;
+  return `${wire}_${suffix}`;
+}
+
+/**
  * Project the generated capability table into the client's own shape.
  *
  * Both generated records are read here on purpose: the wire comes from the
@@ -246,16 +318,19 @@ function buildCapabilities(): Readonly<Record<CapabilityName, CapabilityEntry>> 
 
   for (const name of CAPABILITY_NAMES) {
     const meta = CAPABILITY_META[name];
+    const wire = CAPABILITY_TO_WIRE[name];
     const scopeCarrier = scopeCarrierFor(name, meta.scope);
+    const completion = completionModeFor(name, meta.shape);
     table[name] = Object.freeze({
       name,
-      wire: CAPABILITY_TO_WIRE[name],
+      wire,
       shape: meta.shape,
       scope: meta.scope,
-      completion: completionModeFor(name, meta.shape),
+      completion,
       scopeCarrier,
       needsScope: scopeCarrier !== "none",
       optionalRequestId: OPTIONAL_REQUEST_ID_SET.has(name),
+      replyWire: replyWireFor(name, wire, completion),
     });
   }
 
@@ -405,4 +480,18 @@ export function tracksInFlightWith(name: CapabilityName, requestIdSent: boolean)
  */
 export function hasOptionalRequestId(name: CapabilityName): boolean {
   return CAPABILITIES[name].optionalRequestId;
+}
+
+/**
+ * The registered name of the frame that acknowledges one capability.
+ *
+ * This is the production value for `SendDeps.replyWireOf`, which is why
+ * it exists even though nothing on the send path branches on it: a real timeout
+ * has to be able to say which frame it waited for.
+ *
+ * @param name capability name
+ * @returns the reply frame name, or `undefined` when the capability has no reply
+ */
+export function replyWireOf(name: CapabilityName): string | undefined {
+  return CAPABILITIES[name].replyWire;
 }

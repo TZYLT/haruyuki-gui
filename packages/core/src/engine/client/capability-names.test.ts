@@ -18,11 +18,9 @@
  *   a union that lost a member while keeping a green test would be exactly the
  *   drift this table exists to prevent.
  *
- * The wire-id leak rule  is enforced here for this module only: the scan
- * reads `capability-names.ts`, not the whole `client/` directory, because sibling
- * work packages own their own files and a red here must mean *this* file leaked.
- *
- * Nothing here writes to disk, touches the network or starts the engine.
+ * The wire-id leak rule is enforced twice: this module's own file and
+ * every other file under `client/`. Nothing here writes to disk or starts the
+ * engine.
  */
 
 import { readdirSync, readFileSync } from "node:fs";
@@ -43,6 +41,7 @@ import {
   hasOptionalRequestId,
   isCapabilityName,
   needsScope,
+  replyWireOf,
   scopeCarrierOf,
   scopeOf,
   shapeOf,
@@ -649,15 +648,101 @@ describe("completion classes derived from the wire snapshot", () => {
       expect(tracksInFlight(name)).toBe(true);
     }
   });
-
-  it("pins the one reply whose wire is not <command>_response", () => {
-    const nonStandard = DERIVED.filter(
-      (row) => row.reply && !MESSAGE_WIRES.has(`${row.wire}_response`),
-    ).map((row) => row.name);
-    expect(nonStandard).toEqual(["message.send"]);
-  });
 });
 
+describe("reply wire registration", () => {
+  /** The default suffix a reply frame normally carries. */
+  const DEFAULT_SUFFIX = "response";
+
+  /**
+   * The reply wire the default rule would produce for one command wire.
+   *
+   * @param wire the command wire id
+   * @returns the name the default rule predicts
+   */
+  function defaultReplyFor(wire: string): string {
+    return `${wire}_${DEFAULT_SUFFIX}`;
+  }
+
+  /** Every capability that answers, per the snapshot evidence. */
+  const ANSWERING = DERIVED.filter((row) => row.reply);
+
+  it("registers a reply frame for all 60 answering capabilities", () => {
+    // The registration is derived, so the proof is that every derived name lands
+    // on a frame the snapshot actually contains - including the one exception.
+    expect(ANSWERING).toHaveLength(60);
+    for (const row of ANSWERING) {
+      const reply = replyWireOf(row.name as CapabilityName);
+      expect(reply, `${row.name} should have a reply wire`).toBeDefined();
+      expect(
+        MESSAGE_WIRES.has(reply ?? ""),
+        `${row.name} registered ${String(reply)}, which the snapshot does not contain`,
+      ).toBe(true);
+    }
+  });
+
+  it("leaves the 8 non-answering capabilities without a reply wire", () => {
+    const nonAnswering = CAPABILITY_NAMES.filter((name) => replyWireOf(name) === undefined);
+    expect(nonAnswering).toHaveLength(8);
+    expect([...nonAnswering].sort()).toEqual(
+      [
+        "device.setState",
+        "file.ops",
+        "file.unwatch",
+        "file.watch",
+        "terminal.input",
+        "terminal.kill",
+        "terminal.resize",
+        "terminal.spawn",
+      ].sort(),
+    );
+    for (const name of nonAnswering) {
+      expect(tracksInFlight(name), `${name} must not be trackable`).toBe(false);
+    }
+  });
+
+  it("names exactly one capability whose reply breaks the default suffix rule", () => {
+    // The load-bearing assertion of this field. A second exception turns this red
+    // and forces a look: a reader trusting the default rule would mis-name it.
+    const deviating = ANSWERING.filter(
+      (row) => replyWireOf(row.name as CapabilityName) !== defaultReplyFor(row.wire),
+    ).map((row) => row.name);
+
+    expect(deviating).toHaveLength(1);
+    expect(deviating).toEqual(["message.send"]);
+  });
+
+  it("registers the message-send acknowledgement under its real name", () => {
+    const reply = replyWireOf("message.send");
+    expect(reply).toBeDefined();
+    // Derived, not spelled out: the exception's frame is the wire id plus the one
+    // token that differs from the default suffix.
+    expect(reply).toBe(`${wireIdOf("message.send")}_accepted`);
+    expect(MESSAGE_WIRES.has(reply ?? "")).toBe(true);
+
+    // Guard against a vacuous pass: the default rule's answer for this
+    // capability is not a real frame, so dropping the exception cannot hide as
+    // "no reply exists".
+    const defaultName = defaultReplyFor(wireIdOf("message.send"));
+    expect(MESSAGE_WIRES.has(defaultName)).toBe(false);
+    expect(reply).not.toBe(defaultName);
+  });
+
+  it("keeps every registered reply unique", () => {
+    const replies = ANSWERING.map((row) => replyWireOf(row.name as CapabilityName) ?? "");
+    expect(new Set(replies).size).toBe(replies.length);
+  });
+
+  it("ties the reply wire to the completion class, not to the id flag", () => {
+    // An optional id does not license a missing name: the frame is registered even
+    // when the caller may choose not to ask for it.
+    for (const name of CAPABILITY_NAMES) {
+      expect(replyWireOf(name) !== undefined, `${name} reply/completion disagree`).toBe(
+        completionOf(name) === "response",
+      );
+    }
+  });
+});
 describe("optional request ids", () => {
   it("finds exactly 5 capabilities whose request id is optional", () => {
     const optional = CAPABILITY_NAMES.filter((name) => hasOptionalRequestId(name));
@@ -686,51 +771,23 @@ describe("optional request ids", () => {
 
   it("does not track a send that omits an optional request id", () => {
     // Omitting the id on an optional-request_id wire means no reply is owed;
-    // entering the in-flight table would guarantee a false TIMEOUT.
-    for (const name of CAPABILITY_NAMES.filter((candidate) => hasOptionalRequestId(candidate))) {
-      const owed = tracksInFlightWith(name, true);
-      const notOwed = tracksInFlightWith(name, false);
-      expect(owed, `${name} with an id should be tracked`).toBe(completionOf(name) === "response");
-      expect(notOwed, `${name} without an id must not be tracked`).toBe(false);
-    }
-  });
-
-  it("splits tracked request/response capabilities by whether their id is required", () => {
-    // Being tracked and having a required id are different facts, and the two
-    // sets do not nest the way a reader might assume: every one of the 5
-    // optional-id capabilities is tracked, so the split is 55 required + 5
-    // optional, not "all tracked ids are required".
+    // entering the in-flight table would guarantee a false TIMEOUT. This also
+    // covers the 55 required-id capabilities, which answer either way.
     const tracked = CAPABILITY_NAMES.filter((candidate) => tracksInFlight(candidate));
-    const optionalAmongTracked = tracked.filter((candidate) => hasOptionalRequestId(candidate));
-    const requiredAmongTracked = tracked.filter((candidate) => !hasOptionalRequestId(candidate));
+    const optional = tracked.filter((candidate) => hasOptionalRequestId(candidate));
+    expect(optional).toHaveLength(5);
+    expect(tracked.length - optional.length).toBe(55);
 
-    expect(optionalAmongTracked).toHaveLength(5);
-    expect([...optionalAmongTracked].sort()).toEqual(
-      [
-        "conversation.sync",
-        "message.abort",
-        "message.send",
-        "queue.resume",
-        "workspace.list",
-      ].sort(),
-    );
-    expect(requiredAmongTracked).toHaveLength(55);
-    expect(optionalAmongTracked.length + requiredAmongTracked.length).toBe(60);
-
-    for (const name of requiredAmongTracked) {
-      expect(tracksInFlightWith(name, true), `${name} with an id`).toBe(true);
-      expect(tracksInFlightWith(name, false), `${name} is owed an answer regardless`).toBe(true);
-    }
-    for (const name of optionalAmongTracked) {
-      expect(tracksInFlightWith(name, true), `${name} with an id`).toBe(true);
-      expect(tracksInFlightWith(name, false), `${name} owes nothing without an id`).toBe(false);
-    }
-  });
-
-  it("never tracks an untrackable capability, whatever the id flag says", () => {
-    for (const name of CAPABILITY_NAMES.filter((candidate) => !tracksInFlight(candidate))) {
-      expect(tracksInFlightWith(name, true), `${name} must never be tracked`).toBe(false);
-      expect(tracksInFlightWith(name, false), `${name} must never be tracked`).toBe(false);
+    for (const name of CAPABILITY_NAMES) {
+      const owed = tracksInFlightWith(name, true);
+      expect(owed, `${name} with an id`).toBe(tracksInFlight(name));
+      if (hasOptionalRequestId(name)) {
+        expect(tracksInFlightWith(name, false), `${name} owes nothing without an id`).toBe(false);
+      } else {
+        expect(tracksInFlightWith(name, false), `${name} is owed an answer regardless`).toBe(
+          tracksInFlight(name),
+        );
+      }
     }
   });
 });
@@ -897,7 +954,6 @@ describe("wire vocabulary containment, whole directory", () => {
   // Every other file - production and test alike - is scanned.
 
   const allowed = new Set([
-    "capability-names.ts",
     // Plants literals to show the scanner fires, and names prose-colliding ids
     // in the comment that explains why they are exempt.
     "capability-names.test.ts",
@@ -937,6 +993,6 @@ describe("wire vocabulary containment, whole directory", () => {
     // Each name here is a deliberate, explained hole. A third entry means someone
     // widened the scan's blind spot rather than fixing a leak, so it has to be
     // argued for in review instead of added in passing.
-    expect([...allowed]).toHaveLength(3);
+    expect([...allowed]).toHaveLength(2);
   });
 });

@@ -1,240 +1,46 @@
 /**
- * Tests for `ChannelPool`       .
+ * `ChannelPool` identity, lifetime and frozen surface.
  *
  * Contract: the frozen `ChannelPool` signature and the pool/channel split.
- * pool/channel split), §6.2 (`the bridge`: build, close, local failure) and §3.6.3
- * (the endpoint seam). User-facing behaviour: docs/26 §4.7 and the ``
- * ruling - one connection per agent - plus the measured fact this file protects
- *  §2.3 fact 14): with C's connection closed mid-stream, A still
- * received all 10 of its 10 frames.
+ * User-facing behaviour: a conversation id is a request scope, and each agent
+ * has one connection.
  *
- * Every test names the one deliberate change that turns it red. The channel's
- * own in-flight table, fan-out and diagnostic ring have their own suites;
- * this file tests the pool's decisions - which instance an agent gets, what a
- * close touches, and what a caller sees when a connection cannot be built - and
- * reads the channel's observable surface only to prove that closing one agent
- * did not disturb another.
+ * This file holds the "who has how many connections" decisions:
  *
- * Time is never real: every channel is built on `makeClock`. `afterEach` closes
- * every pool and then asserts the fake clocks are silent; the invariant there is
- * "closing releases everything", not "no test leaves a request in flight" - the
- * V-15b group leaves one waiting on purpose, which is legitimate because closing
- * settles it (see `assertNoLeakedTimers`).
+ * - one channel per agent, and a conversation id is a request scope rather than a
+ *   second connection (see the frozen `ChannelPool` doc comment);
+ * - `getChannel` is synchronous - it registers intent and never waits for a socket;
+ * - `channels()` is a truthful point-in-time snapshot, and a close rebuilds;
+ * - `closeChannel` / `closeAll` bookkeeping, arguments, and the injected clock.
+ *
+ * The neighbour-damage half of the contract - one agent's failure not spreading,
+ * and a channel still existing when no connection could be built - lives in
+ * `pool-failure.test.ts`. The harness both files share is
+ * `pool-test-support.ts`.
+ *
+ * Every test names the one deliberate change that turns it red. The channel's own
+ * in-flight table, fan-out and diagnostic ring have their own suites; this
+ * file reads that surface only where the pool's bookkeeping is the thing under test.
  */
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import {
-  assertNoLeakedTimers,
-  eventFrame,
-  expectSettles,
-  makeClock,
-  makeProbe,
-  makeReader,
-  makeWriter,
-  responseFrame,
-  trackChannel,
-  trackClock,
-} from "./channel-test-support";
-import type { FakeClock, RecordingWriter } from "./channel-test-support";
+import { eventFrame, expectSettles, responseFrame } from "./channel-test-support";
+import { trackChannel } from "./channel-test-support";
 import { EngineChannel, createChannel } from "./channel";
-import type { ChannelFactory, ChannelOpenContext, EngineChannelPool } from "./pool";
+import type { EngineChannelPool } from "./pool";
 import { ChannelPoolReentryError, createChannelPool } from "./pool";
-import type { Channel, ChannelPool, CommandResult, DiagnosticRecord, Endpoint } from "./types";
-import type { EngineEventFrame } from "./types";
+import type { Channel } from "./types";
+import {
+  COMPILE_TIME_CHECKS,
+  livePools,
+  makePool,
+  stubChannel,
+  stubPool,
+  teardownPools,
+} from "./pool-test-support";
 
-/* Compile-time checks */
-
-/** `true` only when the two types are identical. */
-type Equal<A, B> =
-  (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
-
-/** Fails the build unless its argument is `true`. */
-type Expect<T extends true> = T;
-
-/**
- * `getChannel` is synchronous. An `async` method cannot satisfy `Equal`, so
- * changing the signature is a compile error here.
- */
-type GetChannelReturnsChannel = Expect<Equal<ReturnType<ChannelPool["getChannel"]>, Channel>>;
-
-/** The class must satisfy the frozen interface, not merely resemble it. */
-type PoolIsAChannelPool = Expect<Equal<EngineChannelPool extends ChannelPool ? true : false, true>>;
-
-/** Keeps the compile-time assertions above from being reported as unused. */
-const COMPILE_TIME_CHECKS: [GetChannelReturnsChannel, PoolIsAChannelPool] = [true, true];
-
-/* Harness */
-
-/** What one built channel's test side can see. */
-interface AgentView {
-  readonly channel: Channel;
-  readonly writer: RecordingWriter;
-  readonly events: EngineEventFrame[];
-  readonly records: DiagnosticRecord[];
-}
-
-/** The structured form of a pool under test. */
-interface PoolHarness {
-  readonly pool: EngineChannelPool;
-  readonly clock: FakeClock;
-  /** Every factory invocation's context, in creation order. */
-  readonly contexts: ChannelOpenContext[];
-  factoryCalls(): number;
-  viewOf(agentId: string): AgentView | undefined;
-  /** Feed one raw frame to one agent's channel. */
-  ingest(agentId: string, raw: string): void;
-}
-
-/** The pools this file built, so teardown can close them. */
-const livePools: EngineChannelPool[] = [];
-
-/**
- * Build a pool whose channels are real kernels with the doubles wired.
- *
- * The default factory stands where the transport will: handed no endpoint it
- * throws, so the pool degrades that agent. `ingest` reaches the kernel's own
- * entry point, so a test asserts on what a consumer would see.
- *
- * @param overrides test-specific factory or endpoint resolver
- * @returns the pool plus the observable side effects
- */
-function makePool(
-  overrides: {
-    readonly createChannel?: ChannelFactory;
-    readonly endpointOf?: (agentId: string) => Endpoint | null;
-  } = {},
-): PoolHarness {
-  const clock = trackClock(makeClock());
-  const contexts: ChannelOpenContext[] = [];
-  const views = new Map<string, AgentView>();
-  let factoryCalls = 0;
-
-  const defaultFactory: ChannelFactory = (context) => {
-    factoryCalls += 1;
-    contexts.push(context);
-    if (context.endpoint === null) {
-      throw new Error("the transport cannot open a connection with no endpoint");
-    }
-    const writer = makeWriter();
-    const events: EngineEventFrame[] = [];
-    const records: DiagnosticRecord[] = [];
-    const channel = createChannel({
-      agentId: context.agentId,
-      write: writer.write,
-      reader: makeReader(),
-      probe: makeProbe(),
-      ...(context.clock === undefined ? {} : { clock: context.clock }),
-    });
-    channel.onEvent((frame) => {
-      events.push(frame);
-    });
-    channel.onDiagnostic((record) => {
-      records.push(record);
-    });
-    views.set(context.agentId, { channel, writer, events, records });
-    trackChannel(channel);
-    return channel;
-  };
-
-  const pool = createChannelPool({
-    createChannel: overrides.createChannel ?? defaultFactory,
-    endpointOf:
-      overrides.endpointOf ??
-      ((agentId) => ({ url: `ws://127.0.0.1:1/${agentId}`, token: `token-for-${agentId}` })),
-    clock: clock.clock,
-  });
-  livePools.push(pool);
-
-  return {
-    pool,
-    clock,
-    contexts,
-    factoryCalls: () => factoryCalls,
-    viewOf: (agentId) => views.get(agentId),
-    ingest: (agentId, raw) => {
-      const view = views.get(agentId);
-      if (view === undefined) throw new Error(`no channel built for ${agentId}`);
-      (view.channel as EngineChannel).ingest(raw);
-    },
-  };
-}
-
-/**
- * A `Channel` double whose `close()` a test controls, for the cases where only
- * the pool's bookkeeping is under test: counting closes, and proving a throwing
- * `close()` cannot strand a neighbour.
- *
- * @param agentId the agent this double reports
- * @param onClose what `close()` should do
- * @returns a `Channel`-shaped object
- */
-function stubChannel(agentId: string, onClose: () => void): Channel {
-  return {
-    agentId,
-    send: () => Promise.resolve<CommandResult>({ ok: true, data: undefined, raw: undefined }),
-    onEvent: () => () => undefined,
-    onDiagnostic: () => () => undefined,
-    capabilities: () => ({ state: "unknown" }),
-    close: onClose,
-  };
-}
-
-/**
- * A pool over stub channels, for tests that only count closes.
- *
- * @param onClose receives each agent id whose channel was closed
- * @param clock the fake clock to pass through
- * @returns the pool, registered for teardown
- */
-function stubPool(onClose: (agentId: string) => void, clock: FakeClock): EngineChannelPool {
-  const pool = createChannelPool({
-    createChannel: (context) => stubChannel(context.agentId, () => onClose(context.agentId)),
-    endpointOf: () => null,
-    clock: clock.clock,
-  });
-  livePools.push(pool);
-  return pool;
-}
-
-/**
- * Await a promise that must *not* settle yet - the mirror of `expectSettles`.
- * Asserting "still waiting" with a bare `await` is impossible and proving it by
- * not awaiting proves nothing; one macrotask lets every microtask run, so a
- * promise still pending after it is genuinely awaiting an answer.
- *
- * @param promise the promise under test
- * @param what a short description for the failure message
- * @throws when the promise settled
- */
-async function expectPending(promise: Promise<CommandResult>, what: string): Promise<void> {
-  const stillPending = Symbol("still-pending");
-  const raced = await Promise.race([
-    promise,
-    new Promise<typeof stillPending>((resolve) => {
-      setTimeout(() => {
-        resolve(stillPending);
-      }, 0);
-    }),
-  ]);
-  if (raced !== stillPending) {
-    throw new Error(`${what} settled, but it should still be waiting for its answer`);
-  }
-}
-
-/**
- * Close every pool this file built, then demand the clocks are silent.
- *
- * `closeAll` runs first on purpose: the invariant is "closing releases
- * everything", and `assertNoLeakedTimers` would make the check vacuous if it
- * did the closing itself before inspecting the clocks.
- */
-afterEach(() => {
-  while (livePools.length > 0) {
-    livePools.pop()?.closeAll();
-  }
-  assertNoLeakedTimers();
-});
+afterEach(teardownPools);
 
 /* One channel per agent */
 
@@ -349,117 +155,6 @@ describe("synchronous return", () => {
         expect(result.error.detail).toContain("engine has not become ready");
       }
     });
-  });
-});
-
-/* Local failure does not spread */
-
-describe("local failure does not spread", () => {
-  it("closes only the named channel", () => {
-    // Red when: closeChannel closes the whole pool.
-    const h = makePool();
-    const a = h.pool.getChannel("a");
-    const b = h.pool.getChannel("b");
-    h.pool.getChannel("c");
-
-    h.pool.closeChannel("c");
-
-    expect(h.pool.getChannel("a")).toBe(a);
-    expect(h.pool.getChannel("b")).toBe(b);
-    expect(h.pool.channels().map((channel) => channel.agentId)).toEqual(["a", "b"]);
-  });
-
-  it("keeps A's and B's subscribers receiving after C is closed (probe-10 shape)", () => {
-    // The measured behaviour: A is at 3/10 when C's connection
-    // closes and still receives 10/10. Red when: closing one agent touches a shared subscriber set
-    // or a shared socket.
-    const h = makePool();
-    h.pool.getChannel("a");
-    h.pool.getChannel("b");
-    h.pool.getChannel("c");
-
-    for (let i = 1; i <= 3; i += 1) {
-      h.ingest("a", eventFrame("known.event", { seq: i }));
-      h.ingest("b", eventFrame("known.event", { seq: i }));
-    }
-    h.pool.closeChannel("c");
-    for (let i = 4; i <= 10; i += 1) {
-      h.ingest("a", eventFrame("known.event", { seq: i }));
-      h.ingest("b", eventFrame("known.event", { seq: i }));
-    }
-
-    const seqs = (agent: string): unknown[] =>
-      (h.viewOf(agent)?.events ?? []).map((frame) => (frame.raw as { seq: number }).seq);
-    expect(seqs("a")).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
-    expect(seqs("b")).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
-  });
-
-  it("does not cancel A's in-flight request when C is closed", () => {
-    // The user-visible core: A's turn keeps running. Red when: closing one channel settles
-    // or clears another channel's table.
-    const h = makePool();
-    const a = h.pool.getChannel("a");
-    h.pool.getChannel("c");
-
-    const pending = a.send({ capability: "conversation.sync", body: {}, requestId: "req-a" });
-    h.pool.closeChannel("c");
-
-    expect(h.viewOf("a")?.writer.calls.at(-1)?.requestId).toBe("req-a");
-    h.ingest("a", responseFrame("req-a", { data: { answer: 42 } }));
-
-    return pending.then((result) => {
-      expect(result.ok).toBe(true);
-      if (result.ok) {
-        expect(result.data).toEqual({ answer: 42 });
-      }
-    });
-  });
-
-  it("settles C's in-flight request and leaves A's waiting", () => {
-    // Both halves at once. Red when: the close misses its own channel, or spills.
-    const h = makePool();
-    const a = h.pool.getChannel("a");
-    const c = h.pool.getChannel("c");
-
-    const aPending = a.send({ capability: "conversation.sync", body: {}, requestId: "req-a" });
-    const cPending = c.send({ capability: "conversation.sync", body: {}, requestId: "req-c" });
-    h.pool.closeChannel("c");
-
-    return expectSettles(cPending).then(async (settled) => {
-      expect(settled.ok).toBe(false);
-      if (!settled.ok) {
-        expect(settled.error.code).toBe("NOT_CONNECTED");
-      }
-      await expectPending(aPending, "A's request after C was closed");
-      h.ingest("a", responseFrame("req-a"));
-      await expectSettles(aPending);
-    });
-  });
-
-  it("degrades one agent without touching the others when its factory throws", () => {
-    // Red when: a factory failure escapes getChannel (the render path throws) or leaks into the
-    // neighbouring entry.
-    const h = makePool({
-      createChannel: (context) => {
-        if (context.agentId === "broken") {
-          throw new Error("transport refused");
-        }
-        const channel = createChannel({
-          agentId: context.agentId,
-          write: () => undefined,
-          ...(context.clock === undefined ? {} : { clock: context.clock }),
-        });
-        trackChannel(channel);
-        return channel;
-      },
-    });
-
-    const healthy = h.pool.getChannel("healthy");
-    const degraded = h.pool.getChannel("broken");
-
-    expect(degraded).not.toBe(healthy);
-    expect(h.pool.channels()).toHaveLength(2);
-    expect(h.pool.getChannel("healthy")).toBe(healthy);
   });
 });
 
@@ -650,6 +345,57 @@ describe("rebuild after close", () => {
     expect(h.pool.getChannel("a")).toBe(second);
     expect(h.factoryCalls()).toBe(2);
   });
+
+  it("proves a rebuild is live through the public surface, not a probe", () => {
+    // The template for the implementation comparison, which is why it asserts the way it
+    // does. The test above settles "a rebuild is a live channel" with
+    // `isClosed()` - but that method is *not* a member of the frozen `Channel`
+    // contract, so a second `ChannelPool` implementation cannot be checked that
+    // way, and an assertion no framework can evaluate is not evidence.
+    //
+    // So this restates the same invariant on the surface both implementations must
+    // share: a live handle accepts a command, and a closed handle refuses it with
+    // `detail` ending in "the channel is closed". The only outcome ruled out is
+    // "you are holding a dead handle"; the command is deliberately *not* required to
+    // succeed, because a live channel may still refuse for a legitimate reason (not
+    // ready yet, or dropped). Asserting success would make this test about the
+    // transport instead of about liveness.
+    const h = makePool();
+    const abandoned = h.pool.getChannel("a");
+    abandoned.close();
+    const rebuilt = h.pool.getChannel("a");
+
+    // The discriminator has to be real, or "does not contain it" proves nothing:
+    // the handle we just abandoned is refused with exactly this wording.
+    return expectSettles(
+      abandoned.send({ capability: "conversation.sync", body: {}, requestId: "req-dead" }),
+    ).then((dead) => {
+      expect(dead.ok).toBe(false);
+      if (!dead.ok) {
+        expect(dead.error.detail).toContain("the channel is closed");
+      }
+
+      // The portable assertion first, because this test is the template: it must be
+      // able to go red on the frozen surface alone, with no access to this harness's
+      // writer. A rebuild that hands back the dead handle is refused with the wording
+      // asserted above, and no other refusal may use it.
+      const pending = rebuilt.send({
+        capability: "conversation.sync",
+        body: {},
+        requestId: "req-live",
+      });
+      h.ingest("a", responseFrame("req-live", { data: {} }));
+
+      return expectSettles(pending).then((result) => {
+        if (!result.ok) {
+          expect(result.error.detail).not.toContain("the channel is closed");
+        }
+        // Then the in-process corroboration: a live handle did reach the transport.
+        // An implementation without this harness can drop this line.
+        expect(h.viewOf("a")?.writer.calls.at(-1)?.requestId).toBe("req-live");
+      });
+    });
+  });
 });
 
 /* Subscriber isolation */
@@ -697,115 +443,6 @@ describe("subscriber isolation", () => {
 
     expect(h.viewOf("a")?.writer.calls.map((call) => call.requestId)).toEqual(["req-a", "req-a-2"]);
     expect(h.viewOf("b")?.writer.calls).toHaveLength(0);
-  });
-});
-
-/* Endpoint seam */
-
-describe("endpoint seam", () => {
-  it("asks the resolver per agent and hands that agent's endpoint to the factory", () => {
-    // Red when: the resolver is called once and its answer reused for everyone, or
-    // the endpoint is resolved but never handed over (no channel could connect).
-    const asked: string[] = [];
-    const h = makePool({
-      endpointOf: (agentId) => {
-        asked.push(agentId);
-        return { url: `ws://127.0.0.1:9999/${agentId}`, token: `token-${agentId}` };
-      },
-    });
-
-    h.pool.getChannel("a");
-    h.pool.getChannel("b");
-    h.pool.getChannel("a");
-
-    expect(asked).toEqual(["a", "b"]);
-    expect(h.contexts.map((context) => context.endpoint)).toEqual([
-      { url: "ws://127.0.0.1:9999/a", token: "token-a" },
-      { url: "ws://127.0.0.1:9999/b", token: "token-b" },
-    ]);
-  });
-
-  it("does not retain the endpoint on the pool", () => {
-    // The token is a plaintext leak surface. Red when: a field caches
-    // it.
-    const h = makePool({
-      endpointOf: () => ({ url: "ws://127.0.0.1:9999/ws", token: "token-do-not-keep" }),
-    });
-    h.pool.getChannel("a");
-
-    expect(JSON.stringify(h.pool)).not.toContain("token-do-not-keep");
-    expect(JSON.stringify(h.pool)).not.toContain("ws://127.0.0.1:9999");
-    expect(Object.keys(h.pool)).not.toContain("endpoint");
-    expect(Object.keys(h.pool)).not.toContain("token");
-  });
-
-  it("degrades to a not-connected channel when there is no endpoint yet", () => {
-    // The engine's endpoint is null until it is ready, and a render path must still
-    // get a channel. Red when: getChannel throws or returns nothing.
-    const h = makePool({ endpointOf: () => null });
-
-    const channel = h.pool.getChannel("a");
-    expect(channel.agentId).toBe("a");
-    expect(channel.capabilities()).toEqual({ state: "unknown" });
-
-    // It still takes the pool's clock: a degraded channel stamps events too, and a
-    // frame's `at` must not silently come from the system clock.
-    const at: number[] = [];
-    channel.onEvent((frame) => at.push(frame.at));
-    (channel as EngineChannel).ingest(eventFrame("known.event"));
-    expect(at).toEqual([h.clock.clock.now()]);
-
-    return expectSettles(channel.send({ capability: "conversation.sync", body: {} })).then(
-      (result) => {
-        expect(result.ok).toBe(false);
-        if (!result.ok) {
-          expect(result.error.code).toBe("NOT_CONNECTED");
-          // §5.2.2: "never came up" must be distinguishable from "dropped".
-          expect(result.error.detail).toContain("engine has not become ready");
-        }
-      },
-    );
-  });
-
-  it("degrades instead of throwing when the resolver throws or returns junk", () => {
-    // A resolver that throws is a runtime condition; one that returns a wrong shape
-    // is a wiring bug. Neither may cost the user a channel, and neither may escape
-    // into a render path. Red when: either failure propagates out of `getChannel`, or
-    // the pool trusts the shape and the factory explodes on `url`.
-    const throwing = makePool({
-      endpointOf: () => {
-        throw new Error("engine is not ready");
-      },
-    });
-    expect(() => throwing.pool.getChannel("a")).not.toThrow();
-    expect(throwing.pool.channels()).toHaveLength(1);
-
-    const malformed = makePool({
-      endpointOf: () => ({ url: "ws://127.0.0.1:1/a" }) as unknown as Endpoint,
-    });
-    const channel = malformed.pool.getChannel("a");
-
-    // The defective shape was rejected before the factory saw it: the factory is
-    // handed `null` and decides it cannot connect, which is the pool degrading.
-    expect(malformed.contexts[0]?.endpoint).toBeNull();
-    return expectSettles(channel.send({ capability: "conversation.sync", body: {} })).then(
-      (result) => {
-        expect(result.ok).toBe(false);
-      },
-    );
-  });
-
-  it("caches the degraded channel instead of retrying on every call", () => {
-    // Red when: a null endpoint rebuilds per call (a new channel every frame, and one leaked
-    // not-connected channel per conversation switch). The conversation rule must hold on the
-    // degraded path too.
-    const h = makePool({ endpointOf: () => null });
-
-    const first = h.pool.getChannel("a", "conv-1");
-
-    expect(h.pool.getChannel("a")).toBe(first);
-    expect(h.pool.getChannel("a", "conv-2")).toBe(first);
-    expect(h.pool.channels()).toHaveLength(1);
   });
 });
 

@@ -307,9 +307,34 @@ describe("the send path builds the envelope", () => {
     // parsed body really does have an own enumerable `__proto__` key, and
     // assigning it changes the frame's prototype: the field vanishes from the
     // serialized string and the object grows an inherited shape.
+    //
+    // The minted id is not decoration. Without it this case would still throw
+    // when the guard was removed - but for the unrelated reason that the
+    // capability owes an id, so the assertion would pass on the wrong error and
+    // the guard could rot unnoticed. With an id supplied, the body check is the
+    // only thing left that can raise.
     const body = JSON.parse('{"__proto__": {"polluted": true}}') as unknown;
 
-    expect(() => frameOf(requestFor("device.info", { body }))).toThrow(/__proto__/);
+    expect(() => frameOf(requestFor("device.info", { body }), "minted-1")).toThrow(/__proto__/);
+  });
+
+  it("proves the __proto__ key is really there to be caught", () => {
+    // Positive control for the case above: if `JSON.parse` did not produce an own
+    // key, the guard would be refusing something that never occurs and the test
+    // above would pass vacuously. It does, and assigning it really does change an
+    // object's prototype instead of adding a field.
+    const body = JSON.parse('{"__proto__": {"polluted": true}}') as Record<string, unknown>;
+
+    expect(Object.prototype.hasOwnProperty.call(body, "__proto__")).toBe(true);
+    expect(Object.keys(body)).toContain("__proto__");
+
+    const probe: Record<string, unknown> = {};
+    for (const key of Object.keys(body)) {
+      probe[key] = body[key];
+    }
+    expect(probe).not.toHaveProperty("__proto__");
+    expect(JSON.stringify(probe)).toBe("{}");
+    expect((probe as { polluted?: boolean }).polluted).toBe(true);
   });
 });
 
