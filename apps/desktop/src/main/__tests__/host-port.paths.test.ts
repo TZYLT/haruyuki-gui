@@ -194,6 +194,40 @@ describe("buildSpawnSpec", () => {
     expect(result.reason).toContain("watchdog");
   });
 
+  it("uses the runtime layout's watchdog path when one is supplied", async () => {
+    // The packaged shell knows the real path under resources/runtime; the D2
+    // fallback under app.getAppPath() would point inside app.asar and fail.
+    const explicit =
+      process.platform === "win32"
+        ? "C:/app/resources/runtime/watchdog.cjs"
+        : "/app/resources/runtime/watchdog.cjs";
+    const result = await buildSpawnSpec(
+      { bundlePath: BUNDLE, watchdogPath: explicit },
+      PATHS,
+      (candidate) => candidate === BUNDLE || candidate === explicit,
+      APP_PATH,
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.spec.env["NODE_OPTIONS"]).toContain(
+      process.platform === "win32" ? explicit : explicit,
+    );
+  });
+
+  it("refuses a relative explicit watchdog path", async () => {
+    const result = await buildSpawnSpec(
+      { bundlePath: BUNDLE, watchdogPath: "runtime/watchdog.cjs" },
+      PATHS,
+      () => true,
+      APP_PATH,
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toContain("watchdog path must be absolute");
+  });
+
   it("builds a spec whose cwd is userData, so the engine writes one tree", async () => {
     const result = await buildSpawnSpec({ bundlePath: BUNDLE }, PATHS, () => true, APP_PATH);
 

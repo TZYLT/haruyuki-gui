@@ -73,6 +73,14 @@ export interface DesktopHostPortOptions {
    */
   readonly bundlePath: string;
   /**
+   * Absolute real path of the watchdog, from the runtime layout.
+   *
+   * Optional only for the existing dev callers: when absent, the D2 fallback
+   * `watchdogFor(appPath)` is used. The packaged shell passes the layout's
+   * `watchdogPath`, which is outside app.asar.
+   */
+  readonly watchdogPath?: string;
+  /**
    * Extra roots the user has authorised for local resource display.
    *
    * The readable set is `cwd` ∪ user-picked ∪ user-dropped; the caller owns the
@@ -186,11 +194,20 @@ export async function buildSpawnSpec(
     return { ok: false, reason: `engine bundle not found: ${bundlePath}` };
   }
 
-  const watchdogPath = watchdogFor(appPath);
+  const watchdogPath = options.watchdogPath ?? watchdogFor(appPath);
+
+  if (!path.isAbsolute(watchdogPath)) {
+    return { ok: false, reason: `watchdog path must be absolute: ${watchdogPath}` };
+  }
 
   if (!exists(watchdogPath)) {
     return { ok: false, reason: `watchdog not found: ${watchdogPath}` };
   }
+
+  // `NODE_OPTIONS` is a command line. A Windows backslash in the path is an
+  // escape there, which is why the D2 helper already converts the fallback.
+  const watchdogForNodeOptions =
+    process.platform === "win32" ? watchdogPath.split("\\").join("/") : watchdogPath;
 
   return {
     ok: true,
@@ -199,7 +216,7 @@ export async function buildSpawnSpec(
       // when this code runs inside Electron, which is exactly what the engine
       // must be started with -- but only if the environment above says so.
       exePath: process.execPath,
-      env: engineEnvironment(process.env, watchdogPath, paths.userData),
+      env: engineEnvironment(process.env, watchdogForNodeOptions, paths.userData),
       // `--ws-token-file` is the option NAME; `Engine.start` appends the path.
       argvPrefix: [
         "server",
