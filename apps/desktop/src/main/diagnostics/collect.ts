@@ -50,6 +50,8 @@ export interface DiagnosticsBundle {
   readonly manifest: DiagnosticsManifest;
   readonly summary: string;
   readonly omitted: readonly OmittedItem[];
+  /** What the collector did with session content; used when a trim rebuilds summary. */
+  readonly session?: "absent" | "empty" | "included";
 }
 
 /** Anything a budget pass can choose from: a day file, a record, a dump. */
@@ -385,5 +387,5 @@ export async function collectDiagnostics(
   const manifest = buildManifest(input, now, listed, omitted, homeDir.length > 0);
   const manifestFile: BundleFile = { path: "manifest.json", data: jsonFile(manifest) };
 
-  return { entries: [...listed, manifestFile].map(toEntry), manifest, summary, omitted };
+  return { entries: [...listed, manifestFile].map(toEntry), manifest, summary, omitted, session };
 }

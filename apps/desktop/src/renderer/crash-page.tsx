@@ -34,6 +34,8 @@ export interface CrashParams {
   readonly reason: string | null;
   /** The engine's terminating signal; absent for a renderer crash. */
   readonly signal: string | null;
+  /** The parent's watchdog verdict for an engine crash. */
+  readonly watchdog: "active" | "inactive" | "unknown" | null;
   /** The exit code, from `exitCode` or from the `code` spelling `crash/page.ts` uses. */
   readonly exitCode: number | null;
 }
@@ -84,11 +86,16 @@ export function parseCrashParams(search: string): CrashParams | null {
   if (crash !== "engine" && crash !== "renderer") return null;
 
   const code = integerParam(params.get("code"));
+  const watchdog = params.get("watchdog");
 
   return {
     kind: crash,
     reason: textParam(params.get("reason")),
     signal: textParam(params.get("signal")),
+    watchdog:
+      watchdog === "active" || watchdog === "inactive" || watchdog === "unknown"
+        ? watchdog
+        : null,
     // `crash/page.ts` writes the exit code as `code` for both kinds. `exitCode`
     // is accepted as well because the requirement names it and a hand-written URL
     // may use either; the explicit one wins when both are present.
@@ -197,6 +204,14 @@ export function CrashPage(): ReactElement {
   return (
     <div style={{ padding: "var(--ui-space-8)" }} data-testid="crash-page">
       <ErrorState title={title} detail={detail} />
+
+      {crash?.kind === "engine" && crash.watchdog !== "active" ? (
+        <div style={{ marginTop: "var(--ui-space-3)" }}>
+          <Alert tone="warning">
+            {t("common.crash.watchdogNotActive", { state: crash.watchdog ?? "unknown" })}
+          </Alert>
+        </div>
+      ) : null}
 
       <div style={ACTIONS}>
         <Button

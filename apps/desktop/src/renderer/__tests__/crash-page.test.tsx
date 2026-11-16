@@ -12,7 +12,7 @@
  */
 
 // @vitest-environment jsdom
-import { render, screen } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -79,6 +79,7 @@ function renderPage(): void {
 }
 
 afterEach(() => {
+  cleanup();
   setBridge(null);
   setUrl("");
 });
@@ -89,6 +90,7 @@ describe("parseCrashParams", () => {
       kind: "engine",
       reason: null,
       signal: "SIGKILL",
+      watchdog: null,
       exitCode: 1,
     });
   });
@@ -98,6 +100,7 @@ describe("parseCrashParams", () => {
       kind: "renderer",
       reason: "crashed",
       signal: null,
+      watchdog: null,
       exitCode: 2,
     });
   });
@@ -130,6 +133,13 @@ describe("CrashPage", () => {
     expect(screen.getByText("The interface stopped")).toBeDefined();
     expect(screen.getByText(/crashed/)).toBeDefined();
     expect(screen.getByText(/exit code 2/)).toBeDefined();
+  });
+
+  it("shows when the engine watchdog was not active", () => {
+    setUrl("?crash=engine&code=1&watchdog=inactive");
+    renderPage();
+
+    expect(screen.getByText(/not confirmed active \(inactive\)/)).toBeDefined();
   });
 
   it("says a missing field was not reported instead of showing an empty slot", () => {

@@ -29,8 +29,9 @@
  */
 
 import { Menu } from "electron";
-import type { App, BrowserWindow, Dialog, Shell } from "electron";
+import type { App, BrowserWindow, Dialog } from "electron";
 import type { Locale } from "@haruyuki/ui/i18n/core";
+import { removeStale } from "@haruyuki/core";
 
 import { openDiagnosticsPanel } from "./diagnostics/ipc.js";
 import type { Logger } from "./log.js";
@@ -47,8 +48,9 @@ import {
 /** Everything the menu's wiring reads or mutates. */
 export interface ApplicationMenuDeps {
   readonly app: App;
-  readonly shell: Shell;
   readonly dialog: Dialog;
+  /** The directory that owns `runtime-stale-*.json`. */
+  readonly userData: string;
   /** The locale resolved for this launch; every Help label comes from it. */
   readonly locale: Locale;
   /** The inspector gate, shared with `webPreferences.devTools`. */
@@ -96,42 +98,6 @@ function exportDiagnostics(deps: ApplicationMenuDeps): void {
 
   if (!openDiagnosticsPanel(window.webContents, deps.sessionAvailable())) {
     deps.logger?.warn("diagnostics.panel.open", { state: "send-failed" });
-  }
-}
-
-/** Open the log folder the app actually writes to. */
-async function openLogs(deps: ApplicationMenuDeps): Promise<void> {
-  const labels = menuLabels(deps.locale);
-
-  try {
-    const failure = await deps.shell.openPath(deps.app.getPath("logs"));
-
-    // `openPath` resolves to an empty string on success and a message on failure.
-    if (failure === "") return;
-
-    logActionFailure(deps, "open-logs", failure);
-
-    await deps.dialog.showMessageBox({
-      type: "warning",
-      title: labels.openLogsFailed,
-      message: labels.openLogsFailed,
-      detail: failure,
-      buttons: [labels.close],
-    });
-  } catch (error) {
-    logActionFailure(deps, "open-logs", error);
-  }
-}
-
-/** Relaunch through Electron's own path; no engine or window is rebuilt here. */
-function restart(deps: ApplicationMenuDeps): void {
-  try {
-    // `relaunch` followed by `quit` is the pair the renderer's relaunch channel
-    // uses (P7). The quit supervisor still sees the quit and stops the engine.
-    deps.app.relaunch();
-    deps.app.quit();
-  } catch (error) {
-    logActionFailure(deps, "restart", error);
   }
 }
 
@@ -201,6 +167,19 @@ async function cleanupStale(deps: ApplicationMenuDeps, rebuild: () => void): Pro
     const handled = new Set([...result.removed, ...result.failures.map((failure) => failure.pid)]);
     const remaining = candidates.filter((candidate) => !handled.has(candidate.pid));
 
+    // The process is confirmed gone only for `removed`; delete the matching
+    // stale file so a later boot does not resurrect a cleaned candidate
+    // (RD-08: cleanup success deletes the record).
+    for (const candidate of candidates) {
+      if (!result.removed.includes(candidate.pid) || candidate.staleFile === undefined) continue;
+
+      try {
+        await removeStale(deps.userData, candidate.staleFile);
+      } catch (error) {
+        logActionFailure(deps, "cleanup-stale-file", error);
+      }
+    }
+
     if (result.removed.length > 0 || result.ok) {
       deps.setStaleCandidates(remaining);
       rebuild();
@@ -248,12 +227,6 @@ export function installApplicationMenu(deps: ApplicationMenuDeps): { rebuild(): 
       staleCount: deps.getStaleCandidates().length,
       onExportDiagnostics: () => {
         exportDiagnostics(deps);
-      },
-      onOpenLogs: () => {
-        void openLogs(deps);
-      },
-      onRestart: () => {
-        restart(deps);
       },
       onCleanupStale: () => {
         void cleanupStale(deps, rebuild);

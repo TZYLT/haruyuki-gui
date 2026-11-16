@@ -45,6 +45,15 @@ describe("StderrTail", () => {
     expect(tail.snapshot(2)).toEqual(["b", "c"]);
   });
 
+  it("does not exceed the limit when a partial line is pending", () => {
+    const tail = new StderrTail({ maxLines: 2 });
+
+    tail.push("a\nb\nc");
+
+    expect(tail.snapshot()).toEqual(["b", "c"]);
+    expect(tail.snapshot(1)).toEqual(["c"]);
+  });
+
   it("clears all state", () => {
     const tail = new StderrTail();
 

@@ -8,7 +8,7 @@
  * by `diagnostics-zip`.
  */
 
-import { mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -311,6 +311,20 @@ describe("runDiagnosticsExport", () => {
     expect(diagnosticsFileName("0.1.0", NOW)).not.toMatch(/[:\\/]/);
   });
 
+  it("puts the default save path in the Downloads directory", async () => {
+    const harnessed = await harness();
+    const withDownloads = {
+      ...(await context()),
+      downloadsDir: path.join("C:", "Users", "me", "Downloads"),
+    };
+
+    await runDiagnosticsExport({ options: DEFAULT_OPTIONS }, withDownloads, harnessed.deps);
+
+    expect(harnessed.saves[0]?.defaultPath).toBe(
+      path.join("C:", "Users", "me", "Downloads", diagnosticsFileName("0.1.0", NOW)),
+    );
+  });
+
   it("returns cancelled when aborted before the dialog", async () => {
     const harnessed = await harness();
     const controller = new AbortController();
@@ -400,6 +414,33 @@ describe("the 50 MB choice", () => {
     expect(summary).toContain("crash/minidump-old.dmp");
   });
 
+  it("does not claim there was no session when the chosen content was dropped", async () => {
+    const harnessed = await harness({
+      boxes: [1, 1],
+      collect: () =>
+        Promise.resolve(
+          bundleOf([
+            { path: "content/conversation.json", bytes: 4 * MB },
+            { path: "logs/shell-2026-11-10.jsonl", bytes: 50 * MB },
+          ]),
+        ),
+    });
+
+    await runDiagnosticsExport(
+      { options: { includeSessionContent: true, includeMinidump: false } },
+      await context(),
+      harnessed.deps,
+    );
+
+    const summary = harnessed.writes
+      .at(-1)
+      ?.entries.find((entry) => entry.path === "summary.txt")
+      ?.data.toString("utf8");
+
+    expect(summary).not.toContain("no active session");
+    expect(summary).toContain("omitted to meet the size limit");
+  });
+
   it("trims once more when the written archive is still over the cap", async () => {
     let calls = 0;
     const harnessed = await harness({
@@ -453,6 +494,23 @@ describe("failure and success", () => {
       detail: "disk full",
     });
     await expect(stat(harnessed.outputPath)).rejects.toThrow();
+  });
+
+  it("does not delete a pre-existing archive when the writer fails before rename", async () => {
+    const harnessed = await harness();
+    const failing: WriteFake = async () => {
+      throw new Error("disk full before rename");
+    };
+
+    await writeFile(harnessed.outputPath, "older bundle", "utf8");
+
+    const result = await runDiagnosticsExport({ options: DEFAULT_OPTIONS }, await context(), {
+      ...harnessed.deps,
+      writeZip: failing,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(await readFile(harnessed.outputPath, "utf8")).toBe("older bundle");
   });
 
   it("opens the containing folder, and still succeeds when opening fails", async () => {

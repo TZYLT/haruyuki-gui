@@ -30,6 +30,21 @@ import { defineConfig } from "vite";
 /** Node built-ins plus the Electron module, all provided by the runtime. */
 const EXTERNAL = ["electron", ...builtinModules, ...builtinModules.map((name) => `node:${name}`)];
 
+/**
+ * Anchor for `@haruyuki/core`'s `createRequire(import.meta.url)`.
+ *
+ * The main bundle is CommonJS, so Vite turns `import.meta` into `{}` and
+ * `createRequire(undefined)` throws before the first window exists. The probe
+ * build already replaces this with the core package location; the main build
+ * did not, which is why a green probe suite could not catch the shell failing
+ * to launch (`E-128`). This is the same anchor, not a second convention.
+ *
+ * The absolute path is a development-tree fact. G2's packaged build must copy
+ * `ws` next to the bundle or externalise it with a packaged anchor; that is
+ * recorded as a packaging debt rather than guessed at here.
+ */
+const CORE_PACKAGE_JSON = path.resolve(import.meta.dirname, "../../packages/core/package.json");
+
 export default defineConfig({
   build: {
     outDir: path.resolve(import.meta.dirname, "dist/main"),
@@ -58,6 +73,14 @@ export default defineConfig({
         chunkFileNames: "chunks/[name]-[hash].cjs",
       },
     },
+  },
+  // `@haruyuki/core` resolves `ws` through `createRequire(import.meta.url)`.
+  // In this CJS bundle `import.meta` is `{}`, so anchor it where `ws` actually
+  // lives (`packages/core`) instead of letting module load throw.
+  define: {
+    "import.meta.url": `require("node:url").pathToFileURL(${JSON.stringify(
+      CORE_PACKAGE_JSON,
+    )}).href`,
   },
   // The main process has no `index.html`; without this Vite looks for one.
   appType: "custom",

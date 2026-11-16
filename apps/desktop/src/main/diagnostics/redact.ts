@@ -65,6 +65,7 @@ const SECRET_WORDS = new Set([
   "authorization",
   "apikey",
   "key",
+  "cookie",
   "credential",
   "credentials",
 ]);
@@ -205,7 +206,23 @@ function redactStructuredSecrets(text: string): string {
     `$1$2${REDACTED}`,
   );
 
-  return authorised.replace(/(\bBearer[ \t]+)[A-Za-z0-9._~+/=-]+/gi, `$1${REDACTED}`);
+  // Header-style secrets (`Cookie: ...`, `X-Api-Key: ...`, `token: ...`) have
+  // no `=`. The key is checked with the same word splitter, so `Date:` and
+  // `Content-Type:` survive while a secret-named header is cleared.
+  const headed = authorised.replace(
+    /(^|[\r\n])([ \t]*[A-Za-z0-9-]+[ \t]*:[ \t]*)([^\r\n]+)/g,
+    (match: string, start: string, prefix: string, value: string): string => {
+      const key = prefix.replace(/:.*$/, "").trim();
+
+      // `Authorization` has its own rule below, which keeps the scheme
+      // (`Bearer`) legible; redacting the whole value here would erase it.
+      if (key.toLowerCase() === "authorization") return match;
+
+      return isSecretKey(key) ? `${start}${prefix}${REDACTED}` : match;
+    },
+  );
+
+  return headed.replace(/(\bBearer[ \t]+)[A-Za-z0-9._~+/=-]+/gi, `$1${REDACTED}`);
 }
 
 /** Redact one string: home first (paths), then secrets (values). */

@@ -41,6 +41,14 @@ export interface CrashWriteContext {
 export interface CrashNotifyContext extends CrashWriteContext {
   /** Called after the record is written; the caller switches the page here. */
   readonly onCrash: (record: CrashRecord) => void;
+  /**
+   * The watchdog state the parent can justify at crash time.
+   *
+   * A getter because the engine host installs this watcher before `start()`
+   * finishes, when the watchdog verdict does not exist yet; a snapshot would
+   * freeze "unknown" into every record.
+   */
+  readonly watchdog?: () => "active" | "inactive" | "unknown";
 }
 
 /** The main process has no one to notify; it exits. */
@@ -58,6 +66,8 @@ export interface MainCrashHandlersContext extends MainCrashContext {
 export interface EngineExitLike {
   readonly code: number | null;
   readonly signal: string | null;
+  /** Parent-observed watchdog state, when the caller has one. */
+  readonly watchdog?: "active" | "inactive" | "unknown";
 }
 
 /** The handshake facts a crash record keeps. */
@@ -225,9 +235,9 @@ export function createEngineCrashWatcher(
       signal: exit.signal,
       engineVersion: engine.appServerInfo.engineVersion,
       protocolVersion: engine.appServerInfo.protocolVersion,
-      // The parent cannot prove the child watchdog fired. Claiming "active"
-      // here would be the exact mistake 32 section 4.3-4 forbids.
-      watchdog: "unknown",
+      // The parent cannot prove the child watchdog fired. The host's status is
+      // the strongest claim it can make; a missing getter is honestly unknown.
+      watchdog: context.watchdog?.() ?? "unknown",
     };
 
     void writeCrashRecord(context.dir, record).then((result) => {

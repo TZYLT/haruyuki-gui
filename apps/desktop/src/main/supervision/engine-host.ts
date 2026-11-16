@@ -174,6 +174,9 @@ async function startEngineHostOnce(options: EngineHostOptions): Promise<EngineHo
   // window between "ready" and this function returning, and an engine crash
   // that happened is still a crash. The watcher ignores start failures because
   // `appServerInfo` is null until the handshake succeeded (`R-13`).
+  // The watcher is installed before `start` resolves, so the watchdog verdict
+  // does not exist yet. A getter lets the record see the verdict once it does.
+  let engineWatchdog: "active" | "inactive" | "unknown" = "unknown";
   let unwatch: (() => void) | null = null;
 
   if (options.onCrash !== undefined) {
@@ -182,6 +185,7 @@ async function startEngineHostOnce(options: EngineHostOptions): Promise<EngineHo
         dir: crashDirFor(options.userData),
         versions: crashVersions(options.appVersion),
         onCrash: options.onCrash,
+        watchdog: () => engineWatchdog,
         ...(options.now === undefined ? {} : { now: options.now }),
       });
     } catch (error) {
@@ -232,6 +236,7 @@ async function startEngineHostOnce(options: EngineHostOptions): Promise<EngineHo
   }
 
   const watchdog = watchdogStatus(watchdogPath, engine);
+  engineWatchdog = watchdog;
   const startedAt = (options.now?.() ?? new Date()).toISOString();
   const engineMarker: EngineMarker = {
     pid,
@@ -298,10 +303,14 @@ export async function stopEngineHost(
   }
 
   const state = host.engine.state;
-  const pid = host.engine.pid;
-  const gone = pid === null || !isProcessAlive(pid);
+  // `Engine.stopOnce` clears `engine.pid` before it stops the child, so reading
+  // the facade's pid here would always report "gone" after a failed stop. The
+  // host's pid is the process this shell actually spawned and is the only fact
+  // that can still prove an orphan.
+  const pid = host.pid;
+  const gone = !isProcessAlive(pid);
 
-  if (state === "closed" || gone) {
+  if (gone) {
     crashWatchers.get(host)?.();
     crashWatchers.delete(host);
 

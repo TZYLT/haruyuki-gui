@@ -40,6 +40,15 @@ describe("bootstrapErrorHtml", () => {
     expect(html).toContain("the renderer is missing");
   });
 
+  it("keeps the export and quit entries on the inline page", () => {
+    const html = bootstrapErrorHtml({ event: "e", detail: "d" });
+
+    expect(html).toContain('id="export-diagnostics"');
+    expect(html).toContain('id="quit"');
+    expect(html).toContain("bridge:control.diagnostics.export");
+    expect(html).toContain("bridge:control.diagnostics.quit");
+  });
+
   it("shows the log path when there is one", () => {
     const html = bootstrapErrorHtml({
       event: "e",
@@ -90,11 +99,12 @@ describe("bootstrapErrorHtml", () => {
   });
 
   it("needs no external resource, since the assets are what failed", () => {
-    // No stylesheet link, no image, no font and no script: everything is inline, which
-    // the CSP permits for style and forbids for script.
+    // No stylesheet link, no image and no font; the only script is the inline
+    // action handler, and this page is loaded from a file URL with no CSP
+    // header. R-11 requires the export/quit entry points to be here.
     const html = bootstrapErrorHtml({ event: "e", detail: "d" });
 
-    expect(html).not.toContain("<script");
+    expect(html).not.toContain("<script src=");
     expect(html).not.toContain("<link");
     expect(html).not.toContain("<img");
     expect(html).not.toContain("@import");

@@ -205,6 +205,27 @@ describe("createEngineCrashWatcher", () => {
     unsubscribe();
   });
 
+  it("records the watchdog state the host can justify", async () => {
+    const dir = await tempDir();
+    const engine = new FakeEngine();
+    const crashes: CrashRecord[] = [];
+
+    engine.appServerInfo = { protocolVersion: 1, engineVersion: "0.6.0" };
+    engine.moveTo("ready");
+
+    const unsubscribe = createEngineCrashWatcher(engine, {
+      ...notifyContext(dir, crashes),
+      watchdog: () => "inactive",
+    });
+
+    engine.fail({ code: 1, signal: null });
+
+    await vi.waitFor(() => expect(crashes).toHaveLength(1));
+    expect(crashes[0]?.engine?.watchdog).toBe("inactive");
+
+    unsubscribe();
+  });
+
   it("does not record a start failure, which belongs to the bootstrap path", async () => {
     const dir = await tempDir();
     const engine = new FakeEngine();

@@ -123,7 +123,13 @@ async function checkEngine(): Promise<EngineObservation | null> {
     const tail = host.engine.stderrTail();
     const exitCode = exit?.code ?? null;
     const signal = exit?.signal ?? null;
-    const query = exit === null ? "" : engineCrashQuery(exit);
+    const query =
+      exit === null
+        ? ""
+        : engineCrashQuery({
+            ...exit,
+            watchdog: host.watchdog,
+          });
     const pageUrl = query === "" ? null : await engineCrashPageUrl(query);
 
     if (exit === null) crashProblems.push("lastExit stayed null after a real child kill");

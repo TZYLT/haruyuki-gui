@@ -169,6 +169,26 @@ describe("secret shapes", () => {
       secret: "abc123",
     },
     {
+      name: "cookie header",
+      input: "Cookie: sid=abcdef123; theme=dark",
+      secret: "abcdef123",
+    },
+    {
+      name: "set-cookie header",
+      input: "Set-Cookie: session=xyz-987",
+      secret: "xyz-987",
+    },
+    {
+      name: "colon-form api key header",
+      input: "X-Api-Key: sk-live-header",
+      secret: "sk-live-header",
+    },
+    {
+      name: "colon-form token field",
+      input: "token: tok-colon-42",
+      secret: "tok-colon-42",
+    },
+    {
       name: "token file flag",
       input: String.raw`--ws-token-file C:\tokens\engine`,
       secret: String.raw`C:\tokens\engine`,

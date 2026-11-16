@@ -7,11 +7,13 @@
  *
  * Four decisions worth stating:
  *
- *   The Help menu is the shell's one application-specific menu (P10). It offers the
- *   three things a user needs when something went wrong -- export a diagnostics
- *   bundle, open the log folder, restart -- plus the manual path for a leftover
- *   engine that boot supervision refused to kill on its own. Those items exist
- *   because the code behind them exists; nothing here is a placeholder.
+ *   The Help menu is the shell's one application-specific menu (P10). It offers
+ *   the two actions the signed requirement names -- export a diagnostics bundle
+ *   and the manual path for a leftover engine that boot supervision refused to
+ *   kill on its own. A third item is not added here: the signed menu has two,
+ *   and "open logs" / "restart" are not part of that surface (`32` section 4.1).
+ *   Those actions exist elsewhere (the log path is in the failure page, restart
+ *   is on the crash page), so nothing here is a placeholder.
  *
  *   Everything else stays role-based. Electron resolves `role` to the platform's own
  *   accelerator and localised label. Hand-written `CmdOrCtrl+R` strings would be
@@ -59,10 +61,6 @@ export interface MenuContext {
   readonly staleCount: number;
   /** Opens the diagnostics panel; absent disables the item. */
   readonly onExportDiagnostics?: () => void;
-  /** Opens the log folder; absent disables the item. */
-  readonly onOpenLogs?: () => void;
-  /** Relaunches the shell; absent disables the item. */
-  readonly onRestart?: () => void;
   /** Opens the stale-engine confirmation dialog; absent disables the item. */
   readonly onCleanupStale?: () => void;
 }
@@ -137,8 +135,6 @@ function helpSubmenu(context: MenuContext, labels: MenuLabels): MenuItemConstruc
 
   return [
     action(labels.exportDiagnostics, context.onExportDiagnostics),
-    action(labels.openLogs, context.onOpenLogs),
-    action(labels.restart, context.onRestart),
     { type: "separator" },
     {
       // The count belongs in the label: a greyed item that does not say how many

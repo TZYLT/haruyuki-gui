@@ -67,10 +67,15 @@ import { createRendererRecovery } from "./crash/renderer-recovery.js";
 import { showCrashPage, crashVersions } from "./crash/wiring.js";
 import { crashDirFor, readCrashRecords, type CrashRecord } from "./crash/records.js";
 import { collectDiagnostics } from "./diagnostics/collect.js";
+import { runShellCleanup } from "./diagnostics/cleanup.js";
 import { runDiagnosticsExport, type DiagnosticsExportContext } from "./diagnostics/export.js";
 import { registerDiagnosticsIpc } from "./diagnostics/ipc.js";
 import { getSessionDiagnosticsSource } from "./diagnostics/session.js";
-import { diagnosticsEngineFacts, diagnosticsLabels } from "./diagnostics/wiring.js";
+import {
+  diagnosticsEngineFacts,
+  diagnosticsLabels,
+  diagnosticsSecrets,
+} from "./diagnostics/wiring.js";
 import { writeZip } from "./diagnostics/zip.js";
 import { runBootSupervision, type StaleCandidate } from "./supervision/boot.js";
 import { startShellEngine } from "./supervision/engine-lifecycle.js";
@@ -189,6 +194,7 @@ async function showBootstrapError(
         // second window with weaker settings is a second attack surface, and the
         // rule would then have an exception nobody remembers.
         webPreferences: {
+          preload: path.join(HERE, "preload.cjs"),
           contextIsolation: true,
           sandbox: true,
           nodeIntegration: false,
@@ -291,7 +297,11 @@ async function loadSettings(): Promise<ShellSettings> {
     return { ...DEFAULT_SETTINGS };
   }
 
-  const read = readSettings(raw);
+  const read = readSettings(raw, {
+    onLogsInvalid: (problems) => {
+      logger?.warn("settings.logs.invalid", { fields: problems });
+    },
+  });
 
   settingsWritable = read.writable;
 
@@ -416,7 +426,11 @@ function handleEngineCrash(record: CrashRecord): void {
 
   void showCrashPage(
     window,
-    engineCrashQuery({ code: exitCode, signal }),
+    engineCrashQuery({
+      code: exitCode,
+      signal,
+      watchdog: record.engine?.watchdog ?? "unknown",
+    }),
     "engine",
     APP_SCHEME,
     logSupervision,
@@ -736,7 +750,14 @@ async function main(): Promise<void> {
   });
 
   settings = await loadSettings();
-
+  // Retention runs before supervision and the window; a failed sweep is a log line only.
+  await runShellCleanup({
+    logsDir: app.getPath("logs"),
+    crashDir: crashDirFor(userData),
+    crashDumpsDir: app.getPath("crashDumps"),
+    ...(settings.logs === undefined ? {} : { logs: settings.logs }),
+    onLog: logSupervision,
+  });
   // Boot supervision runs before the menu and the window (docs/33 section
   // 5.5): a stale engine must be gone, or listed for P10, before the user can
   // ask about it. Its failures are logged inside and never abort the boot.
@@ -767,8 +788,8 @@ async function main(): Promise<void> {
 
   installApplicationMenu({
     app,
-    shell,
     dialog,
+    userData,
     locale,
     devtoolsAllowed,
     getWindow: () => mainWindow,
@@ -796,11 +817,20 @@ async function main(): Promise<void> {
     sessionAvailable: getSessionDiagnosticsSource() !== null,
     logger,
     app,
-    export: (run) => {
+    export: async (run) => {
+      // Second sweep: before the save dialog, so a cleanup failure cannot hide behind it.
+      await runShellCleanup({
+        logsDir: app.getPath("logs"),
+        crashDir: crashDirFor(userData),
+        crashDumpsDir: app.getPath("crashDumps"),
+        ...(settings.logs === undefined ? {} : { logs: settings.logs }),
+        onLog: logSupervision,
+      });
       const context: DiagnosticsExportContext = {
         userData,
         logsDir: app.getPath("logs"),
         crashDumpsDir: app.getPath("crashDumps"),
+        downloadsDir: app.getPath("downloads"),
         appVersion: app.getVersion(),
         commit: null,
         electron: process.versions.electron ?? "unknown",
@@ -815,6 +845,7 @@ async function main(): Promise<void> {
         engine: diagnosticsEngineFacts(engineHost),
         crashes: readCrashRecords(crashDirFor(userData)),
         sessionSource: getSessionDiagnosticsSource(),
+        secrets: diagnosticsSecrets(engineHost),
       };
 
       return runDiagnosticsExport({ options: run.options }, context, {

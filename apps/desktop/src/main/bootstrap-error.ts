@@ -100,6 +100,8 @@ export function bootstrapErrorHtml(failure: BootstrapFailure): string {
       dt { font-weight: 600; }
       dd { margin: 0; }
       code { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: 0.92em; }
+      .actions { display: flex; flex-wrap: wrap; gap: 0.75rem; margin-top: 1.5rem; }
+      button { font: inherit; padding: 0.45rem 0.9rem; cursor: pointer; }
       .hint { margin-top: 1.75rem; font-size: 0.92em; opacity: 0.75; }
     </style>
   </head>
@@ -111,11 +113,57 @@ export function bootstrapErrorHtml(failure: BootstrapFailure): string {
       <dt>Detail / 详情</dt><dd>${detail}</dd>
       ${logRow}
     </dl>
+    <div class="actions">
+      <button id="export-diagnostics" type="button">Export diagnostics / 导出诊断</button>
+      <button id="quit" type="button">Quit / 退出</button>
+    </div>
+    <p id="action-note" class="hint" hidden>
+      The diagnostics bridge is unavailable on this page. / 此页无法使用诊断桥接。
+    </p>
     <p class="hint">
       The failure is recorded in the log above. Relaunching may help; if it does not,
       please attach that file to a bug report.<br />
       失败已记录在上面的日志文件里。可以尝试重新启动；若仍然失败，请把该文件附在问题报告里。
     </p>
+    <script>
+      (function () {
+        var bridge = window.haruyuki;
+        var note = document.getElementById("action-note");
+        var exportButton = document.getElementById("export-diagnostics");
+        var quitButton = document.getElementById("quit");
+
+        if (exportButton) {
+          exportButton.addEventListener("click", function () {
+            if (!bridge || typeof bridge.invoke !== "function") {
+              if (note) note.hidden = false;
+              return;
+            }
+            try {
+              bridge.invoke("bridge:control.diagnostics.export", {
+                kind: "open",
+                sessionAvailable: false,
+              });
+            } catch (error) {
+              if (note) note.hidden = false;
+            }
+          });
+        }
+
+        if (quitButton) {
+          quitButton.addEventListener("click", function () {
+            if (bridge && typeof bridge.invoke === "function") {
+              try {
+                bridge.invoke("bridge:control.diagnostics.quit");
+                return;
+              } catch (error) {
+                // Fall through to closing this window below.
+              }
+            }
+            window.close();
+          });
+        }
+      })();
+    </script>
   </body>
 </html>
 `;

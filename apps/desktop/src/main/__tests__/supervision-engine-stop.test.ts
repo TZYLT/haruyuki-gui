@@ -102,6 +102,21 @@ describe("stopEngineHost", () => {
     expect(result.reason).toBe("taskkill denied");
   });
 
+  it("does not trust a closed state when the spawned pid is still alive", async () => {
+    const dir = await tempDir();
+    const engine = new FakeEngine();
+
+    engine.state = "ready";
+    engine.pid = process.pid;
+    engine.stopFinalState = "closed";
+    engine.stopClearsPid = true;
+
+    const result = await stopEngineHost(hostFor(engine, dir));
+
+    expect(result.stopped).toBe(false);
+    expect(result.reason).toBe("engine state is closed");
+  });
+
   it("treats a failed engine with no pid as stopped", async () => {
     const dir = await tempDir();
     const engine = new FakeEngine();

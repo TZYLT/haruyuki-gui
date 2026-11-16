@@ -204,7 +204,7 @@ export function buildSummary(
   now: Date,
   included: number,
   omitted: readonly OmittedItem[],
-  session: "absent" | "empty" | "included",
+  session: "absent" | "empty" | "included" | "dropped",
 ): string {
   const count = (reason: OmittedItem["reason"]): number =>
     omitted.filter((item) => item.reason === reason).length;
@@ -226,7 +226,9 @@ export function buildSummary(
       ? "  Included because it was chosen: the newest messages of the active conversation; keys and tokens are still stripped. / 因勾选而包含当前会话最近的消息；key 与 token 仍已移除。"
       : session === "empty"
         ? "  Requested, but no active session was available in this shell build; content/conversation.json is an empty placeholder with a note. / 已请求，但当前壳没有活动会话；content/conversation.json 是带说明的空占位。"
-        : "  Not included (default). / 未包含（默认）。";
+        : session === "dropped"
+          ? "  Requested, but the selected session content (or its empty placeholder) was omitted to meet the size limit; see Omitted below. / 已请求，但所选会话内容（或空占位）因超出大小上限被省略；见下方省略项。"
+          : "  Not included (default). / 未包含（默认）。";
 
   return `Haruyuki diagnostics summary / Haruyuki 诊断摘要
 Created (UTC) / 创建时间: ${now.toISOString()}

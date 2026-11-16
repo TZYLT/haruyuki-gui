@@ -104,33 +104,27 @@ describe("the devtools gate", () => {
 });
 
 describe("the Help menu", () => {
-  it("comes last and offers the four actions in order", () => {
+  it("comes last and offers the two signed actions in order", () => {
     const labels = helpSubmenu(PRODUCTION)
       .filter((item) => item.type !== "separator")
       .map((item) => item.label);
 
-    expect(labels).toEqual([
-      "Export Diagnostics…",
-      "Open Logs Folder",
-      "Restart Application",
-      "Clean Up Leftover Engines…",
-    ]);
+    expect(labels).toEqual(["Export Diagnostics…", "Clean Up Leftover Engines…"]);
   });
 
   it("puts the cleanup action behind a separator", () => {
-    // The first three answer "something is wrong"; cleanup is the rarer,
-    // destructive one. A separator is the only cue the menu has.
+    // Export answers "something is wrong"; cleanup is the rarer, destructive one.
     const items = helpSubmenu(PRODUCTION);
     const separator = items.findIndex((item) => item.type === "separator");
 
-    expect(separator).toBe(3);
-    expect(items).toHaveLength(5);
+    expect(separator).toBe(1);
+    expect(items).toHaveLength(3);
   });
 
   it("disables every action whose callback is absent", () => {
     const actions = helpSubmenu(PRODUCTION).filter((item) => item.type !== "separator");
 
-    expect(actions).toHaveLength(4);
+    expect(actions).toHaveLength(2);
     expect(actions.every((item) => item.enabled === false)).toBe(true);
   });
 
@@ -139,8 +133,6 @@ describe("the Help menu", () => {
       ...PRODUCTION,
       staleCount: 1,
       onExportDiagnostics: () => undefined,
-      onOpenLogs: () => undefined,
-      onRestart: () => undefined,
       onCleanupStale: () => undefined,
     }).filter((item) => item.type !== "separator");
 
@@ -153,8 +145,6 @@ describe("the Help menu", () => {
       ...PRODUCTION,
       staleCount: 1,
       onExportDiagnostics: () => calls.push("export"),
-      onOpenLogs: () => calls.push("logs"),
-      onRestart: () => calls.push("restart"),
       onCleanupStale: () => calls.push("cleanup"),
     });
 
@@ -163,7 +153,7 @@ describe("the Help menu", () => {
       clickItem(item);
     }
 
-    expect(calls).toEqual(["export", "logs", "restart", "cleanup"]);
+    expect(calls).toEqual(["export", "cleanup"]);
   });
 
   it("disables cleanup when there are no candidates", () => {
@@ -199,8 +189,7 @@ describe("the Help menu", () => {
 
     expect(titles).toContain("帮助");
     expect(chinese[0]?.label).toBe("导出诊断…");
-    expect(chinese[1]?.label).toBe("打开日志目录");
-    expect(chinese[2]?.label).toBe("重启应用");
+    expect(chinese[2]?.label).toBe("清理遗留引擎…");
   });
 });
 

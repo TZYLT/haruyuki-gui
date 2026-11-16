@@ -100,14 +100,11 @@ export class StderrTail {
    * @param limit maximum lines to return; defaults to the configured cap
    */
   snapshot(limit: number = this.maxLines): readonly string[] {
-    const count = Math.max(0, Math.min(limit, this.lines.length));
-    const tail = this.lines.slice(this.lines.length - count);
+    const pendingFits = this.pending !== "" && this.textFits();
+    const all = pendingFits ? [...this.lines, this.pending] : this.lines;
+    const count = Math.max(0, Math.min(limit, all.length));
 
-    if (this.pending === "" || !this.textFits()) {
-      return [...tail];
-    }
-
-    return [...tail, this.pending];
+    return all.slice(all.length - count);
   }
 
   /** Add one complete line, then trim both caps. */

@@ -23,13 +23,14 @@
 
 import { randomUUID } from "node:crypto";
 import { unlink } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 
 import {
   clearRuntimeMarker,
   collectEvidence as collectEvidenceFromOs,
   evaluateReclaim,
   killStaleEngine,
+  listStale,
   moveToStale,
   readRuntimeMarker,
   writeRuntimeMarker,
@@ -38,6 +39,7 @@ import {
   type ProcessEvidence,
   type RuntimeMarker,
   type StaleEngineRecord,
+  type StaleMarkerEntry,
 } from "@haruyuki/core";
 
 import { describeError, type SupervisionLog } from "./errors.js";
@@ -63,6 +65,14 @@ export interface StaleCandidate {
   readonly evidence: ProcessEvidence;
   readonly decision: "confident" | "ambiguous";
   readonly reason: string;
+  /**
+   * The `runtime-stale-*.json` this candidate came from, if any.
+   *
+   * Present for a candidate kept by this boot and for one loaded from an earlier
+   * boot; the cleanup path uses it to delete the file only after the process is
+   * confirmed gone. It is a file name, never a path from the marker.
+   */
+  readonly staleFile?: string;
 }
 
 /** What one boot scan found and what it did. */
@@ -105,6 +115,11 @@ export async function runBootSupervision(
   const reclaimed: StaleCandidate[] = [];
   const now = options.now?.() ?? new Date();
   const log = createLog(options.onLog);
+
+  // Stale files are candidates from earlier boots. Loading them before the
+  // runtime marker means a candidate survives a restart, as RD-08 requires;
+  // the files are not deleted here because the process may still be alive.
+  await loadStaleCandidates(options, log, stale);
 
   try {
     const read = await readRuntimeMarker(options.userData);
@@ -167,10 +182,14 @@ export async function runBootSupervision(
     if (evaluation.decision === "ambiguous") {
       log("supervision.reclaim.skipped", { pid: engine.pid, reason: evaluation.reason });
 
-      await keepStale(options, marker, evidence, evaluation.reason, now, log);
+      const staleFile = await keepStale(options, marker, evidence, evaluation.reason, now, log);
+
       await writeFreshMarker(options, now, log);
 
-      stale.push(candidate);
+      stale.push({
+        ...candidate,
+        ...(staleFile === null ? {} : { staleFile }),
+      });
 
       return { stale, reclaimed };
     }
@@ -188,10 +207,15 @@ export async function runBootSupervision(
 
       log("supervision.reclaim.failed", { pid: engine.pid, reason: killed.reason });
 
-      await keepStale(options, marker, evidence, reason, now, log);
+      const staleFile = await keepStale(options, marker, evidence, reason, now, log);
+
       await writeFreshMarker(options, now, log);
 
-      stale.push({ ...candidate, reason });
+      stale.push({
+        ...candidate,
+        reason,
+        ...(staleFile === null ? {} : { staleFile }),
+      });
 
       return { stale, reclaimed };
     }
@@ -280,7 +304,7 @@ async function keepStale(
   reason: string,
   now: Date,
   log: SupervisionLog,
-): Promise<void> {
+): Promise<string | null> {
   const record: StaleEngineRecord = {
     schemaVersion: 1,
     detectedAt: now.toISOString(),
@@ -290,11 +314,61 @@ async function keepStale(
   };
 
   try {
-    await moveToStale(options.userData, record);
+    const path = await moveToStale(options.userData, record);
     log("supervision.stale.keep", { pid: evidence.pid, reason });
+
+    return basename(path);
   } catch (error) {
     log("supervision.stale.failed", { pid: evidence.pid, detail: describeError(error) });
+
+    return null;
   }
+}
+
+/**
+ * Load every `runtime-stale-*.json` left by an earlier boot.
+ *
+ * A damaged file is logged and skipped rather than deleted: it is evidence of a
+ * writer bug, and the cleanup path is not allowed to guess at a process from an
+ * unreadable record. A file with `engine: null` has no candidate to offer.
+ */
+async function loadStaleCandidates(
+  options: BootSupervisionOptions,
+  log: SupervisionLog,
+  target: StaleCandidate[],
+): Promise<void> {
+  let entries;
+
+  try {
+    entries = await listStale(options.userData);
+  } catch (error) {
+    log("supervision.stale.load-failed", { detail: describeError(error) });
+
+    return;
+  }
+
+  for (const entry of entries) {
+    if (entry.record === null) {
+      log("supervision.stale.unreadable", {
+        file: basename(entry.path),
+        detail: entry.detail ?? "unknown",
+      });
+
+      continue;
+    }
+
+    if (entry.record.marker.engine === null) continue;
+
+    target.push({
+      pid: entry.record.evidence.pid,
+      evidence: entry.record.evidence,
+      decision: entry.record.evidence.matched ? "confident" : "ambiguous",
+      reason: entry.record.reason,
+      staleFile: basename(entry.path),
+    });
+  }
+
+  if (target.length > 0) log("supervision.stale.loaded", { count: target.length });
 }
 
 /**

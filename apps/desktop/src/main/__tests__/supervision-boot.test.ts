@@ -113,6 +113,31 @@ describe("runBootSupervision", () => {
     expect(written.instanceId).not.toBe("");
   });
 
+  it("loads a stale candidate from an earlier boot", async () => {
+    const dir = await tempDir();
+    const record: StaleEngineRecord = {
+      schemaVersion: 1,
+      detectedAt: NOW.toISOString(),
+      marker: marker(engineMarker(), "loaded-instance"),
+      evidence: evidence({ matched: false, reason: "createdAt and imagePath do not match" }),
+      reason: "createdAt and imagePath do not match",
+    };
+
+    await writeFile(staleMarkerPath(dir, "loaded-instance"), JSON.stringify(record), "utf8");
+
+    const result = await runBootSupervision({
+      userData: dir,
+      appVersion: "0.1.0",
+      now: () => NOW,
+    });
+
+    expect(result.stale).toHaveLength(1);
+    expect(result.stale[0]?.pid).toBe(4242);
+    expect(result.stale[0]?.decision).toBe("ambiguous");
+    expect(result.stale[0]?.staleFile).toBe("runtime-stale-loaded-instance.json");
+    expect((await readMarker(dir)).engine).toBeNull();
+  });
+
   it("replaces a corrupt marker instead of failing boot", async () => {
     const dir = await tempDir();
 

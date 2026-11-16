@@ -47,6 +47,8 @@ export const en = {
   "common.crash.bridgeUnavailable":
     "The diagnostics bridge is unavailable, so this action cannot run.",
   "common.crash.notAvailable": "not reported",
+  "common.crash.watchdogNotActive":
+    "The engine watchdog was not confirmed active ({state}); see the diagnostics bundle.",
 
   // ------------------------------------------------------------ diagnostics
   // The panel's own vocabulary. The two option labels carry their scope and risk
@@ -69,6 +71,15 @@ export const en = {
   "common.diagnostics.progress": "Working: {done} of {total}",
   "common.diagnostics.exported": "Exported to {path} ({size} bytes)",
   "common.diagnostics.failed": "Export failed",
+  "common.diagnostics.saveTitle": "Save diagnostic bundle",
+  "common.diagnostics.zipFilter": "Zip archive",
+  "common.diagnostics.capTitle": "Diagnostic bundle is larger than 50 MB",
+  "common.diagnostics.capMessage": "The bundle would be {size}, over the {limit} limit.",
+  "common.diagnostics.capFull": "Save everything",
+  "common.diagnostics.capReduce": "Reduce to the limit",
+  "common.diagnostics.successTitle": "Diagnostics exported",
+  "common.diagnostics.successMessage": "Saved {size} to {path}",
+  "common.diagnostics.openFolder": "Open folder",
   "common.diagnostics.retry": "Retry",
   "common.diagnostics.bridgeUnavailable":
     "The diagnostics bridge is unavailable, so the bundle cannot be exported",

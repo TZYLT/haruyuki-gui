@@ -12,9 +12,9 @@
  * which catalogue/fallback supplies it. This file holds no user-visible prose.
  */
 
-import { rm } from "node:fs/promises";
+import { access, rm } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 
 import type {
   DiagnosticsEvent,
@@ -52,6 +52,8 @@ export interface DiagnosticsExportContext {
   readonly userData: string;
   readonly logsDir: string;
   readonly crashDumpsDir: string;
+  /** The save dialog's default directory; Electron's Downloads path in production. */
+  readonly downloadsDir?: string;
   readonly appVersion: string;
   readonly commit: string | null;
   readonly electron: string;
@@ -66,6 +68,8 @@ export interface DiagnosticsExportContext {
   readonly engine: DiagnosticsEngineFacts;
   readonly crashes: readonly CrashRecord[];
   readonly sessionSource: SessionDiagnosticsSource | null;
+  /** Values the shell already knows are secret (for example the engine token). */
+  readonly secrets?: readonly string[];
 }
 
 export interface DiagnosticsExportRequest {
@@ -302,11 +306,14 @@ function withSummary(
     options: request.options,
     now,
   };
+  const hasContent = entries.some((entry) => entry.path === "content/conversation.json");
   const session = !request.options.includeSessionContent
     ? "absent"
-    : entries.some((entry) => entry.path === "content/conversation.json")
+    : hasContent
       ? "included"
-      : "empty";
+      : bundle.session === "absent"
+        ? "absent"
+        : "dropped";
   const summary = redactDiagnosticText(
     buildSummary(
       options,
@@ -341,6 +348,17 @@ async function removeArtifact(outputPath: string): Promise<void> {
     await rm(outputPath, { force: true });
   } catch {
     // The writer's temp/rename path is the primary guard; this is the backstop.
+  }
+}
+
+/** Whether the save target already exists; used to avoid deleting user data. */
+async function fileExists(filePath: string): Promise<boolean> {
+  try {
+    await access(filePath);
+
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -413,7 +431,10 @@ export async function runDiagnosticsExport(
   try {
     const saved = await deps.showSaveDialog({
       title: labels.saveTitle,
-      defaultPath: diagnosticsFileName(context.appVersion, now),
+      defaultPath:
+        context.downloadsDir === undefined
+          ? diagnosticsFileName(context.appVersion, now)
+          : join(context.downloadsDir, diagnosticsFileName(context.appVersion, now)),
       filters: [{ name: labels.zipFilterName, extensions: ["zip"] }],
     });
 
@@ -425,6 +446,12 @@ export async function runDiagnosticsExport(
   } catch (error) {
     return failed(detailOf(error));
   }
+
+  // A pre-existing archive is the user's file until the writer's rename
+  // succeeds. `writeZip` is atomic; the backstop below must not turn a failed
+  // export into a deletion of the previous bundle.
+  const existedBefore = await fileExists(outputPath);
+  let wroteSuccessfully = false;
 
   emit({ kind: "progress", phase: "collect", done: 0, total: 1 });
 
@@ -450,6 +477,7 @@ export async function runDiagnosticsExport(
       crashes: context.crashes,
       options: request.options,
       now,
+      ...(context.secrets === undefined ? {} : { secrets: context.secrets }),
       sessionSource: context.sessionSource,
     });
   } catch (error) {
@@ -515,6 +543,7 @@ export async function runDiagnosticsExport(
     entries = withSummary(bundle, context, request, now, entries, dropped);
     entries = withManifest(bundle, entries, dropped);
     written = await write(entries);
+    wroteSuccessfully = true;
 
     if (isAborted()) {
       await removeArtifact(outputPath);
@@ -535,7 +564,9 @@ export async function runDiagnosticsExport(
       }
     }
   } catch (error) {
-    if (writeAttempted) await removeArtifact(outputPath);
+    if (writeAttempted && (!existedBefore || wroteSuccessfully)) {
+      await removeArtifact(outputPath);
+    }
 
     if (isAborted() || isZipAborted(error)) {
       return cancelled("cancelled while writing the archive");

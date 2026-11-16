@@ -7,10 +7,14 @@
  */
 
 import { createTranslator } from "@haruyuki/ui/i18n/core";
+import { readFileSync } from "node:fs";
 
 import type { EngineHost } from "../supervision/engine-host.js";
 import type { DiagnosticsEngineFacts } from "./collect.js";
 import type { DiagnosticsExportLabels } from "./export.js";
+
+/** How much of a token file is plausibly a secret, to avoid reading a huge file. */
+const MAX_SECRET_BYTES = 4096;
 
 /** MiB with one decimal, for the two native dialogs. */
 export function formatMb(bytes: number): string {
@@ -42,6 +46,31 @@ export function diagnosticsEngineFacts(host: EngineHost | null): DiagnosticsEngi
 }
 
 /**
+ * The secret values the shell can name without guessing.
+ *
+ * The engine's capability token lives in `<userData>/engine-token/engine-token`
+ * while the host is running; reading it here is what makes the value-level
+ * redaction rule real outside tests. A missing or unreadable file is not an
+ * error: the token may already be gone, and the bundle's key-based redaction
+ * still applies. Values shorter than four characters are ignored by the
+ * redactor itself.
+ *
+ * @param host the live engine host, or null before start / after stop
+ * @returns zero or one known secret value
+ */
+export function diagnosticsSecrets(host: EngineHost | null): readonly string[] {
+  if (host === null) return [];
+
+  try {
+    const token = readFileSync(host.tokenFile, "utf8").slice(0, MAX_SECRET_BYTES).trim();
+
+    return token === "" ? [] : [token];
+  } catch {
+    return [];
+  }
+}
+
+/**
  * The native dialogs' copy.
  *
  * Electron's dialogs are main-process APIs, so the labels live here rather than
@@ -56,18 +85,19 @@ export function diagnosticsLabels(locale: string): DiagnosticsExportLabels {
   const exportFailed = t("error.shell.diagnosticExportFailed");
 
   return {
-    saveTitle: "Export diagnostics",
-    zipFilterName: "Zip archive",
-    capTitle: "Diagnostic bundle is larger than 50 MB",
+    saveTitle: t("common.diagnostics.saveTitle"),
+    zipFilterName: t("common.diagnostics.zipFilter"),
+    capTitle: t("common.diagnostics.capTitle"),
     capMessage: (bytes, max) =>
-      `The bundle would be ${formatMb(bytes)}, over the ${formatMb(max)} limit.`,
-    capFull: "Save everything",
-    capReduce: "Reduce to the limit",
-    capCancel: t("common.action.cancel"),
-    successTitle: "Diagnostics exported",
-    successMessage: (file, bytes) => `Saved ${formatMb(bytes)} to ${file}`,
-    openFolder: "Open folder",
-    close: "Close",
+      t("common.diagnostics.capMessage", { size: formatMb(bytes), limit: formatMb(max) }),
+    capFull: t("common.diagnostics.capFull"),
+    capReduce: t("common.diagnostics.capReduce"),
+    capCancel: t("common.diagnostics.cancel"),
+    successTitle: t("common.diagnostics.successTitle"),
+    successMessage: (file, bytes) =>
+      t("common.diagnostics.successMessage", { size: formatMb(bytes), path: file }),
+    openFolder: t("common.diagnostics.openFolder"),
+    close: t("common.diagnostics.close"),
     failureTitle: exportFailed,
     failureMessage: (detail) => `${exportFailed}: ${detail}`,
   };

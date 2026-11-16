@@ -52,5 +52,6 @@ export function engineCrashQuery(exit: EngineExitLike): string {
     reason: "",
     code: integer(exit.code),
     signal: text(exit.signal),
+    watchdog: text(exit.watchdog),
   }).toString();
 }

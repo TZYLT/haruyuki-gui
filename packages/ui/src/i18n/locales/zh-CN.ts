@@ -38,6 +38,7 @@ export const zhCN = {
   "common.crash.quit": "退出应用",
   "common.crash.bridgeUnavailable": "诊断桥不可用，无法执行该操作",
   "common.crash.notAvailable": "未记录",
+  "common.crash.watchdogNotActive": "引擎看门狗未被确认生效（{state}）；详情见诊断包。",
 
   // ------------------------------------------------------------ diagnostics
   "common.diagnostics.title": "导出诊断",
@@ -56,6 +57,15 @@ export const zhCN = {
   "common.diagnostics.progress": "正在处理：{done}/{total}",
   "common.diagnostics.exported": "已导出到 {path}（{size} 字节）",
   "common.diagnostics.failed": "导出失败",
+  "common.diagnostics.saveTitle": "保存诊断包",
+  "common.diagnostics.zipFilter": "Zip 压缩包",
+  "common.diagnostics.capTitle": "诊断包超过 50 MB",
+  "common.diagnostics.capMessage": "诊断包为 {size}，超过 {limit} 上限。",
+  "common.diagnostics.capFull": "保存全部内容",
+  "common.diagnostics.capReduce": "精简到上限以内",
+  "common.diagnostics.successTitle": "诊断包已导出",
+  "common.diagnostics.successMessage": "已保存 {size} 到 {path}",
+  "common.diagnostics.openFolder": "打开文件夹",
   "common.diagnostics.retry": "重试",
   "common.diagnostics.bridgeUnavailable": "诊断桥不可用，无法导出诊断包",
 
