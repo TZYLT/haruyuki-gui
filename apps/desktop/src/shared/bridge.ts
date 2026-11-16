@@ -100,14 +100,30 @@ export interface DroppedFileReport {
 }
 
 /**
+ * The bridge protocol version this shell speaks.
+ *
+ * C5's handshake compares `bridgeVersion` with exact equality and never parses
+ * it (C5-Q07). The value is kept here, next to the channel names, so the core's
+ * sender and the renderer's ready frame cannot drift apart: a mismatch is the
+ * one failure the handshake reports as `BRIDGE_VERSION_MISMATCH`.
+ *
+ * C5 does not export an authoritative constant; when it does, this is the one
+ * line D3 changes. Until then `"1"` matches `FRAME_PROTOCOL_VERSION` and the
+ * C5 fixture header.
+ */
+export const BRIDGE_VERSION = "1" as const;
+
+/**
  * The channels the main process answers.
  *
  * D1 registers one, because the shell had no real IPC yet. `ping` stays: it is
  * the channel that makes the allow *and* deny paths exercisable -- with an empty
  * list every call would be refused and the accept path would be untested code.
- * D4 appends the three diagnostics commands (`33` section 4.3); each is
- * `<channel>.<domain>.<action>` and is registered by
- * `main/diagnostics/ipc.ts`. No preload member is added for them.
+ * D2 appends the dropped-file report (the preload's `File` conversion). D4
+ * appends the three diagnostics commands (`33` section 4.3), registered by
+ * `main/diagnostics/ipc.ts`. D3 appends its seven (frame submit/deliver, layout
+ * save, terminal ack/notice), registered by `main/bridge/register.ts`. Channels
+ * grow; the contract freezes the three members, not this list.
  *
  * Frozen at runtime as well as in the type, because the same array is handed to
  * the renderer through the bridge and read as a diagnostic: a renderer that
@@ -123,6 +139,13 @@ export const CHANNEL_ALLOWLIST: readonly string[] = Object.freeze([
   // already-converted `{name, path}[]` rather than files. The bridge is frozen at
   // *members*; channels grow, members do not.
   DROPPED_FILES_CHANNEL,
+  "bridge:control.frame.submit",
+  "bridge:control.frame.deliver",
+  "bridge:stream.frame.deliver",
+  "bridge:bulk.frame.deliver",
+  "bridge:control.layout.save",
+  "bridge:stream.terminal.ack",
+  "bridge:stream.terminal.notice",
 ]);
 
 /**
