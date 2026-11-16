@@ -21,6 +21,7 @@
  */
 
 import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { builtinModules } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -133,5 +134,38 @@ describe("the shell's reload and navigation surface", () => {
     expect(source).toContain("sandbox: true");
     expect(source).toContain("nodeIntegration: false");
     expect(source).toContain("webviewTag: false");
+  });
+});
+
+describe("the preload is one self-contained file", () => {
+  it("has no shared chunk beside it", () => {
+    // The failure this prevents, from a real launch: with both entries in one build,
+    // Rollup extracted `bridge.ts` into `chunks/bridge-<hash>.cjs` and the preload became
+    // `require("./chunks/bridge-<hash>.cjs")`. A sandboxed preload has no module loader,
+    // so that `require` threw before `preload.ts` ran a line -- no `window.haruyuki`, and
+    // dragging a file over the window showed the no-drop cursor because the drop listener
+    // was never installed.
+    //
+    // The build is two invocations now, one entry each. This asserts the shape rather than
+    // the script, because the script is what a future change would edit.
+    const mainDir = path.join(PACKAGE_DIR, "dist", "main");
+
+    // Absent when the package has not been built; the rest of this file already skips in
+    // that situation, and a missing directory must not read as a pass here either.
+    if (!existsSync(mainDir)) return;
+
+    expect(existsSync(path.join(mainDir, "chunks"))).toBe(false);
+
+    // And the preload really is standalone: no `require` of anything but `electron` or a
+    // Node built-in. A relative `require` here is the chunk by another name.
+    const preload = readFileSync(path.join(mainDir, "preload.cjs"), "utf8");
+    const requires = [...preload.matchAll(/require\("([^"]+)"\)/g)]
+      .map((match) => match[1])
+      .filter((name): name is string => name !== undefined);
+    const unresolved = requires.filter(
+      (name) => name !== "electron" && !name.startsWith("node:") && !builtinModules.includes(name),
+    );
+
+    expect(unresolved).toEqual([]);
   });
 });
