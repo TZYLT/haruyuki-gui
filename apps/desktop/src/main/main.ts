@@ -28,7 +28,7 @@
  *   the log path.
  */
 
-import { app, BrowserWindow, Menu, protocol, session, shell } from "electron";
+import { app, BrowserWindow, dialog, Menu, Notification, protocol, session, shell } from "electron";
 import path from "node:path";
 
 /**
@@ -48,6 +48,7 @@ import { bootstrapErrorHtml, type BootstrapFailure } from "./bootstrap-error.js"
 import { createMediaHandler, MEDIA_PRIVILEGES, MEDIA_SCHEME } from "./media-protocol.js";
 import { MEDIA_TYPE_POLICY } from "./media-mime.js";
 import { mediaAccessPath, readMediaAccess, skipsPositionCheck } from "./media-access.js";
+import { createDesktopMembers, type DesktopMembersResult } from "./host-members.js";
 import { APP_HOST, APP_SCHEME, APP_PRIVILEGES, createProtocolHandler } from "./protocol.js";
 import { shellError } from "../shared/shell-error.js";
 import { CSP, headersFor, shouldApplyFallbackCsp } from "./csp.js";
@@ -131,6 +132,22 @@ let readableRootsForMedia: readonly string[] = [];
  */
 let trustAllPathsForMedia = false;
 let mediaAccessMtime = -1;
+
+/**
+ * The operating-system-facing members, built after ready.
+ *
+ * `null` before then, which is honest: a caller that runs earlier has no port yet,
+ * and pretending otherwise would mean a port whose dependencies are half-built.
+ */
+let desktopMembers: DesktopMembersResult | null = null;
+
+/**
+ * The shutdown registry.
+ *
+ * One list for the process rather than one per consumer, so cleanup registered by two
+ * different callers both runs. `runShutdown` drains it exactly once.
+ */
+const shutdownCallbacks: (() => void)[] = [];
 
 /**
  * The current position-trust answer, refreshed when the file changes.
@@ -623,6 +640,52 @@ async function main(): Promise<void> {
     }),
   );
 
+  // The operating-system-facing members. Built here rather than at module scope
+  // because every dependency below needs a ready app: `Notification` before ready
+  // throws, and the dialog needs a window to be modal to.
+  desktopMembers = createDesktopMembers(
+    {
+      showNotification: (title, body) => {
+        // `Notification` rather than a renderer toast: this is the OS surface the
+        // requirement names, and whether it is *visible* depends on the app having a
+        // Start Menu entry, which belongs to packaging (requirement T-3).
+        //
+        // The construction is wrapped because a throw here would take down whatever
+        // tried to report a problem -- a failure path that crashes the reporter is
+        // worse than one that stays quiet.
+        try {
+          new Notification({ title, body }).show();
+        } catch (error) {
+          logger?.warn("notify.failed", { detail: String(error).slice(0, 120) });
+        }
+      },
+      openExternal: (url) => shell.openExternal(url),
+      showOpenDialog: async ({ kind, multiple }) => {
+        const answer = await dialog.showOpenDialog({
+          properties:
+            kind === "directory"
+              ? ["openDirectory", ...(multiple ? (["multiSelections"] as const) : [])]
+              : ["openFile", ...(multiple ? (["multiSelections"] as const) : [])],
+        });
+
+        return { cancelled: answer.canceled, paths: answer.filePaths };
+      },
+      // True in this build. The measured caveat about toast visibility is packaging's
+      // (requirement T-3) and does not change whether a notification can be raised.
+      canNotify: () => true,
+      readableRoots: () => readableRootsForMedia,
+      trustAllPaths: () => currentTrustAllPaths(),
+      onFailure: (error) => {
+        logger?.warn("host.refused", {
+          code: error.code,
+          messageKey: error.messageKey,
+          detail: error.detail,
+        });
+      },
+    },
+    shutdownCallbacks,
+  );
+
   // The media channel. Registered here rather than inside its module because the
   // scheme list has to be a single call, and because a scheme registered twice in
   // one process does not take effect the second time (measured during the route
@@ -734,6 +797,15 @@ app.on("window-all-closed", () => {
 // ended -- are the ones most likely to be missing. `will-quit` because it can be
 // cancelled, and an async drain needs to hold the quit open to be worth anything.
 app.on("will-quit", (event) => {
+  // The port's cleanup runs first, and only once. It is not awaited here: the drain
+  // below already holds the quit open, so awaiting two independent things in one
+  // handler would need a join for no benefit -- the callbacks are synchronous by
+  // contract, and `runShutdown` resolves immediately after them.
+  //
+  // `void` rather than `await` is deliberate and safe for that reason: there is
+  // nothing asynchronous inside it to miss.
+  void desktopMembers?.runShutdown();
+
   // The guard is `logger !== null` rather than "is there anything to do", because
   // this handler re-enters itself: it calls `app.quit()` once it is done, and the
   // second entry must not preventDefault again forever.

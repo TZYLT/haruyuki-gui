@@ -18,7 +18,8 @@
     "smoke:engine": "node scripts/smoke-engine.mjs",
     "verify:gui-host": "node scripts/verify-gui-host.mjs",
     "verify:bootstrap-error": "node scripts/verify-bootstrap-error.mjs",
-    "verify:media": "node scripts/verify-media.mjs"
+    "verify:media": "node scripts/verify-media.mjs",
+    "verify:host-port": "node scripts/verify-host-port.mjs"
   },
   "dependencies": {
     "@haruyuki/core": "workspace:*",
