@@ -119,7 +119,36 @@ export function duplicateIdError(capability: string, requestId: string): EngineC
 }
 
 /**
- * The write itself failed: the socket was gone, backpressured, or the frame could
+ * The engine answered, and its answer was a refusal.
+ *
+ * Distinct from every other REJECTED in this file: those are refusals **by the
+ * client** (table full, duplicate id), this one is the engine saying no. The code
+ * is the same because the caller's next move is the same - do not retry blindly,
+ * read the reason - and because the wire has no client-side error taxonomy to
+ * borrow from.
+ *
+ * `detail` carries the engine's own words when it offered any. That text is
+ * untrusted and never branched on; the branch key is that this is a refusal at
+ * all.
+ *
+ * @param requestId the correlation id the engine refused
+ * @param engineText the engine's explanation, when it gave one
+ * @returns the REJECTED error
+ */
+export function refusedByEngineError(
+  requestId: string,
+  engineText: string | undefined,
+): EngineClientError {
+  const base = `the engine refused request ${requestId}`;
+
+  return {
+    code: "REJECTED",
+    detail: engineText === undefined ? base : `${base}: ${engineText}`,
+  };
+}
+
+/**
+ * A write itself failed: the socket was gone, backpressured, or the frame could
  * not be serialized.
  *
  * Distinct from `NOT_CONNECTED` on purpose - that one says there was no channel to
