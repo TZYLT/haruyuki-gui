@@ -22,15 +22,26 @@
  *   doubles deliberately get wrong (`canFloatingWindow` is false in both, but the
  *   doubles' dialog queue is a fixture while the real one is a human).
  *
- *   Also not compared: `secure*`. The desktop side needs `safeStorage`, which does not
- *   exist under plain Node; the real one is covered by `secrets.test.ts` with a
- *   reversible stand-in and by `verify:host-port` for construction. Pretending to
- *   compare it here would mean comparing two stand-ins.
+ *   Also not compared: the *encryption* behind `secure*`. The desktop side needs
+ *   `safeStorage`, which does not exist under plain Node, so comparing ciphertext would
+ *   mean comparing two stand-ins.
+ *
+ *   But `secure*`'s **key-name semantics** are compared, and they have to be. Whether
+ *   `secureGet("toString")` answers `NOT_FOUND` or `{ok: true, value: <function>}` has
+ *   nothing to do with which cipher was used -- it is a property both shells must share,
+ *   and it is exactly the property that was wrong here. Excluding all of `secure*`
+ *   because the encryption cannot be compared is what let that survive review: the
+ *   desktop implementation was in neither the frozen contract suite (which only runs
+ *   headless) nor this file.
  */
 
 import { describe, expect, it } from "vitest";
 
+import { createHeadlessHostPort } from "@haruyuki/core";
+
 import { createDesktopMembers, type DesktopMembersDeps } from "../host-members.js";
+import { createDesktopSecrets } from "../secrets.js";
+import type { HostPort } from "@haruyuki/core";
 import { buildSpawnSpec, DESKTOP_CAPABILITIES, desktopPaths } from "../host-port.js";
 
 /** A recording double for the shell, matching the shape the core doubles use. */
@@ -158,6 +169,121 @@ describe("the desktop members answer the shapes the doubles answer", () => {
 
     expect(answers.droppedWithoutPath).toBe("name");
     expect(answers.droppedWithAbsolutePath).toBe("name,path");
+  });
+});
+
+describe("secure*: the key-name semantics are the same in both shells", () => {
+  // A caller must be able to tell "absent" from "unreadable", and the frozen
+  // union says a value is a string. A key whose name happens to be an `Object.prototype`
+  // member broke both in the desktop store, and nothing caught it because this file
+  // excluded `secure*` wholesale.
+  //
+  // The encryption is genuinely not comparable here: headless keeps values in a `Map`,
+  // the desktop store needs `safeStorage`, and under plain Node there is no real cipher.
+  // Key-name handling is a different question and is comparable, so it is compared.
+
+  /** The keys worth trying, each for a specific reason. */
+  const INHERITED = ["toString", "valueOf", "hasOwnProperty", "constructor", "__proto__"];
+
+  /** A reversible stand-in for `safeStorage`, enough to make the store work offline. */
+  const standIn = {
+    isEncryptionAvailable: () => false,
+    encryptString: (text: string) => Buffer.from(text, "utf8"),
+    decryptString: (buffer: Buffer) => buffer.toString("utf8"),
+  };
+
+  /**
+   * Answer the same sequence from a port.
+   *
+   * @param port the implementation under test
+   * @param keys the key names to exercise
+   */
+  async function sequence(
+    port: Pick<HostPort, "secureGet" | "secureSet" | "secureDelete">,
+    keys: readonly string[],
+  ): Promise<Record<string, string>> {
+    const answers: Record<string, string> = {};
+
+    // A normal key first, so a failure in the odd ones is not confused with a store that
+    // does not work at all.
+    await port.secureSet("token", "abc");
+    answers["normal"] = JSON.stringify(await port.secureGet("token"));
+
+    for (const key of keys) {
+      // Before any write: an inherited member must read as absent, not as itself.
+      answers[`${key}:absent`] = JSON.stringify(await port.secureGet(key));
+
+      // After a write: it must come back, and come back as a string.
+      await port.secureSet(key, `value-${key}`);
+      answers[`${key}:stored`] = JSON.stringify(await port.secureGet(key));
+
+      // And deleting it must be idempotent.
+      await port.secureDelete(key);
+      answers[`${key}:deleted`] = JSON.stringify(await port.secureGet(key));
+    }
+
+    return answers;
+  }
+
+  it("answers identically for every awkward key name", async () => {
+    // Two implementations, one sequence, one expected set of answers.
+    const headless = await createHeadlessHostPort({ bundlePath: ABSOLUTE });
+    const desktop = createDesktopSecrets({
+      userData: await (async () => {
+        const { mkdtemp } = await import("node:fs/promises");
+        const { tmpdir } = await import("node:os");
+        const { join } = await import("node:path");
+
+        return mkdtemp(join(tmpdir(), "d2-parity-secrets-"));
+      })(),
+      safeStorage: standIn,
+      keyringAvailable: false,
+      // These cases are about key names, not consent, so the answer is fixed.
+      consent: async () => "allow-always",
+    });
+
+    const fromHeadless = await sequence(headless, INHERITED);
+    const fromDesktop = await sequence(desktop, INHERITED);
+
+    expect(fromDesktop).toEqual(fromHeadless);
+  });
+
+  it("refuses a name the prototype owns, rather than answering with it", async () => {
+    // The assertion that would have caught the defect even if the two shells had been
+    // wrong in the same way.
+    const headless = await createHeadlessHostPort({ bundlePath: ABSOLUTE });
+
+    for (const key of ["toString", "valueOf", "constructor"]) {
+      const answer = await headless.secureGet(key);
+
+      expect(answer, key).toEqual({ ok: false, code: "NOT_FOUND" });
+    }
+  });
+
+  it("keeps __proto__ as an ordinary key", async () => {
+    // The half that is about data loss rather than a wrong answer: an entry written under
+    // this name must survive a restart and another write.
+    const { mkdtemp } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+
+    const userData = await mkdtemp(join(tmpdir(), "d2-parity-proto-"));
+
+    const open = () =>
+      createDesktopSecrets({
+        userData,
+        safeStorage: standIn,
+        keyringAvailable: false,
+        consent: async () => "allow-always",
+      });
+
+    await open().secureSet("__proto__", "SECRET-42");
+    await open().secureSet("other", "xyz");
+
+    // A fresh instance reads from disk, so this is the persistence question and not a
+    // question about the in-process cache.
+    expect(await open().secureGet("__proto__")).toEqual({ ok: true, value: "SECRET-42" });
+    expect(await open().secureGet("other")).toEqual({ ok: true, value: "xyz" });
   });
 });
 
