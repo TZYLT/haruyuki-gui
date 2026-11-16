@@ -133,6 +133,12 @@ export class Engine {
 
   private socket: EngineSocket | null = null;
 
+  /** The current ready attempt's endpoint, or `null`; see {@link endpoint}. */
+  private readyEndpoint: { readonly url: string; readonly token: string } | null = null;
+
+  /** Raw-frame subscribers for B2's `onMessage`; separate from `frameListeners`. */
+  private readonly messageListeners = new Set<(data: string) => void>();
+
   private child: ChildProcess | null = null;
 
   private tokenFilePath: string | null = null;
@@ -188,6 +194,57 @@ export class Engine {
   /** What the last successful handshake reported, or `null`. */
   get appServerInfo(): AppServerInfo | null {
     return this.currentAppServerInfo;
+  }
+
+  /**
+   * The endpoint of this engine, or `null` while it is not usable.
+   *
+   * Read-only side channel for B2, which needs `url` + `token` to open the second
+   * and later connections of a multi-agent session (docs/26 §6.6): `` makes
+   * it unavoidable, because `url` is a local variable in `start`.
+   *
+   * Written just before `transition("ready")` by both entries and cleared where
+   * the socket is dropped. Non-null **only** in `ready`: the gate is the facade
+   * state, never `socketState`, which flips to `"open"` while the handshake answer
+   * is still unknown - a caller holding a non-null endpoint then would open N
+   * connections on an engine that may yet fail  §3.6.2.1, `this case`).
+   *
+   * The value carries the plaintext token, so it must never be logged, put in a
+   * diagnostic or attached to a crash record  §3.6.2 boundary 2).
+   */
+  get endpoint(): { readonly url: string; readonly token: string } | null {
+    if (this.currentState !== "ready") {
+      return null;
+    }
+
+    return this.readyEndpoint;
+  }
+
+  /** Writes one already-serialised frame; the text passes through unmodified. */
+  send(raw: string): void {
+    const socket = this.socket;
+
+    if (socket === null || this.currentSocketState !== "open") {
+      throw new Error(
+        `the engine socket is "${this.currentSocketState}"; only an open one can be written`,
+      );
+    }
+
+    socket.send(raw);
+  }
+
+  /**
+   * Subscribe to inbound raw frames; returns an idempotent unsubscribe.
+   *
+   * Distinct from {@link onFrame}, which hands out the arrival timestamp for a
+   * heartbeat and stays as it is (D4 reads it). This one hands out the
+   * frame text, because a client correlating a reply has to see the body.
+   */
+  onMessage(callback: (data: string) => void): () => void {
+    this.messageListeners.add(callback);
+    return () => {
+      this.messageListeners.delete(callback);
+    };
   }
 
   /**
@@ -316,6 +373,11 @@ export class Engine {
       }
 
       this.currentAppServerInfo = info;
+      // Before the transition: the getter gates on `state`, still `handshaking`
+      // here, so this stays unreachable until it runs. Assigning after would also
+      // satisfy boundary 5 but leaves a `ready` subscriber reading `null`, and
+      // that subscriber is the caller about to open the second connection.
+      this.readyEndpoint = Object.freeze({ url, token });
       this.transition("ready");
       return info;
     } catch (error) {
@@ -353,6 +415,9 @@ export class Engine {
       this.noteVersionMismatches(info, options.expectedEngineVersion);
 
       this.currentAppServerInfo = info;
+      // See `start`: assigned before the transition, which is safe because the
+      // getter gates on `state`, and a `ready` subscriber must already see it.
+      this.readyEndpoint = Object.freeze({ url: options.url, token: options.token });
       this.transition("ready");
       return info;
     } catch (error) {
@@ -467,6 +532,8 @@ export class Engine {
   private beginAttempt(initial: EngineState): void {
     this.latestFrameAt = null;
     this.currentAppServerInfo = null;
+    // A new attempt must not read the previous attempt's endpoint.
+    this.readyEndpoint = null;
     this.lastFailureCode = null;
     this.lastExitInfo = null;
     this.stderrHistory.clear();
@@ -760,6 +827,7 @@ export class Engine {
     this.socket = socket;
     this.currentSocketState = "open";
     socket.on("message", this.handleSocketMessage);
+    socket.on("message", this.handleSocketData);
     socket.on("close", this.handleSocketClose);
 
     return socket;
@@ -781,9 +849,34 @@ export class Engine {
     }
   };
 
+  /**
+   * Deliver one raw frame to the `onMessage` subscribers.
+   *
+   * A **separate** listener rather than a widened {@link handleSocketMessage}:
+   * `onFrame(at)` is frozen by  so its one-argument signature must not move
+   * (`crash-record-retention`). Binary frames are skipped (the protocol is text, `INV-25`), and each
+   * subscriber is isolated so one throw cannot stop the next.
+   */
+  private handleSocketData = (data: Buffer, isBinary: boolean): void => {
+    if (isBinary || this.messageListeners.size === 0) {
+      return;
+    }
+
+    const text = data.toString("utf8");
+
+    for (const listener of [...this.messageListeners]) {
+      try {
+        listener(text);
+      } catch {
+        // The facade owns no logging channel.
+      }
+    }
+  };
+
   /** The transport closed; the facade state is untouched here. */
   private handleSocketClose = (): void => {
     this.currentSocketState = "closed";
+    this.readyEndpoint = null;
   };
 
   /**
@@ -799,6 +892,7 @@ export class Engine {
 
     if (socket !== null) {
       socket.removeListener("message", this.handleSocketMessage);
+      socket.removeListener("message", this.handleSocketData);
       socket.removeListener("close", this.handleSocketClose);
 
       try {
@@ -813,6 +907,7 @@ export class Engine {
     }
 
     this.currentSocketState = "closed";
+    this.readyEndpoint = null;
   }
 
   /** Detach the child listeners so a stop cannot be mistaken for a crash. */
