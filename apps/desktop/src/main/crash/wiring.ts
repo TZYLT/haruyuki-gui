@@ -7,7 +7,20 @@
  * again for a user who just lost a process.
  */
 
-import type { BrowserWindow } from "electron";
+import { app, type BrowserWindow } from "electron";
+
+import type { CrashVersions } from "./records.js";
+
+/** The versions and platform a crash record carries. */
+export function crashVersions(): CrashVersions {
+  return {
+    version: app.getVersion(),
+    electron: process.versions.electron ?? "unknown",
+    node: process.versions.node,
+    platform: process.platform,
+    arch: process.arch,
+  };
+}
 
 /** The log sink the composition root passes in; it must never throw. */
 export type CrashLog = (event: string, detail?: Record<string, unknown>) => void;

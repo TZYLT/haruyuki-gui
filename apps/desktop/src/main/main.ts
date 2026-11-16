@@ -64,13 +64,8 @@ import { buildMenuTemplate } from "./menu.js";
 import { createLogger, type Logger } from "./log.js";
 import { handleRendererGone, installMainCrashHandlers } from "./crash/capture.js";
 import { engineCrashQuery, rendererCrashQuery } from "./crash/page.js";
-import { showCrashPage } from "./crash/wiring.js";
-import {
-  crashDirFor,
-  readCrashRecords,
-  type CrashRecord,
-  type CrashVersions,
-} from "./crash/records.js";
+import { showCrashPage, crashVersions } from "./crash/wiring.js";
+import { crashDirFor, readCrashRecords, type CrashRecord } from "./crash/records.js";
 import { collectDiagnostics } from "./diagnostics/collect.js";
 import { runDiagnosticsExport, type DiagnosticsExportContext } from "./diagnostics/export.js";
 import { registerDiagnosticsIpc } from "./diagnostics/ipc.js";
@@ -381,16 +376,6 @@ function rememberGeometry(window: BrowserWindow): void {
  * Read at crash time rather than cached at boot: `app.getVersion()` is cheap and
  * a record should describe the build that actually crashed.
  */
-function crashVersions(): CrashVersions {
-  return {
-    version: app.getVersion(),
-    electron: process.versions.electron ?? "unknown",
-    node: process.versions.node,
-    platform: process.platform,
-    arch: process.arch,
-  };
-}
-
 /** Forward a supervision event into the shell log; never let logging throw. */
 function logSupervision(event: string, detail?: Record<string, unknown>): void {
   logger?.info(event, detail);
