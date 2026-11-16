@@ -30,12 +30,16 @@ afterEach(async () => {
 });
 
 /** Create an engine-shaped directory (entry + node_modules + package.json). */
-async function engine(name: string, version = "0.6.0"): Promise<string> {
+async function engine(name: string, version = "0.6.0", packageName = "haruyuki"): Promise<string> {
   const dir = path.join(work!, name);
 
   await mkdir(path.join(dir, "node_modules"), { recursive: true });
   await writeFile(path.join(dir, "haruyuki.js"), "entry", "utf8");
-  await writeFile(path.join(dir, "package.json"), JSON.stringify({ version }), "utf8");
+  await writeFile(
+    path.join(dir, "package.json"),
+    JSON.stringify({ name: packageName, version }),
+    "utf8",
+  );
 
   return dir;
 }
@@ -65,6 +69,27 @@ describe("selectBundle", () => {
     expect(result.location.source).toBe("bundled");
     expect(result.externalInvalid?.dir).toContain("gone");
     expect(result.externalInvalid?.reason).toContain("gone");
+  });
+
+  it("rejects a relative external path instead of resolving it", async () => {
+    const bundled = await engine("bundled");
+    const result = await selectBundle({ bundledDir: bundled, externalDir: "relative-engine" });
+
+    expect(result.kind).toBe("selected");
+    if (result.kind !== "selected") return;
+    expect(result.location.source).toBe("bundled");
+    expect(result.externalInvalid?.reason).toContain("absolute");
+  });
+
+  it("rejects an external package whose name is not haruyuki", async () => {
+    const bundled = await engine("bundled");
+    const external = await engine("external", "0.7.0", "not-haruyuki");
+    const result = await selectBundle({ bundledDir: bundled, externalDir: external });
+
+    expect(result.kind).toBe("selected");
+    if (result.kind !== "selected") return;
+    expect(result.location.source).toBe("bundled");
+    expect(result.externalInvalid?.reason).toContain('not "haruyuki"');
   });
 
   it("uses PATH when neither external nor bundled is usable", async () => {

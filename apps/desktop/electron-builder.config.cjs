@@ -30,7 +30,7 @@ const REPO_ROOT = path.resolve(PACKAGE_DIR, "..", "..");
 
 /** @type {import("electron-builder").Configuration} */
 module.exports = {
-  appId: "com.haruyuki.desktop",
+  appId: "com.haruyuki.gui",
   productName: "Haruyuki",
   executableName: "Haruyuki",
   electronVersion: "45.3.2",

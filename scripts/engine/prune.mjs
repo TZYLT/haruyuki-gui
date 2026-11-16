@@ -208,12 +208,30 @@ async function requireEngine(dir) {
   }
 }
 
-/** Copying into itself would recurse; the check is textual and absolute. */
+/**
+ * Reject either nesting direction.
+ *
+ * Target inside source would recurse while copying. Source inside target is
+ * worse: `pruneEngine` removes the target before copying, so the source would be
+ * deleted by its own output directory. Both are build-script data loss, not a
+ * theoretical misuse.
+ */
 function refuseOverlap(sourceDir, targetDir) {
-  const relative = path.relative(sourceDir, targetDir);
+  const targetInSource = path.relative(sourceDir, targetDir);
+  const sourceInTarget = path.relative(targetDir, sourceDir);
 
-  if (relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative))) {
+  if (
+    targetInSource === "" ||
+    (!targetInSource.startsWith("..") && !path.isAbsolute(targetInSource))
+  ) {
     throw new Error(`target must not be inside source: ${targetDir}`);
+  }
+
+  if (
+    sourceInTarget === "" ||
+    (!sourceInTarget.startsWith("..") && !path.isAbsolute(sourceInTarget))
+  ) {
+    throw new Error(`target must not contain source: ${targetDir}`);
   }
 }
 

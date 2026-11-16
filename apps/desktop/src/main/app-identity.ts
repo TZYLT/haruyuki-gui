@@ -37,7 +37,7 @@ import { APP_NAME } from "./i18n.js";
  * cannot drift: a toast belongs to the AUMID the process set, not to the name in
  * the installer. G1's builder config uses the same literal.
  */
-export const APP_USER_MODEL_ID = "com.haruyuki.desktop" as const;
+export const APP_USER_MODEL_ID = "com.haruyuki.gui" as const;
 
 /**
  * Set the application name and (on Windows) the AUMID.

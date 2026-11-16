@@ -133,7 +133,11 @@ export async function prepareRuntime(options: PrepareRuntimeOptions): Promise<Ru
     });
 
     if (!verified.ok) {
-      const state = await recordFailure(options, stateRead.state, verified.problem);
+      const state = await recordFailure(
+        options,
+        stateRead.state,
+        verified.problem === "missing" ? "missing" : verified.problem,
+      );
       const failure = failureOf(verified, location.engineDir, options.layout.logsDir);
 
       return { ok: false, failure, state, treeChecked: false };
@@ -221,11 +225,13 @@ function failureOf(
   logsDir: string,
 ): RuntimeFailure {
   return {
-    kind: result.problem,
+    kind: result.problem === "missing" ? "missing-bundle" : result.problem,
     detail:
-      result.problem === "entry-mismatch"
-        ? "The engine entry does not match runtime-lock.json."
-        : "The engine tree does not match runtime-lock.json.",
+      result.problem === "missing"
+        ? "The engine entry disappeared after selection."
+        : result.problem === "entry-mismatch"
+          ? "The engine entry does not match runtime-lock.json."
+          : "The engine tree does not match runtime-lock.json.",
     engineDir,
     expectedSha256: result.expected,
     actualSha256: result.actual,

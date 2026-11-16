@@ -165,6 +165,22 @@ describe("pruneEngine", () => {
     ).rejects.toThrow(/inside source/);
   });
 
+  it("refuses a target that contains the source", async () => {
+    const source = await engineFixture();
+    const parent = path.dirname(source);
+
+    await expect(
+      pruneEngine({
+        sourceDir: source,
+        targetDir: parent,
+        platform: "win32",
+        arch: "x64",
+      }),
+    ).rejects.toThrow(/contain source/);
+
+    await expect(stat(path.join(source, "haruyuki.js"))).resolves.toBeDefined();
+  });
+
   it("refuses a source that is not an engine", async () => {
     const empty = path.join(work!, "empty");
 

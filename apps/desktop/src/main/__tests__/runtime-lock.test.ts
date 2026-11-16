@@ -192,6 +192,19 @@ describe("verifyRuntime", () => {
     ).resolves.toMatchObject({ ok: true });
   });
 
+  it("reports a disappeared entry as missing instead of throwing ENOENT", async () => {
+    const { engineDir, bundlePath, lock } = await fixture();
+
+    await rm(bundlePath);
+
+    await expect(
+      verifyRuntime({ lock, engineDir, bundlePath, full: false }),
+    ).resolves.toMatchObject({
+      ok: false,
+      problem: "missing",
+    });
+  });
+
   it("rejects a changed nested file in full mode", async () => {
     const { engineDir, bundlePath, lock } = await fixture();
 

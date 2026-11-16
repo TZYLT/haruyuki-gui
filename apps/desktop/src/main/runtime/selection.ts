@@ -71,13 +71,20 @@ export async function selectBundle(options: SelectBundleOptions): Promise<Bundle
   let externalInvalid: InvalidExternal | undefined;
 
   if (options.externalDir !== undefined && options.externalDir !== "") {
-    const external = await inspectEngineDir(options.externalDir, "external", options.externalDir);
+    if (!path.isAbsolute(options.externalDir)) {
+      externalInvalid = {
+        dir: options.externalDir,
+        reason: "the external engine path must be absolute",
+      };
+    } else {
+      const external = await inspectEngineDir(options.externalDir, "external", options.externalDir);
 
-    if (external.kind === "valid") {
-      return { kind: "selected", location: external.location };
+      if (external.kind === "valid") {
+        return { kind: "selected", location: external.location };
+      }
+
+      externalInvalid = external.invalid;
     }
-
-    externalInvalid = external.invalid;
   }
 
   const bundled = await inspectEngineDir(options.bundledDir, "bundled");
@@ -120,14 +127,26 @@ export async function selectBundle(options: SelectBundleOptions): Promise<Bundle
  * @returns version string, or undefined
  */
 export async function readEngineVersion(engineDir: string): Promise<string | undefined> {
+  return (await readEnginePackage(engineDir))?.version;
+}
+
+/** Read the external name/version fields without trusting the JSON. */
+async function readEnginePackage(
+  engineDir: string,
+): Promise<{ name?: string; version?: string } | undefined> {
   try {
     const text = await readFile(path.join(engineDir, "package.json"), "utf8");
     const parsed: unknown = JSON.parse(text);
 
     if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
-      const version = (parsed as Record<string, unknown>)["version"];
+      const record = parsed as Record<string, unknown>;
+      const name = record["name"];
+      const version = record["version"];
 
-      return typeof version === "string" && version !== "" ? version : undefined;
+      return {
+        ...(typeof name === "string" && name !== "" ? { name } : {}),
+        ...(typeof version === "string" && version !== "" ? { version } : {}),
+      };
     }
   } catch {
     return undefined;
@@ -170,6 +189,40 @@ async function inspectEngineDir(
           reason: `node_modules is not a directory: ${path.join(engineDir, "node_modules")}`,
         },
       };
+    }
+
+    if (source === "external") {
+      const pkg = await readEnginePackage(engineDir);
+
+      if (pkg === undefined) {
+        return {
+          kind: "invalid",
+          invalid: {
+            dir: externalDir ?? engineDir,
+            reason: `external engine has no readable package.json: ${engineDir}`,
+          },
+        };
+      }
+
+      if (pkg.name !== "haruyuki") {
+        return {
+          kind: "invalid",
+          invalid: {
+            dir: externalDir ?? engineDir,
+            reason: `external engine package name is not "haruyuki": ${pkg.name ?? "missing"}`,
+          },
+        };
+      }
+
+      if (pkg.version === undefined) {
+        return {
+          kind: "invalid",
+          invalid: {
+            dir: externalDir ?? engineDir,
+            reason: `external engine has no readable version: ${engineDir}`,
+          },
+        };
+      }
     }
   } catch (error) {
     return {

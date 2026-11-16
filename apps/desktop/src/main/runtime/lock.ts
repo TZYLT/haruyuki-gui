@@ -85,7 +85,7 @@ export interface TreeDigest {
 }
 
 /** Why verification failed. */
-export type RuntimeVerifyProblem = "entry-mismatch" | "tree-mismatch";
+export type RuntimeVerifyProblem = "missing" | "entry-mismatch" | "tree-mismatch";
 
 /** Result of verifying the engine against the lock. */
 export type RuntimeVerifyResult =
@@ -236,7 +236,22 @@ export async function verifyRuntime(options: {
   readonly bundlePath: string;
   readonly full: boolean;
 }): Promise<RuntimeVerifyResult> {
-  const entry = await hashFile(options.bundlePath);
+  let entry: FileDigest;
+
+  try {
+    entry = await hashFile(options.bundlePath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return {
+        ok: false,
+        problem: "missing",
+        expected: options.lock.sha256,
+        actual: "",
+      };
+    }
+
+    throw error;
+  }
 
   if (entry.sha256 !== options.lock.sha256 || entry.bytes !== options.lock.bundle.bytes) {
     return {

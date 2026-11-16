@@ -166,7 +166,7 @@ describe("prepareRuntime", () => {
     await writeFile(path.join(externalDir, "haruyuki.js"), "external", "utf8");
     await writeFile(
       path.join(externalDir, "package.json"),
-      JSON.stringify({ version: "0.6.0" }),
+      JSON.stringify({ name: "haruyuki", version: "0.6.0" }),
       "utf8",
     );
     await writeFile(
