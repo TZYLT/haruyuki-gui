@@ -151,7 +151,46 @@ describe("openExternal", () => {
 
     await members.openExternal("javascript:void(0)");
 
-    expect(deps.failures).toContain("APP_PROTOCOL_DENIED");
+    // This assertion used to expect `APP_PROTOCOL_DENIED`, which pinned the bug rather
+    // than the behaviour: the caller was told `REJECTED_SCHEME` while the log said
+    // something else. Corrected to the code the caller actually receives, so the log and
+    // the return value cannot drift apart again without this failing.
+    expect(deps.failures).toContain("REJECTED_SCHEME");
+  });
+
+  it("reports the same code to the log and to the caller", async () => {
+    // This is the invariant the two sides of one failure have to share. The first
+    // version of this handler told `onFailure` one code and returned a different one,
+    // which meant the log and the behaviour disagreed about the same event -- and a
+    // reader would have had to know which path produced which name.
+    const deps = shell({
+      openExternal: async () => {
+        throw new Error("no browser registered");
+      },
+    });
+    const { members } = createDesktopMembers(deps);
+
+    const answer = await members.openExternal("https://example.com");
+
+    expect(answer.ok).toBe(false);
+    if (answer.ok) return;
+
+    // Two observation points, one name.
+    expect(deps.failures).toEqual([answer.code]);
+  });
+
+  it("does the same for a refused scheme, which has its own path", async () => {
+    // The other branch: refused before the OS is asked. It must agree with itself for
+    // the same reason, even though its code is chosen rather than forced.
+    const deps = shell();
+    const { members } = createDesktopMembers(deps);
+
+    const answer = await members.openExternal("file:///etc/passwd");
+
+    expect(answer.ok).toBe(false);
+    if (answer.ok) return;
+
+    expect(deps.failures).toEqual([answer.code]);
   });
 
   it("turns an OS-level failure into the only code the union has", async () => {

@@ -141,8 +141,11 @@ export function createDesktopMembers(
   const members: DesktopMembers = {
     async openExternal(url: string) {
       if (!isOpenableUrl(url)) {
+        // Reported with the same code the caller receives. Two names for one failure
+        // would make the log disagree with the behaviour -- see the comment on the
+        // catch block below, which is where that mistake was first made.
         deps.onFailure?.({
-          code: "APP_PROTOCOL_DENIED",
+          code: "REJECTED_SCHEME",
           detail: `openExternal refused a non-http(s) URL: ${url.slice(0, 40)}`,
           messageKey: "error.shell.resourceDenied",
         });
@@ -153,12 +156,24 @@ export function createDesktopMembers(
       try {
         await deps.openExternal(url);
       } catch (error) {
-        // The frozen union has no code for "the OS refused the hand-off", and adding
-        // one would be a contract change. `REJECTED_SCHEME` is the only refusal it
-        // has room for; the detail keeps the real reason, because a missing browser
-        // and a rejected scheme need different fixes.
+        // The frozen union has no code for "the OS refused the hand-off", so the
+        // return value has exactly one refusal it can carry. What matters here is that
+        // **the reported code and the returned code are the same one**: this is one
+        // event, and an observer reading the log and a caller reading the value must
+        // not be told two different things about it.
+        //
+        // The first version of this handler reported `APP_PROTOCOL_DENIED` to
+        // `onFailure` while returning `REJECTED_SCHEME`, which meant the same failure
+        // had two names depending on where you looked. The mismatch is worse than
+        // either code being imperfect, because it makes the log disagree with the
+        // behaviour -- and a reader would have to know which path produced which name.
+        //
+        // `REJECTED_SCHEME` is the honest choice of the two despite covering a wider
+        // case than its name suggests: the value is what a caller branches on, and the
+        // `detail` keeps the real reason ("no browser registered" versus "not an http
+        // URL") so the distinction survives where it can be read.
         deps.onFailure?.({
-          code: "APP_PROTOCOL_DENIED",
+          code: "REJECTED_SCHEME",
           detail: `openExternal failed: ${String(error).slice(0, 80)}`,
           messageKey: "error.shell.resourceDenied",
         });
