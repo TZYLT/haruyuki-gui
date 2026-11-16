@@ -116,10 +116,15 @@ describe("the channel", () => {
     expect(CHANNEL_ALLOWLIST).toContain(DROPPED_FILES_CHANNEL);
   });
 
-  it("grows the allowlist by exactly one on top of D1 and D4", () => {
-    // the red condition is a second prefix appearing. The count is what makes that
-    // checkable: D1 shipped ping, D4 adds three diagnostics commands, D2 adds this one.
-    expect(CHANNEL_ALLOWLIST).toHaveLength(5);
+  it("grows the allowlist by exactly one, which is the whole of D2's addition", () => {
+    // the red condition is a second prefix appearing. The count was checkable while
+    // D1's one and D2's one were the whole list; D4 has since added three diagnostics
+    // commands and D3 seven channels, so the assertion pins what D2 owns instead: one
+    // channel, in the one domain D2 added, and no second spelling of it. The exact
+    // twelve-channel list is asserted in `shared/__tests__/bridge.test.ts`.
+    expect(CHANNEL_ALLOWLIST.filter((name) => name.includes(".resource."))).toEqual([
+      DROPPED_FILES_CHANNEL,
+    ]);
   });
 
   it("follows the bridge's naming syntax", () => {

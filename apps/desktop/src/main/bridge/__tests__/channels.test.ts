@@ -4,6 +4,7 @@ import {
   CHANNEL_ALLOWLIST,
   BRIDGE_CHANNEL_NAMES,
   BRIDGE_VERSION as SHARED_VERSION,
+  DROPPED_FILES_CHANNEL,
   validateChannelName,
 } from "../../../shared/bridge.js";
 import {
@@ -44,8 +45,11 @@ describe("D3 channel names", () => {
     }
   });
 
-  it("keeps the allowlist at exactly the eight channels this item registers", () => {
-    expect([...CHANNEL_ALLOWLIST].sort()).toEqual([...D3_CHANNELS].sort());
+  it("keeps the allowlist at exactly this item's eight channels plus D2's one", () => {
+    // D2's dropped-file report is the only channel in the list this item does not own.
+    // The comparison stays exact rather than "contains": an unnoticed tenth entry is
+    // the failure this assertion exists to catch.
+    expect([...CHANNEL_ALLOWLIST].sort()).toEqual([...D3_CHANNELS, DROPPED_FILES_CHANNEL].sort());
   });
 
   // This assertion is the ONLY reason the two copies exist; deleting either
