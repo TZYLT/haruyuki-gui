@@ -101,6 +101,22 @@ class RuntimeController implements RuntimeChannelHost {
     }
 
     const location = selected.location;
+
+    // The picker must never fall through to the bundled branch. Passing the
+    // chosen directory as both roots would accept an invalid external pick as
+    // "bundled" (the bundled inspection does not require package.json/name),
+    // persist it as external and then start it. Only a real external location
+    // is allowed here.
+    if (location.source !== "external") {
+      return {
+        ok: false,
+        failureKind: "external-invalid",
+        detail:
+          selected.externalInvalid?.reason ??
+          "The selected directory is not a usable external engine.",
+      };
+    }
+
     const lock = await this.currentLockVersion();
     const mismatch =
       lock !== undefined && location.version !== undefined && location.version !== lock;
@@ -196,10 +212,10 @@ class RuntimeController implements RuntimeChannelHost {
   }
 
   /** Attach the initial D4 host without a restart. */
-  attach(host: EngineHost | null): void {
+  attach(host: EngineHost | null, externalNotice?: string): void {
     this.host = host;
 
-    if (host !== null) this.ready(host);
+    if (host !== null) this.ready(host, externalNotice);
   }
 
   /** Start or restart through D4 and publish the outcome. */
@@ -313,8 +329,6 @@ class RuntimeController implements RuntimeChannelHost {
 
   /** Read the bundled lock version for the "untested combination" warning. */
   private async currentLockVersion(): Promise<string | undefined> {
-    if (this.engineVersion !== undefined) return this.engineVersion;
-
     try {
       const text = await readFileText(this.layout.lockPath);
       const parsed: unknown = JSON.parse(text);
@@ -372,7 +386,13 @@ export async function startRuntimeShell(deps: RuntimeShellDeps): Promise<void> {
     onLog: deps.onLog,
     onCrash: deps.onCrash,
     quitSupervisor: deps.quitSupervisor,
-    onHost: (started) => controller.attach(started),
+    onHost: (started) =>
+      controller.attach(
+        started,
+        plan.externalInvalid === undefined
+          ? undefined
+          : `External engine unavailable; using the bundled engine (${plan.externalInvalid.reason}).`,
+      ),
   });
 
   if (host === null) {

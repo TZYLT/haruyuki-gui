@@ -125,12 +125,31 @@ export async function prepareRuntime(options: PrepareRuntimeOptions): Promise<Ru
     }
 
     const full = stateRead.recovered || stateRead.state.lastAppVersion !== options.appVersion;
-    const verified = await verifyRuntime({
-      lock: lock.lock,
-      engineDir: location.engineDir,
-      bundlePath: location.bundlePath,
-      full,
-    });
+    let verified: Awaited<ReturnType<typeof verifyRuntime>>;
+
+    try {
+      verified = await verifyRuntime({
+        lock: lock.lock,
+        engineDir: location.engineDir,
+        bundlePath: location.bundlePath,
+        full,
+      });
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      const state = await recordFailure(options, stateRead.state, "tree-mismatch");
+
+      return {
+        ok: false,
+        failure: {
+          kind: "start-failed",
+          detail: `The engine tree could not be checked: ${detail}`,
+          engineDir: location.engineDir,
+          logPath: options.layout.logsDir,
+        },
+        state,
+        treeChecked: false,
+      };
+    }
 
     if (!verified.ok) {
       const state = await recordFailure(

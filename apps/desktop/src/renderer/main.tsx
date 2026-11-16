@@ -159,32 +159,84 @@ if (shellBridge !== undefined) {
  */
 function RuntimeGate({ children }: { children: ReactElement }): ReactElement {
   const [failure, setFailure] = useState<RuntimeFailure | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
     const bridge = window.haruyuki;
 
     if (bridge === undefined) return;
 
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
     const off = bridge.on(RUNTIME_FAILED_CHANNEL, (payload) => {
       const next = asRuntimeFailure(payload);
 
-      if (next !== null) setFailure(next);
+      if (next !== null) {
+        setNotice(null);
+        setFailure(next);
+      }
     });
 
-    void bridge
-      .invoke(RUNTIME_STATUS_CHANNEL)
-      .then((value) => {
-        const status = value as RuntimeStatus | undefined;
+    const poll = (): void => {
+      void bridge
+        .invoke(RUNTIME_STATUS_CHANNEL)
+        .then((value) => {
+          if (cancelled) return;
 
-        if (status?.phase === "failed") setFailure(status.failure);
-      })
-      .catch(() => undefined);
+          const status = value as RuntimeStatus | undefined;
 
-    return off;
+          if (status?.phase === "failed") {
+            setNotice(null);
+            setFailure(status.failure);
+            return;
+          }
+
+          if (status?.phase === "ready") {
+            setNotice(status.externalNotice ?? null);
+            return;
+          }
+
+          timer = setTimeout(poll, 1_000);
+        })
+        .catch(() => {
+          // The status handler is registered after the full tree check; the
+          // first invocation can therefore race it. Retry until it exists.
+          if (!cancelled) timer = setTimeout(poll, 1_000);
+        });
+    };
+
+    poll();
+
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) clearTimeout(timer);
+      off();
+    };
   }, []);
 
-  if (failure === null) return children;
+  if (failure !== null) return <RuntimeFailureView failure={failure} setFailure={setFailure} />;
 
+  return (
+    <>
+      {notice !== null ? (
+        <p role="status" style={{ margin: "8px 16px" }}>
+          {notice}
+        </p>
+      ) : null}
+      {children}
+    </>
+  );
+}
+
+/** The error page with its four channel-backed actions. */
+function RuntimeFailureView({
+  failure,
+  setFailure,
+}: {
+  failure: RuntimeFailure;
+  setFailure: (failure: RuntimeFailure | null) => void;
+}): ReactElement {
   return (
     <RuntimeErrorPage
       failure={failure}
