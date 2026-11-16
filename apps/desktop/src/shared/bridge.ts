@@ -17,6 +17,8 @@
  * does not add members.
  */
 
+import { RUNTIME_CHANNELS } from "./runtime-channels.js";
+
 /**
  * The prefix every channel name starts with (route doc section 3.4).
  *
@@ -168,6 +170,9 @@ export const CHANNEL_ALLOWLIST: readonly string[] = Object.freeze([
   BRIDGE_CHANNEL_NAMES.layoutSave,
   BRIDGE_CHANNEL_NAMES.terminalAck,
   BRIDGE_CHANNEL_NAMES.terminalNotice,
+  // G1's runtime surface: status, pick, reset, failed push and log. The error
+  // page is the only consumer; the engine controller answers.
+  ...RUNTIME_CHANNELS,
 ]);
 
 /**

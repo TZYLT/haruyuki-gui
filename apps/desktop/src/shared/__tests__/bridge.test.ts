@@ -178,14 +178,13 @@ describe("allowlist", () => {
     expect(CHANNEL_ALLOWLIST).toHaveLength(length);
   });
 
-  it("registers D1's probe, D2's drop, D4's diagnostics and D3's seven, and nothing else", () => {
+  it("registers D1's, D2's, D3's, D4's and G1's channels, and nothing else", () => {
     // The count is part of the contract: the red condition is a second prefix
     // appearing, and a list that quietly grew is how that happens unnoticed.
     //
-    // Each item appends only what it registers: D2 the dropped-file report (the preload
-    // has to send something and `channel-name v1` freezes the bridge's *members*, not its
-    // channel list), D4 the three diagnostics commands, D3 its seven. Anything beyond
-    // these twelve is a later item's entry, and this assertion is where it is declared.
+    // D2 appends the dropped-file report, D4 the three diagnostics commands, D3
+    // its seven, and G1 the four runtime channels. `channel-name v1` freezes the bridge's
+    // *members*, not its channel list.
     expect(CHANNEL_ALLOWLIST).toEqual([
       PING,
       "bridge:control.diagnostics.export",
@@ -199,8 +198,13 @@ describe("allowlist", () => {
       "bridge:control.layout.save",
       "bridge:stream.terminal.ack",
       "bridge:stream.terminal.notice",
+      "bridge:control.runtime.status",
+      "bridge:control.runtime.pick",
+      "bridge:control.runtime.reset",
+      "bridge:control.runtime.failed",
     ]);
     expect(new Set(CHANNEL_ALLOWLIST).size).toBe(CHANNEL_ALLOWLIST.length);
+  });
   });
 
   it("contains only names the validator accepts", () => {
