@@ -12,6 +12,11 @@
  * sandboxed preload cannot `require` a relative chunk. `channels.test.ts`
  * asserts this list and the shared one agree, so the duplication cannot drift
  * silently.
+ *
+ * Do NOT "deduplicate" this by importing `shared/bridge.ts` again. That is the
+ * exact change that produced `dist/main/chunks/bridge-*.cjs` and a missing
+ * `window.haruyuki`; fix the build/bundling question first if the two copies
+ * ever need to become one.
  */
 
 /** The bridge protocol version this shell speaks (C5-Q07 exact equality). */

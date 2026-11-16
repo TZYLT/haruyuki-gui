@@ -48,6 +48,9 @@ describe("D3 channel names", () => {
     expect([...CHANNEL_ALLOWLIST].sort()).toEqual([...D3_CHANNELS].sort());
   });
 
+  // This assertion is the ONLY reason the two copies exist; deleting either
+  // copy without reading `channels.ts`'s header re-introduces the shared-chunk
+  // preload failure.
   it("mirrors the shared names the preload and renderer use", () => {
     expect(BRIDGE_VERSION).toBe(SHARED_VERSION);
     expect(FRAME_SUBMIT).toBe(BRIDGE_CHANNEL_NAMES.frameSubmit);
