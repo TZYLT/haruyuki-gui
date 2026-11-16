@@ -42,8 +42,6 @@ import {
 import { release as osRelease } from "node:os";
 import path from "node:path";
 
-import { createTranslator } from "@haruyuki/ui/i18n/core";
-
 /**
  * This file's directory at runtime.
  *
@@ -65,23 +63,23 @@ import { APP_NAME, chooseLocale } from "./i18n.js";
 import { buildMenuTemplate } from "./menu.js";
 import { createLogger, type Logger } from "./log.js";
 import { handleRendererGone, installMainCrashHandlers } from "./crash/capture.js";
+import { engineCrashQuery, rendererCrashQuery } from "./crash/page.js";
+import { showCrashPage } from "./crash/wiring.js";
 import {
   crashDirFor,
   readCrashRecords,
   type CrashRecord,
   type CrashVersions,
 } from "./crash/records.js";
-import { collectDiagnostics, type DiagnosticsEngineFacts } from "./diagnostics/collect.js";
-import {
-  runDiagnosticsExport,
-  type DiagnosticsExportContext,
-  type DiagnosticsExportLabels,
-} from "./diagnostics/export.js";
+import { collectDiagnostics } from "./diagnostics/collect.js";
+import { runDiagnosticsExport, type DiagnosticsExportContext } from "./diagnostics/export.js";
 import { registerDiagnosticsIpc } from "./diagnostics/ipc.js";
 import { getSessionDiagnosticsSource } from "./diagnostics/session.js";
+import { diagnosticsEngineFacts, diagnosticsLabels } from "./diagnostics/wiring.js";
 import { writeZip } from "./diagnostics/zip.js";
 import { runBootSupervision, type StaleCandidate } from "./supervision/boot.js";
-import { startEngineHost, stopEngineHost, type EngineHost } from "./supervision/engine-host.js";
+import { startShellEngine } from "./supervision/engine-lifecycle.js";
+import { type EngineHost } from "./supervision/engine-host.js";
 import { installQuitSupervisor, type QuitSupervisor } from "./supervision/quit.js";
 import {
   DEFAULT_SETTINGS,
@@ -399,60 +397,45 @@ function logSupervision(event: string, detail?: Record<string, unknown>): void {
 }
 
 /**
- * Start the engine without blocking the window.
+ * The engine crashed after reporting ready.
  *
- * A missing bundle or a failed start is logged and nothing else: it is not a
- * crash and must not open the engine crash page (`R-13`). On success the host
- * is kept for B2/E4 and the quit supervisor learns about it, so a normal exit
- * stops the process and clears the marker.
+ * A start failure never reaches here: engine-host only installs the watcher on a
+ * ready engine, so there is nothing to suppress in this layer (R-13). The crash
+ * page is a whole-window surface; a null window is only logged.
+ *
+ * @param record the crash record the P3 watcher wrote
  */
-async function startShellEngine(userData: string): Promise<void> {
-  const result = await startEngineHost({
-    userData,
-    appVersion: app.getVersion(),
-    appPath: app.getAppPath(),
-    onLog: logSupervision,
-    onCrash: (record) => {
-      // P9 owns switching to the crash page. Until then the record is kept and
-      // logged, which is all the requirement asks of this layer.
-      lastEngineCrash = record;
+function handleEngineCrash(record: CrashRecord): void {
+  lastEngineCrash = record;
 
-      logger?.error("supervision.engine.crash", {
-        code: record.code,
-        exitCode: record.engine?.exitCode ?? null,
-        signal: record.engine?.signal ?? null,
-      });
-    },
+  const exitCode = record.engine?.exitCode ?? null;
+  const signal = record.engine?.signal ?? null;
+
+  logger?.error("supervision.engine.crash", {
+    code: record.code,
+    exitCode,
+    signal,
   });
 
-  if (!result.ok) {
-    logger?.warn("supervision.engine.start", {
-      state: result.reason === "missing-bundle" ? "skipped" : "failed",
-      reason: result.reason,
-      ...(result.detail === undefined ? {} : { detail: result.detail }),
+  const window = mainWindow;
+
+  if (window === null) {
+    logger?.warn("shell.crash.page", {
+      state: "skipped",
+      kind: "engine",
+      detail: "no window is open",
     });
 
     return;
   }
 
-  const accepted = quitSupervisor?.setHost(result.host) ?? true;
-
-  // If the user quit while the engine was still starting, the quit sequence
-  // already ran with `host: null`. Attaching now would leave the engine
-  // unowned after the app exits, so stop it here and do not publish the host.
-  if (!accepted) {
-    const stopped = await stopEngineHost(result.host);
-
-    logger?.warn("supervision.engine.start", {
-      state: "stopped-after-quit",
-      stopped: stopped.stopped,
-      ...(stopped.reason === undefined ? {} : { reason: stopped.reason }),
-    });
-
-    return;
-  }
-
-  engineHost = result.host;
+  void showCrashPage(
+    window,
+    engineCrashQuery({ code: exitCode, signal }),
+    "engine",
+    APP_SCHEME,
+    logSupervision,
+  );
 }
 
 /**
@@ -532,9 +515,51 @@ async function createWindow(allowedDevtools: boolean, locale: string): Promise<B
     mainWindow = null;
   });
 
-  // P3 records every renderer death; P9 owns the crash page and the rebuild
-  // loop. Until then this only writes the record and logs it, so a renderer
-  // that keeps dying cannot be mistaken for a window that needs rebuilding.
+  // P3 records every renderer death; P9 switches to the crash page once and
+  // falls back to the static inline page afterwards. Both counters are per
+  // window: a second window is a new surface and gets its own first attempt,
+  // while the same window reloading its crash page must not loop (`RD-13`).
+  let rendererCrashes = 0;
+  let rendererFallbackShown = false;
+
+  /**
+   * Put the static failure page up, at most once.
+   *
+   * The page needs no React, so it cannot fail the way the crash page did. The
+   * flag stops a renderer that keeps dying from reloading that page forever;
+   * further deaths are logged and nothing else.
+   *
+   * @param reason Electron's renderer reason
+   * @param exitCode Electron's renderer exit code
+   * @param detail why the static page is being used
+   */
+  const showRendererFallback = (reason: string, exitCode: number | null, detail: string): void => {
+    if (rendererFallbackShown) {
+      logger?.error("shell.crash.renderer.repeated", {
+        state: "ignored",
+        reason,
+        exitCode,
+        detail: "the static failure page is already shown",
+      });
+
+      return;
+    }
+
+    rendererFallbackShown = true;
+
+    // R-11: the inline page has no export button, but the Help menu still does,
+    // and the window keeps a visible way out instead of going black.
+    logger?.error("shell.crash.renderer.repeated", { reason, exitCode, detail });
+
+    void showBootstrapError(
+      {
+        event: "shell.crash.renderer.repeated",
+        detail: `the interface process stopped (reason ${reason}, exit code ${String(exitCode)})`,
+      },
+      window,
+    );
+  };
+
   window.webContents.on("render-process-gone", (_event, details) => {
     void handleRendererGone(
       { reason: details.reason, exitCode: details.exitCode ?? null },
@@ -542,10 +567,35 @@ async function createWindow(allowedDevtools: boolean, locale: string): Promise<B
         dir: crashDirFor(app.getPath("userData")),
         versions: crashVersions(),
         onCrash: (record) => {
+          rendererCrashes += 1;
+
+          const reason = record.renderer?.reason ?? "";
+          const exitCode = record.renderer?.exitCode ?? null;
+
           logger?.error("supervision.renderer.crash", {
             code: record.code,
-            reason: record.renderer?.reason ?? "",
-            exitCode: record.renderer?.exitCode ?? null,
+            reason,
+            exitCode,
+            attempt: rendererCrashes,
+          });
+
+          if (rendererCrashes > 1) {
+            showRendererFallback(reason, exitCode, "the crash page did not survive");
+
+            return;
+          }
+
+          void showCrashPage(
+            window,
+            rendererCrashQuery({ reason, exitCode }),
+            "renderer",
+            APP_SCHEME,
+            logSupervision,
+          ).then((shown) => {
+            // No normal page to derive the route from, or the load failed:
+            // the static page is the only floor left.
+            if (!shown)
+              showRendererFallback(reason, exitCode, "the crash route could not be shown");
           });
         },
       },
@@ -624,64 +674,6 @@ async function createWindow(allowedDevtools: boolean, locale: string): Promise<B
   }
 
   return window;
-}
-
-/** MiB with one decimal, for the two native dialogs. */
-function formatMb(bytes: number): string {
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-/**
- * The engine facts a diagnostic bundle reports.
- *
- * Read at export time rather than cached: an engine that crashed a minute ago
- * must still contribute its version and stderr tail. `expectedVersion` is
- * `null` because `engine-host` does not expose the expected version; guessing
- * one would put a fact in the bundle that the shell never observed.
- */
-function diagnosticsEngineFacts(): DiagnosticsEngineFacts {
-  const engine = engineHost?.engine ?? null;
-  const info = engine?.appServerInfo ?? null;
-
-  return {
-    version: info?.engineVersion ?? null,
-    protocolVersion: info?.protocolVersion ?? null,
-    backend: info?.backend ?? null,
-    watchdog: engineHost?.watchdog ?? "unknown",
-    degradations: engine === null ? [] : [...engine.degradations],
-    expectedVersion: null,
-    stderrTail: engine?.stderrTail() ?? [],
-  };
-}
-
-/**
- * The native dialogs' copy.
- *
- * `main.ts` owns these strings because Electron's dialogs are main-process
- * APIs; the failure line uses the catalogue's `error.shell.diagnosticExportFailed`.
- * The remaining labels are English placeholders until the diagnostics panel
- * keys land in the same catalogue wave (`33` section 5.3).
- */
-function diagnosticsLabels(locale: string): DiagnosticsExportLabels {
-  const t = createTranslator(locale);
-  const exportFailed = t("error.shell.diagnosticExportFailed");
-
-  return {
-    saveTitle: "Export diagnostics",
-    zipFilterName: "Zip archive",
-    capTitle: "Diagnostic bundle is larger than 50 MB",
-    capMessage: (bytes, max) =>
-      `The bundle would be ${formatMb(bytes)}, over the ${formatMb(max)} limit.`,
-    capFull: "Save everything",
-    capReduce: "Reduce to the limit",
-    capCancel: t("common.action.cancel"),
-    successTitle: "Diagnostics exported",
-    successMessage: (file, bytes) => `Saved ${formatMb(bytes)} to ${file}`,
-    openFolder: "Open folder",
-    close: "Close",
-    failureTitle: exportFailed,
-    failureMessage: (detail) => `${exportFailed}: ${detail}`,
-  };
 }
 
 /**
@@ -851,7 +843,7 @@ async function main(): Promise<void> {
         locale,
         theme: settings.theme,
         settings,
-        engine: diagnosticsEngineFacts(),
+        engine: diagnosticsEngineFacts(engineHost),
         crashes: readCrashRecords(crashDirFor(userData)),
         sessionSource: getSessionDiagnosticsSource(),
       };
@@ -890,7 +882,17 @@ async function main(): Promise<void> {
 
   // The window never waits for the engine (docs/33 section 5.5 item 9). A
   // missing bundle resolves as a skip and leaves the window exactly as it was.
-  void startShellEngine(userData).catch((error: unknown) => {
+  void startShellEngine({
+    userData,
+    appVersion: app.getVersion(),
+    appPath: app.getAppPath(),
+    onLog: logSupervision,
+    onCrash: handleEngineCrash,
+    quitSupervisor,
+    onHost: (host) => {
+      engineHost = host;
+    },
+  }).catch((error: unknown) => {
     logger?.warn("supervision.engine.start", {
       state: "failed",
       reason: "unexpected",

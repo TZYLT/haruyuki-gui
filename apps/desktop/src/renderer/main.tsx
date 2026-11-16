@@ -21,6 +21,7 @@ import { createRoot } from "react-dom/client";
 import { LocaleProvider, applyTheme, type ThemeAttrs } from "@haruyuki/ui";
 import { SamplePage } from "@haruyuki/ui/examples";
 
+import { CrashPage, parseCrashParams } from "./crash-page.js";
 import { DiagnosticsPanel } from "./diagnostics-panel.js";
 import { ErrorBoundary, RendererErrorPage } from "./error-page.js";
 
@@ -53,25 +54,32 @@ declare global {
  * Every value is validated here. The URL is not secret, and a malformed one must
  * produce the default page rather than an exception before the first render.
  *
- * `panel` is the one route the shell has so far. It is a query parameter rather than
- * something main sets, because a direct load of `?panel=diagnostics` is how the panel is
- * exercised without the menu -- and because main's URL builder is shared machinery this
- * work does not need to grow a second parameter into.
+ * `panel` and `crash` are the routes. They are query parameters rather than something
+ * main sets, because a direct load of `?panel=diagnostics` or `?crash=engine` is how
+ * each surface is exercised without a real crash -- and because main's URL builder is
+ * shared machinery this work does not need to grow a second parameter into.
+ *
+ * `crash` is narrowed to the kind alone; the details are parsed by the page, so the
+ * validation lives in one place (`parseCrashParams`). An unknown `crash` value is not
+ * a route: the shell shows its normal page rather than a page it cannot describe.
  */
 function bootPayload(): {
   theme: ThemeAttrs;
   locale: string;
   panel: "diagnostics" | null;
+  crash: "engine" | "renderer" | null;
 } {
   const params = new URLSearchParams(window.location.search);
   const mode = params.get("theme") === "dark" ? "dark" : "light";
   const contrast = params.get("contrast") === "high" ? "high" : "normal";
   const requested = params.get("locale");
+  const crash = parseCrashParams(window.location.search);
 
   return {
     theme: { mode, contrast },
     locale: requested !== null && requested !== "" ? requested : "en",
     panel: params.get("panel") === "diagnostics" ? "diagnostics" : null,
+    crash: crash === null ? null : crash.kind,
   };
 }
 
@@ -89,9 +97,13 @@ applyTheme(boot.theme);
 /**
  * The mounted shell.
  *
- * Two routes for now: the sample page proves the component library renders inside the
- * sandbox, and the diagnostics panel is the first real surface. Both sit under the same
+ * Three routes: the sample page proves the component library renders inside the
+ * sandbox, the diagnostics panel is the first real surface, and the crash page is
+ * what main reloads the window into when a process dies. All sit under the same
  * providers so a route cannot quietly opt out of the theme or the catalogue.
+ *
+ * The crash route also mounts the panel hidden: its export button sends `open` on the
+ * same channel the menu uses, so the panel has to be listening before the user clicks.
  *
  * @returns the routed page inside its providers
  */
@@ -110,7 +122,12 @@ function Shell(): ReactElement {
       <ErrorBoundary
         fallback={(error, reset) => <RendererErrorPage error={error} onRetry={reset} />}
       >
-        {boot.panel === "diagnostics" ? (
+        {boot.crash !== null ? (
+          <>
+            <CrashPage />
+            <DiagnosticsPanel initialOpen={false} />
+          </>
+        ) : boot.panel === "diagnostics" ? (
           <DiagnosticsPanel initialOpen />
         ) : (
           <>

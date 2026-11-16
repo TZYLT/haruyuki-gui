@@ -29,6 +29,25 @@ export const en = {
   "common.state.empty": "Nothing here yet",
   "common.state.error": "Something went wrong",
 
+  // ----------------------------------------------------------------- crash
+  // The full-window surface that replaces the shell after an engine or renderer
+  // death. The two detail messages carry the facts the user needs to report it;
+  // the generic description is what an unrecognised route shows.
+  "common.crash.engineTitle": "The engine stopped unexpectedly",
+  "common.crash.rendererTitle": "The interface stopped",
+  "common.crash.description":
+    "The application stopped because a process it depends on ended unexpectedly. Exporting a diagnostics bundle is the best way to report what happened.",
+  "common.crash.engineDetails":
+    "The engine exited with code {code} (signal {signal}). The diagnostics bundle contains the details.",
+  "common.crash.rendererDetails":
+    "The interface process stopped (reason {reason}, exit code {exitCode}). The diagnostics bundle contains the details.",
+  "common.crash.export": "Export diagnostics",
+  "common.crash.restart": "Restart application",
+  "common.crash.quit": "Quit application",
+  "common.crash.bridgeUnavailable":
+    "The diagnostics bridge is unavailable, so this action cannot run.",
+  "common.crash.notAvailable": "not reported",
+
   // ------------------------------------------------------------ diagnostics
   // The panel's own vocabulary. The two option labels carry their scope and risk
   // in the same sentence rather than in a tooltip: what a checkbox includes is

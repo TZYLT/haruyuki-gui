@@ -26,6 +26,19 @@ export const zhCN = {
   "common.state.empty": "暂无内容",
   "common.state.error": "出错了",
 
+  // ----------------------------------------------------------------- crash
+  "common.crash.engineTitle": "引擎意外停止",
+  "common.crash.rendererTitle": "界面已停止",
+  "common.crash.description": "某个依赖进程意外结束，应用已停止。导出诊断包是反馈问题的最好方式。",
+  "common.crash.engineDetails": "引擎已退出，退出码 {code}（信号 {signal}）。详情见诊断包。",
+  "common.crash.rendererDetails":
+    "界面进程已停止（原因 {reason}，退出码 {exitCode}）。详情见诊断包。",
+  "common.crash.export": "导出诊断",
+  "common.crash.restart": "重启应用",
+  "common.crash.quit": "退出应用",
+  "common.crash.bridgeUnavailable": "诊断桥不可用，无法执行该操作",
+  "common.crash.notAvailable": "未记录",
+
   // ------------------------------------------------------------ diagnostics
   "common.diagnostics.title": "导出诊断",
   "common.diagnostics.sessionContent":
