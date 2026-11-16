@@ -357,10 +357,28 @@ export class EngineChannelPool implements ChannelPool {
    *   resolver throws, or the factory throws, this agent gets a channel that
    *   reports not-connected (`NOT_CONNECTED`, "engine has not become ready")
    *   instead of an exception escaping into a render path. Other agents are
-   *   untouched, and the degraded channel is cached like any other: the pool
-   *   never replaces a channel a caller already holds. To retry a failed
-   *   connection, `closeChannel(agentId)` then call again - which is exactly the
-   *   primitive a reconnect policy needs.
+   *   untouched.
+   * - **A stand-in is not cached, because "no endpoint yet" is temporary.** The
+   *   one thing this method must not do is promote a *moment* into a *verdict*:
+   *   the endpoint is non-null only while the engine is ready, and the engine is
+   *   engine is handshaking at startup, so "null endpoint" describes the normal
+   *   first few hundred milliseconds - during which a window may well ask for a
+   *   channel to restore a conversation. Caching the stand-in would make that
+   *   agent unreachable for the whole process, with no retry and no signal the
+   *   caller could act on. So the stand-in is returned *and not stored*: every
+   *   later call re-resolves the endpoint, and the first call after readiness
+   *   builds the real channel.
+   *
+   *   The cost is one throwaway channel per `getChannel` while the engine is not
+   *   ready - bounded by render passes during startup, and cheap (no socket, no
+   *   timer, no log subscription beyond the kernel's own). The alternative -
+   *   caching a stand-in and later swapping it - buys that back by keeping a
+   *   second state bit whose "is this a real entry or a placeholder?" question
+   *   collides with the self-closed check below, to save an allocation that
+   *   already happens on every frame.
+   *
+   *   This is what makes a failed connection retryable at all: re-fetching is the
+   *   retry, so the pool needs no reconnect policy of its own.
    *
    * The one error that *does* escape is the pool's own re-entrancy error, which
    * is a factory bug rather than a runtime condition (see
@@ -395,8 +413,15 @@ export class EngineChannelPool implements ChannelPool {
     this.opening.add(agentId);
     try {
       const channel = this.open(agentId, conversationId);
-      this.entries.set(agentId, channel);
-      return channel;
+      // Only a channel that could be built becomes an entry. A stand-in is
+      // returned to this caller but never stored: storing it would answer
+      // "unreachable" for the rest of the process on the strength of a state that
+      // lasts a few hundred milliseconds at startup (see the doc comment above).
+      if (channel !== undefined) {
+        this.entries.set(agentId, channel);
+        return channel;
+      }
+      return this.unconnected(agentId);
     } finally {
       this.opening.delete(agentId);
     }
@@ -499,19 +524,27 @@ export class EngineChannelPool implements ChannelPool {
    * nothing here: whatever the resolver returns, the pool still hands the caller
    * a `Channel`.
    *
+   * Returns `undefined` when no channel could be built, so the caller can hand out
+   * a stand-in without storing it. Keeping "build a channel" and "decide whether
+   * it is worth remembering" separate is what lets `getChannel` treat a transient
+   * condition as transient.
+   *
    * @param agentId the agent to build for
    * @param conversationId the creation scope, when the caller named one
-   * @returns the built channel, or a degraded stand-in
+   * @returns the built channel, or `undefined` when there is nothing to build yet
    */
-  private open(agentId: string, conversationId: string | undefined): Channel {
+  private open(agentId: string, conversationId: string | undefined): Channel | undefined {
     try {
       const endpoint = this.resolveEndpoint(agentId);
+      if (endpoint === null) {
+        return undefined;
+      }
       return this.factory({ agentId, conversationId, endpoint, clock: this.clock });
     } catch (error) {
       if (error instanceof ChannelPoolReentryError) {
         throw error;
       }
-      return this.unconnected(agentId);
+      return undefined;
     }
   }
 
@@ -549,6 +582,10 @@ export class EngineChannelPool implements ChannelPool {
    * accepted and never called, and `capabilities()` answers `unknown`. That is
    * what lets an upper layer treat "no endpoint yet" and "connected" with the
    * same code path.
+   *
+   * Deliberately **not** inserted into `entries`: it is a reply, not a
+   * connection. `channels()` therefore keeps reporting only real connections, and
+   * `closeChannel` has nothing to close for an agent that never got one.
    *
    * @param agentId the agent this stand-in belongs to
    * @returns a channel that is never ready

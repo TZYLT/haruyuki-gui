@@ -142,8 +142,19 @@ describe("local failure does not spread", () => {
     const degraded = h.pool.getChannel("broken");
 
     expect(degraded).not.toBe(healthy);
-    expect(h.pool.channels()).toHaveLength(2);
+    expect(degraded.agentId).toBe("broken");
+    // The healthy neighbour is a real entry and stays one, the broken agent is a
+    // reply rather than a cached verdict, and one failure did not cost the other.
     expect(h.pool.getChannel("healthy")).toBe(healthy);
+    expect(h.pool.channels().map((channel) => channel.agentId)).toEqual(["healthy"]);
+    return expectSettles(degraded.send({ capability: "conversation.sync", body: {} })).then(
+      (result) => {
+        expect(result.ok).toBe(false);
+        if (!result.ok) {
+          expect(result.error.detail).toContain("engine has not become ready");
+        }
+      },
+    );
   });
 });
 
@@ -225,16 +236,18 @@ describe("endpoint seam", () => {
       },
     });
     expect(() => throwing.pool.getChannel("a")).not.toThrow();
-    expect(throwing.pool.channels()).toHaveLength(1);
+    // A resolver that always throws never yields a connection, so nothing is
+    // reported as one - but the caller still got a channel to branch on.
+    expect(throwing.pool.channels()).toHaveLength(0);
 
     const malformed = makePool({
       endpointOf: () => ({ url: "ws://127.0.0.1:1/a" }) as unknown as Endpoint,
     });
     const channel = malformed.pool.getChannel("a");
 
-    // The defective shape was rejected before the factory saw it: the factory is
-    // handed `null` and decides it cannot connect, which is the pool degrading.
-    expect(malformed.contexts[0]?.endpoint).toBeNull();
+    // The defective shape is rejected before the factory is ever called: the pool
+    // never builds, and the caller gets a stand-in.
+    expect(malformed.contexts).toHaveLength(0);
     return expectSettles(channel.send({ capability: "conversation.sync", body: {} })).then(
       (result) => {
         expect(result.ok).toBe(false);
@@ -242,16 +255,149 @@ describe("endpoint seam", () => {
     );
   });
 
-  it("caches the degraded channel instead of retrying on every call", () => {
-    // Red when: a null endpoint rebuilds per call (a new channel every frame, and one leaked
-    // not-connected channel per conversation switch). The conversation rule must hold on the
-    // degraded path too.
+  it("connects an agent that was asked for before the endpoint existed", () => {
+    // The defect this group exists for, and the most likely one in production.
+    // `endpoint` is non-null only while the engine is ready, and the
+    // engine goes handshaking -> openSocket -> requestAppServerInfo -> ready. So
+    // "no endpoint yet" is the *normal* state during startup, not an exception -
+    // and a render path may well ask for a channel while it holds (a window
+    // restoring a conversation is exactly that).
+    //
+    // Red when: the not-connected stand-in is cached like a real entry. Then this
+    // agent is unreachable for the rest of the process: every later `send` answers
+    // NOT_CONNECTED and nothing ever retries, because the caller has no way to know
+    // it must close and re-fetch.
+    let ready = false;
+    const h = makePool({
+      endpointOf: (agentId) =>
+        ready ? { url: `ws://127.0.0.1:1/${agentId}`, token: `token-${agentId}` } : null,
+    });
+
+    const early = h.pool.getChannel("a");
+    // It must still be a channel, not an exception and not undefined: the caller
+    // cannot be expected to handle a third outcome.
+    expect(early.agentId).toBe("a");
+
+    ready = true;
+    const later = h.pool.getChannel("a");
+
+    expect(later).not.toBe(early);
+    expect(later).toBe(h.pool.getChannel("a"));
+    // And it is genuinely connected: the command reached a transport.
+    const pending = later.send({
+      capability: "conversation.sync",
+      body: {},
+      requestId: "req-late",
+    });
+    expect(h.viewOf("a")?.writer.calls.at(-1)?.requestId).toBe("req-late");
+    h.ingest("a", responseFrame("req-late", { data: { ok: true } }));
+    return expectSettles(pending).then((result) => {
+      expect(result.ok).toBe(true);
+    });
+  });
+
+  it("connects after any number of pre-ready fetches", () => {
+    // The same defect after repeated early calls - a window that renders a few
+    // times before the engine is ready must not be worse off than one that
+    // rendered once. Red when: only the first early fetch is special-cased.
+    let ready = false;
+    const h = makePool({
+      endpointOf: (agentId) =>
+        ready ? { url: `ws://127.0.0.1:1/${agentId}`, token: `token-${agentId}` } : null,
+    });
+
+    const first = h.pool.getChannel("a");
+    const second = h.pool.getChannel("a");
+    const third = h.pool.getChannel("a", "conv-1");
+    for (const channel of [first, second, third]) {
+      expect(channel.agentId).toBe("a");
+    }
+
+    ready = true;
+    const live = h.pool.getChannel("a");
+
+    expect(live).toBe(h.pool.getChannel("a"));
+    const pending = live.send({ capability: "conversation.sync", body: {}, requestId: "req-many" });
+    expect(h.viewOf("a")?.writer.calls.at(-1)?.requestId).toBe("req-many");
+    h.ingest("a", responseFrame("req-many", { data: {} }));
+    return expectSettles(pending).then((result) => {
+      expect(result.ok).toBe(true);
+    });
+  });
+
+  it("hands out a fresh stand-in per fetch, and never enrols one", () => {
+    // The mechanism behind the fix, asserted on the frozen surface only. While the
+    // endpoint is unavailable the pool returns a stand-in, and a stand-in is a
+    // *reply*, not a connection, so it is not stored: every fetch is a new object
+    // and `channels()` - which reports real connections - stays empty.
+    //
+    // Red when: the stand-in is cached. Then the second fetch returns the first
+    // object (so this agent is stuck on it), and `channels()` starts advertising
+    // a connection that does not exist. Both halves matter: an implementation
+    // could keep returning fresh objects while also enrolling them, or cache one
+    // object without reporting it.
     const h = makePool({ endpointOf: () => null });
 
-    const first = h.pool.getChannel("a", "conv-1");
+    const first = h.pool.getChannel("a");
+    const second = h.pool.getChannel("a");
+    const third = h.pool.getChannel("a", "conv-1");
 
-    expect(h.pool.getChannel("a")).toBe(first);
-    expect(h.pool.getChannel("a", "conv-2")).toBe(first);
-    expect(h.pool.channels()).toHaveLength(1);
+    // Fresh each time: nothing was remembered to hand back.
+    expect(second).not.toBe(first);
+    expect(third).not.toBe(first);
+    expect(third).not.toBe(second);
+    // And none of them is a connection, so none is reported as one.
+    expect(h.pool.channels()).toHaveLength(0);
+    // Fetching again still does not start caching: the rule is about the endpoint,
+    // not about how many times the caller asked.
+    expect(h.pool.getChannel("a")).not.toBe(first);
+    expect(h.pool.channels()).toHaveLength(0);
+    // A stand-in still carries its agent, so a caller can log or route on it.
+    expect(first.agentId).toBe("a");
+    expect(third.agentId).toBe("a");
+  });
+
+  it("keeps answering NOT_CONNECTED, without throwing, while there is no endpoint", () => {
+    // Not caching the stand-in must not become "throw" or "return nothing": the
+    // engine may never become ready (no credentials, a failed handshake), and a
+    // render path still runs. Red when: the pool refuses to hand out a channel, or
+    // the stand-in rejects instead of resolving, or it stops reporting not-ready.
+    const h = makePool({ endpointOf: () => null });
+
+    const sends = [1, 2, 3].map((i) => {
+      const channel = h.pool.getChannel("a", i === 3 ? "conv-1" : undefined);
+      expect(channel.agentId).toBe("a");
+      expect(channel.capabilities()).toEqual({ state: "unknown" });
+      return channel.send({ capability: "conversation.sync", body: {}, requestId: `req-${i}` });
+    });
+
+    return Promise.all(sends.map((pending) => expectSettles(pending))).then((results) => {
+      for (const result of results) {
+        expect(result.ok).toBe(false);
+        if (!result.ok) {
+          expect(result.error.code).toBe("NOT_CONNECTED");
+          // §5.2.2: "never came up" must stay distinguishable from "dropped".
+          expect(result.error.detail).toContain("engine has not become ready");
+        }
+      }
+      // A stand-in is not a connection, so it must not be reported as one.
+      expect(h.pool.channels()).toHaveLength(0);
+    });
+  });
+
+  it("does not leak a closed stand-in into channels()", () => {
+    // Whatever a stand-in is, closing it must remain safe and idempotent, and it
+    // must never be counted as a live connection. Red when: stand-ins are tracked
+    // as entries and `closeChannel` cannot find them, or `channels()` reports one.
+    const h = makePool({ endpointOf: () => null });
+
+    const stand = h.pool.getChannel("a");
+    expect(h.pool.channels()).toHaveLength(0);
+
+    stand.close();
+    expect(() => h.pool.closeChannel("a")).not.toThrow();
+    expect(h.pool.channels()).toHaveLength(0);
+    // The next fetch is a fresh attempt, not a dead instance.
+    expect(h.pool.getChannel("a")).not.toBe(stand);
   });
 });

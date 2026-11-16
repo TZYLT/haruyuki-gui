@@ -185,7 +185,10 @@ export function stubChannel(agentId: string, onClose: () => void): Channel {
 export function stubPool(onClose: (agentId: string) => void, clock: FakeClock): EngineChannelPool {
   const pool = createChannelPool({
     createChannel: (context) => stubChannel(context.agentId, () => onClose(context.agentId)),
-    endpointOf: () => null,
+    // A stub pool is about bookkeeping, but the endpoint still has to resolve:
+    // under the pool's contract a `null` endpoint means "cannot build yet", so a
+    // null resolver here would mean these stubs were never built at all.
+    endpointOf: (agentId) => ({ url: `ws://127.0.0.1:1/${agentId}`, token: `token-${agentId}` }),
     clock: clock.clock,
   });
   livePools.push(pool);

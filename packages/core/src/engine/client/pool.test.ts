@@ -223,7 +223,10 @@ describe("closeAll", () => {
         stubChannel(context.agentId, () => {
           seen.push(pool.channels().length);
         }),
-      endpointOf: () => null,
+      endpointOf: (agentId) => ({
+        url: `ws://127.0.0.1:1/${agentId}`,
+        token: `token-${agentId}`,
+      }),
       clock: h.clock.clock,
     });
     livePools.push(pool);
@@ -250,7 +253,10 @@ describe("closeAll", () => {
           }
           closed.push(context.agentId);
         }),
-      endpointOf: () => null,
+      endpointOf: (agentId) => ({
+        url: `ws://127.0.0.1:1/${agentId}`,
+        token: `token-${agentId}`,
+      }),
       clock: h.clock.clock,
     });
     livePools.push(pool);
@@ -481,7 +487,10 @@ describe("re-entrancy", () => {
         pool?.getChannel(context.agentId);
         return stubChannel(context.agentId, () => undefined);
       },
-      endpointOf: () => null,
+      endpointOf: (agentId) => ({
+        url: `ws://127.0.0.1:1/${agentId}`,
+        token: `token-${agentId}`,
+      }),
     });
     livePools.push(pool);
 
@@ -509,7 +518,10 @@ describe("re-entrancy", () => {
         }
         return stubChannel(context.agentId, () => undefined);
       },
-      endpointOf: () => null,
+      endpointOf: (agentId) => ({
+        url: `ws://127.0.0.1:1/${agentId}`,
+        token: `token-${agentId}`,
+      }),
     });
     livePools.push(pool);
 
@@ -534,7 +546,10 @@ describe("re-entrancy", () => {
         }
         return stubChannel(context.agentId, () => undefined);
       },
-      endpointOf: () => null,
+      endpointOf: (agentId) => ({
+        url: `ws://127.0.0.1:1/${agentId}`,
+        token: `token-${agentId}`,
+      }),
     });
     livePools.push(pool);
 
