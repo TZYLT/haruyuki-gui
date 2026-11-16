@@ -6,36 +6,33 @@
  * serialized frame. Keeping the two lists apart is what lets the frame envelope
  * stay frozen (no new frame types) while the channel allowlist grows.
  *
- * Every name must pass `validateChannelName` (prefix plus exactly three
- * segments). A name that is well-formed but missing from `CHANNEL_ALLOWLIST`
- * is denied before it reaches `ipcRenderer`, so a mismatch between this file and
- * the allowlist is a test failure, not a silent dead channel.
+ * The literals live in `shared/bridge.ts` because the renderer subscribes to the
+ * same names and the desktop package must not grow two spellings of a channel.
+ * This module only re-shapes them for the main-process code.
  */
 
+import { BRIDGE_CHANNEL_NAMES } from "../../shared/bridge.js";
+
 /** One delivery channel per frame `ch`. */
-export const FRAME_DELIVER = {
-  control: "bridge:control.frame.deliver",
-  stream: "bridge:stream.frame.deliver",
-  bulk: "bridge:bulk.frame.deliver",
-} as const;
+export const FRAME_DELIVER = BRIDGE_CHANNEL_NAMES.frameDeliver;
 
 /** The frame channel a `ch` value delivers on. */
 export type FrameChannelKey = keyof typeof FRAME_DELIVER;
 
 /** renderer -> main: the first frame (`bridge.ready`) and later UI control frames. */
-export const FRAME_SUBMIT = "bridge:control.frame.submit" as const;
+export const FRAME_SUBMIT = BRIDGE_CHANNEL_NAMES.frameSubmit;
 
 /** renderer -> main: terminal byte acknowledgement. Transport-level, not a frame. */
-export const TERMINAL_ACK = "bridge:stream.terminal.ack" as const;
+export const TERMINAL_ACK = BRIDGE_CHANNEL_NAMES.terminalAck;
 
 /** main -> renderer: "the terminal entry dropped N bytes". Transport-level, not a frame. */
-export const TERMINAL_NOTICE = "bridge:stream.terminal.notice" as const;
+export const TERMINAL_NOTICE = BRIDGE_CHANNEL_NAMES.terminalNotice;
 
 /** renderer -> main: C4's layout document write-back. */
-export const LAYOUT_SAVE = "bridge:control.layout.save" as const;
+export const LAYOUT_SAVE = BRIDGE_CHANNEL_NAMES.layoutSave;
 
 /** renderer -> main: D1's existing availability probe. */
-export const APP_PING = "bridge:control.app.ping" as const;
+export const APP_PING = BRIDGE_CHANNEL_NAMES.appPing;
 
 /** The frame channels, in `ch` order. */
 export const FRAME_CHANNEL_KEYS: readonly FrameChannelKey[] = ["control", "stream", "bulk"];

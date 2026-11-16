@@ -114,6 +114,28 @@ export interface DroppedFileReport {
 export const BRIDGE_VERSION = "1" as const;
 
 /**
+ * The channel names D3 registers, in one place so the preload allowlist, the
+ * main-process handlers and the renderer's subscriptions cannot drift apart.
+ *
+ * The frame envelope and the three frame channels (`control`, `stream`, `bulk`)
+ * are frozen. These names are IPC pipes, not frame types: a frame's `ch` says
+ * a frame's `ch` says which semantic channel it belongs to, while these names
+ * say which `ipcRenderer` channel carries the serialized string.
+ */
+export const BRIDGE_CHANNEL_NAMES = Object.freeze({
+  frameSubmit: "bridge:control.frame.submit",
+  frameDeliver: Object.freeze({
+    control: "bridge:control.frame.deliver",
+    stream: "bridge:stream.frame.deliver",
+    bulk: "bridge:bulk.frame.deliver",
+  }),
+  layoutSave: "bridge:control.layout.save",
+  terminalAck: "bridge:stream.terminal.ack",
+  terminalNotice: "bridge:stream.terminal.notice",
+  appPing: "bridge:control.app.ping",
+} as const);
+
+/**
  * The channels the main process answers.
  *
  * D1 registers one, because the shell had no real IPC yet. `ping` stays: it is
@@ -139,13 +161,13 @@ export const CHANNEL_ALLOWLIST: readonly string[] = Object.freeze([
   // already-converted `{name, path}[]` rather than files. The bridge is frozen at
   // *members*; channels grow, members do not.
   DROPPED_FILES_CHANNEL,
-  "bridge:control.frame.submit",
-  "bridge:control.frame.deliver",
-  "bridge:stream.frame.deliver",
-  "bridge:bulk.frame.deliver",
-  "bridge:control.layout.save",
-  "bridge:stream.terminal.ack",
-  "bridge:stream.terminal.notice",
+  BRIDGE_CHANNEL_NAMES.frameSubmit,
+  BRIDGE_CHANNEL_NAMES.frameDeliver.control,
+  BRIDGE_CHANNEL_NAMES.frameDeliver.stream,
+  BRIDGE_CHANNEL_NAMES.frameDeliver.bulk,
+  BRIDGE_CHANNEL_NAMES.layoutSave,
+  BRIDGE_CHANNEL_NAMES.terminalAck,
+  BRIDGE_CHANNEL_NAMES.terminalNotice,
 ]);
 
 /**

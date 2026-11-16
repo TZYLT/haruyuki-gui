@@ -18,11 +18,13 @@
 import { StrictMode, useEffect, useState, type ReactElement } from "react";
 import { createRoot } from "react-dom/client";
 
-import { LocaleProvider, applyTheme, type ThemeAttrs } from "@haruyuki/ui";
+import { LocaleProvider, applyTheme, createTerminalRouter, type ThemeAttrs } from "@haruyuki/ui";
 import { SamplePage } from "@haruyuki/ui/examples";
 
 import { CrashPage, parseCrashParams } from "./crash-page.js";
 import { DiagnosticsPanel } from "./diagnostics-panel.js";
+import { BRIDGE_CHANNEL_NAMES } from "../shared/bridge.js";
+import { createRendererBridge, type BridgeBoot } from "./bridge.js";
 import { ErrorBoundary, RendererErrorPage } from "./error-page.js";
 
 /**
@@ -34,6 +36,8 @@ import { ErrorBoundary, RendererErrorPage } from "./error-page.js";
  */
 interface ShellBridge {
   invoke(channel: string, ...args: unknown[]): Promise<unknown>;
+  on(channel: string, listener: (payload: unknown) => void): () => void;
+  readonly channelAllowlist: readonly string[];
 }
 
 declare global {
@@ -68,18 +72,27 @@ function bootPayload(): {
   locale: string;
   panel: "diagnostics" | null;
   crash: "engine" | "renderer" | null;
+  bridge: BridgeBoot;
 } {
   const params = new URLSearchParams(window.location.search);
   const mode = params.get("theme") === "dark" ? "dark" : "light";
   const contrast = params.get("contrast") === "high" ? "high" : "normal";
   const requested = params.get("locale");
   const crash = parseCrashParams(window.location.search);
+  const appVersion = params.get("appVersion");
+  const bridgeVersion = params.get("bridgeVersion");
+  const frameProtocolVersion = Number(params.get("frameProtocolVersion") ?? "1");
 
   return {
     theme: { mode, contrast },
     locale: requested !== null && requested !== "" ? requested : "en",
     panel: params.get("panel") === "diagnostics" ? "diagnostics" : null,
     crash: crash === null ? null : crash.kind,
+    bridge: {
+      appVersion: appVersion !== null && appVersion !== "" ? appVersion : "0.0.0",
+      bridgeVersion: bridgeVersion !== null && bridgeVersion !== "" ? bridgeVersion : "1",
+      frameProtocolVersion: Number.isFinite(frameProtocolVersion) ? frameProtocolVersion : 1,
+    },
   };
 }
 
@@ -93,6 +106,34 @@ const boot = bootPayload();
 
 // Before the first paint, so the page never flashes the wrong theme.
 applyTheme(boot.theme);
+
+// The bridge is optional: if the preload failed, the page still renders and the
+// failure is visible in the console instead of becoming a blank window. A
+// missing preload is a D1-level failure, not something D3 should paper over.
+const shellBridge = window.haruyuki;
+
+if (shellBridge !== undefined) {
+  const terminalRouter = createTerminalRouter({
+    ack: (ack) => {
+      void shellBridge
+        .invoke(BRIDGE_CHANNEL_NAMES.terminalAck, ack)
+        .catch((error: unknown) => console.error("terminal ack failed", error));
+    },
+    onNotice: (notice) => {
+      // D3 has no visible notice surface; E3 renders the marker. The console is
+      // the seam until then, so a dropped terminal slice is still observable.
+      console.info("terminal notice", notice.terminal_id, notice.droppedBytes);
+    },
+  });
+
+  createRendererBridge({
+    bridge: shellBridge,
+    boot: boot.bridge,
+    terminal: terminalRouter,
+    onNotice: (notice) => console.info("terminal notice", notice.terminal_id, notice.droppedBytes),
+    onReadyError: (error) => console.error("bridge ready failed", error),
+  });
+}
 
 /**
  * The mounted shell.
