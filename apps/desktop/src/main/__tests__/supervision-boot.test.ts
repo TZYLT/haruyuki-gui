@@ -18,6 +18,7 @@ import {
 
 import {
   clearMarkerAfterStop,
+  removeStaleCandidates,
   runBootSupervision,
   writeMarkerEngine,
 } from "../supervision/boot.js";
@@ -136,6 +137,38 @@ describe("runBootSupervision", () => {
     expect(result.stale[0]?.decision).toBe("ambiguous");
     expect(result.stale[0]?.staleFile).toBe("runtime-stale-loaded-instance.json");
     expect((await readMarker(dir)).engine).toBeNull();
+  });
+
+  it("removes only the stale files whose process was cleaned", async () => {
+    const dir = await tempDir();
+    const a = "runtime-stale-a.json";
+    const b = "runtime-stale-b.json";
+
+    await writeFile(path.join(dir, a), "{}", "utf8");
+    await writeFile(path.join(dir, b), "{}", "utf8");
+
+    const candidates = [
+      {
+        pid: 1,
+        evidence: evidence({ pid: 1 }),
+        decision: "ambiguous" as const,
+        reason: "",
+        staleFile: a,
+      },
+      {
+        pid: 2,
+        evidence: evidence({ pid: 2 }),
+        decision: "ambiguous" as const,
+        reason: "",
+        staleFile: b,
+      },
+    ];
+
+    const failed = await removeStaleCandidates(dir, candidates, [1]);
+
+    expect(failed).toEqual([]);
+    await expect(access(path.join(dir, a))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(access(path.join(dir, b))).resolves.toBeUndefined();
   });
 
   it("replaces a corrupt marker instead of failing boot", async () => {

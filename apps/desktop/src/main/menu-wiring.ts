@@ -31,13 +31,13 @@
 import { Menu } from "electron";
 import type { App, BrowserWindow, Dialog } from "electron";
 import type { Locale } from "@haruyuki/ui/i18n/core";
-import { removeStale } from "@haruyuki/core";
 
 import { openDiagnosticsPanel } from "./diagnostics/ipc.js";
 import type { Logger } from "./log.js";
 import { buildMenuTemplate, menuLabels } from "./menu.js";
 import { APP_NAME } from "./i18n.js";
 import type { StaleCandidate } from "./supervision/boot.js";
+import { removeStaleCandidates } from "./supervision/boot.js";
 import {
   showStaleCleanupDialog,
   type StaleCleanupFailure,
@@ -170,14 +170,10 @@ async function cleanupStale(deps: ApplicationMenuDeps, rebuild: () => void): Pro
     // The process is confirmed gone only for `removed`; delete the matching
     // stale file so a later boot does not resurrect a cleaned candidate
     // (RD-08: cleanup success deletes the record).
-    for (const candidate of candidates) {
-      if (!result.removed.includes(candidate.pid) || candidate.staleFile === undefined) continue;
+    const failedFiles = await removeStaleCandidates(deps.userData, candidates, result.removed);
 
-      try {
-        await removeStale(deps.userData, candidate.staleFile);
-      } catch (error) {
-        logActionFailure(deps, "cleanup-stale-file", error);
-      }
+    for (const file of failedFiles) {
+      logActionFailure(deps, "cleanup-stale-file", file);
     }
 
     if (result.removed.length > 0 || result.ok) {

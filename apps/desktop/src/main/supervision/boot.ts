@@ -33,6 +33,7 @@ import {
   listStale,
   moveToStale,
   readRuntimeMarker,
+  removeStale,
   writeRuntimeMarker,
   type EngineMarker,
   type KillResult,
@@ -369,6 +370,39 @@ async function loadStaleCandidates(
   }
 
   if (target.length > 0) log("supervision.stale.loaded", { count: target.length });
+}
+
+/**
+ * Delete the stale files whose processes the cleanup dialog confirmed gone.
+ *
+ * A candidate without a file is skipped: it may have been kept only as a log
+ * record. A failed unlink is returned rather than thrown, so one unreadable file
+ * cannot stop the other removals; the menu logs the failures.
+ *
+ * @param userData the directory that owns the stale files
+ * @param candidates the list the dialog showed
+ * @param removedPids pids the cleanup reported as removed
+ * @returns the file names that could not be deleted
+ */
+export async function removeStaleCandidates(
+  userData: string,
+  candidates: readonly StaleCandidate[],
+  removedPids: readonly number[],
+): Promise<readonly string[]> {
+  const removed = new Set(removedPids);
+  const failed: string[] = [];
+
+  for (const candidate of candidates) {
+    if (!removed.has(candidate.pid) || candidate.staleFile === undefined) continue;
+
+    try {
+      await removeStale(userData, candidate.staleFile);
+    } catch {
+      failed.push(candidate.staleFile);
+    }
+  }
+
+  return failed;
 }
 
 /**
