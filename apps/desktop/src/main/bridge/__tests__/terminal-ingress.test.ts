@@ -146,7 +146,9 @@ describe("createTerminalIngress", () => {
     ingress.ack("t1", 4 * CHUNK);
 
     expect(ingress.stats().unackedBytes).toBe(0);
-    expect(ingress.stats().ackedBytes).toBe(4 * CHUNK);
+    // Only the one slice that was actually in flight is acknowledged; the
+    // excess is a renderer bug, not three phantom slices.
+    expect(ingress.stats().ackedBytes).toBe(CHUNK);
   });
 
   it("drops the oldest queued slices once the cap is passed", () => {
@@ -203,7 +205,7 @@ describe("createTerminalIngress", () => {
     expect(ingress.stats().sentBytes).toBe(2 * CHUNK);
   });
 
-  it("stops sending on detach but keeps the queue for the next attach", () => {
+  it("replays in-flight bytes to the next attach and keeps the rest queued", () => {
     const ingress = createTerminalIngress({ windowBytes: CHUNK });
     const first = recorder();
 
@@ -215,20 +217,21 @@ describe("createTerminalIngress", () => {
     ingress.accept("c", slice("t1", CHUNK));
 
     expect(first.sent.map((message) => message.payload)).toEqual(["a"]);
-    expect(ingress.stats().pendingBytes).toBe(2 * CHUNK);
+    // `a` was in flight and is owed to the next renderer, so it joins the queue
+    // in front of `b` and `c`.
+    expect(ingress.stats().pendingBytes).toBe(3 * CHUNK);
+    expect(ingress.stats().unackedBytes).toBe(0);
 
     const second = recorder();
     ingress.attach(second.send);
 
-    // The old renderer's unacked byte died with it, so the new sender starts
-    // with a full window and drains the oldest queued slice immediately.
-    expect(second.sent.map((message) => message.payload)).toEqual(["b"]);
-    expect(ingress.stats().pendingBytes).toBe(CHUNK);
+    expect(second.sent.map((message) => message.payload)).toEqual(["a"]);
+    expect(ingress.stats().pendingBytes).toBe(2 * CHUNK);
 
     ingress.ack("t1", CHUNK);
 
-    expect(second.sent.map((message) => message.payload)).toEqual(["b", "c"]);
-    expect(ingress.stats().pendingBytes).toBe(0);
+    expect(second.sent.map((message) => message.payload)).toEqual(["a", "b"]);
+    expect(ingress.stats().pendingBytes).toBe(CHUNK);
   });
 
   it("gives each terminal its own window and queue", () => {
@@ -369,7 +372,7 @@ describe("createTerminalIngress", () => {
     expect(unbounded.stats().droppedBytes).toBe(0);
   });
 
-  it("clears the unacknowledged window on detach but keeps pending bytes", () => {
+  it("replays the old renderer's unacknowledged bytes to the new one", () => {
     const ingress = createTerminalIngress();
     const first = recorder();
 
@@ -379,18 +382,19 @@ describe("createTerminalIngress", () => {
 
     ingress.detach();
     expect(ingress.stats().unackedBytes).toBe(0);
-
-    // A slice that arrives while detached waits; the new renderer must start
-    // with a full window, not inherit the dead renderer's debt.
-    ingress.accept("b", slice("t1", CHUNK));
     expect(ingress.stats().pendingBytes).toBe(CHUNK);
+
+    ingress.accept("b", slice("t1", CHUNK));
+    expect(ingress.stats().pendingBytes).toBe(2 * CHUNK);
 
     const second = recorder();
     ingress.attach(second.send);
 
-    expect(second.sent).toHaveLength(1);
+    // `a` is replayed first, then `b`; the new renderer starts with a full
+    // window rather than inheriting the dead renderer's debt.
+    expect(second.sent.map((message) => message.payload)).toEqual(["a", "b"]);
     expect(ingress.stats().pendingBytes).toBe(0);
-    expect(ingress.stats().unackedBytes).toBe(CHUNK);
+    expect(ingress.stats().unackedBytes).toBe(2 * CHUNK);
   });
 
   it("clears every bucket on dispose and ignores later accepts", () => {

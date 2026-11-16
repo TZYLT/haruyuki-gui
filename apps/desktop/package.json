@@ -18,6 +18,7 @@
     "smoke:engine": "node scripts/smoke-engine.mjs",
     "smoke:supervision": "node scripts/supervision-smoke.mjs",
     "verify:gui-host": "node scripts/verify-gui-host.mjs",
+    "verify:bridge-transport": "node scripts/verify-bridge-transport.mjs",
     "verify:bootstrap-error": "node scripts/verify-bootstrap-error.mjs",
     "verify:media": "node scripts/verify-media.mjs",
     "verify:host-port": "node scripts/verify-host-port.mjs"

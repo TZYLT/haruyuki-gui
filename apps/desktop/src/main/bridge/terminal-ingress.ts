@@ -58,7 +58,7 @@ export interface TerminalIngressOptions {
 /** One queued `term.output` string and the bytes charged for it. */
 interface PendingSlice {
   readonly payload: string;
-  readonly bytes: number;
+  bytes: number;
 }
 
 /** Everything the entry remembers about one terminal. */
@@ -66,6 +66,15 @@ interface TerminalBucket {
   /** FIFO; `pending[0]` is the next byte to deliver. */
   pending: PendingSlice[];
   pendingBytes: number;
+  /**
+   * Slices already handed to the renderer but not yet acked.
+   *
+   * Retaining them is what makes a reload replay the bytes the old renderer had
+   * received but never confirmed. A count alone would bound the window but
+   * could not put the content back.
+   */
+  inflight: PendingSlice[];
+  inflightBytes: number;
   unackedBytes: number;
   /** Bytes dropped since the last notice, not since process start. */
   noticeBytes: number;
@@ -104,6 +113,8 @@ export function createTerminalIngress(options: TerminalIngressOptions = {}): Ter
     const bucket: TerminalBucket = {
       pending: [],
       pendingBytes: 0,
+      inflight: [],
+      inflightBytes: 0,
       unackedBytes: 0,
       noticeBytes: 0,
       needsNotice: false,
@@ -131,6 +142,8 @@ export function createTerminalIngress(options: TerminalIngressOptions = {}): Ter
 
       target(FRAME_DELIVER.stream, head.payload);
 
+      bucket.inflight.push(head);
+      bucket.inflightBytes += head.bytes;
       bucket.unackedBytes += head.bytes;
       sentBytes += head.bytes;
     }
@@ -155,6 +168,8 @@ export function createTerminalIngress(options: TerminalIngressOptions = {}): Ter
     ) {
       send(FRAME_DELIVER.stream, payload);
 
+      bucket.inflight.push({ payload, bytes });
+      bucket.inflightBytes += bytes;
       bucket.unackedBytes += bytes;
       sentBytes += bytes;
 
@@ -186,10 +201,37 @@ export function createTerminalIngress(options: TerminalIngressOptions = {}): Ter
 
     if (bucket === undefined) return;
 
-    bucket.unackedBytes = Math.max(0, bucket.unackedBytes - bytes);
-    ackedBytes += bytes;
+    // An ack larger than the window is a renderer bug; clamp it rather than
+    // letting the excess free capacity that was never in use.
+    const acknowledged = Math.min(bytes, bucket.unackedBytes);
+
+    releaseInflight(bucket, acknowledged);
+
+    bucket.unackedBytes = Math.max(0, bucket.unackedBytes - acknowledged);
+    ackedBytes += acknowledged;
 
     pump(bucket);
+  }
+
+  /** Drop acked bytes from the front of the inflight list, splitting a partial slice. */
+  function releaseInflight(bucket: TerminalBucket, bytes: number): void {
+    let remaining = bytes;
+
+    while (remaining > 0 && bucket.inflight.length > 0) {
+      const head = bucket.inflight[0];
+
+      if (head === undefined) return;
+
+      if (head.bytes <= remaining) {
+        bucket.inflight.shift();
+        bucket.inflightBytes -= head.bytes;
+        remaining -= head.bytes;
+      } else {
+        head.bytes -= remaining;
+        bucket.inflightBytes -= remaining;
+        remaining = 0;
+      }
+    }
   }
 
   function attach(target: Send): void {
@@ -206,11 +248,35 @@ export function createTerminalIngress(options: TerminalIngressOptions = {}): Ter
     // Queued bytes stay: a reload keeps the terminal's scrollback unread, and
     // dropping it here would lose data the renderer never saw.
     //
-    // Unacknowledged bytes do NOT stay: the renderer that owed those acks is
-    // gone, so keeping the debt would leave the next renderer with a half-full
-    // window it can never refill. The bytes were already sent once; pending is
-    // the only thing that must survive.
-    for (const bucket of buckets.values()) bucket.unackedBytes = 0;
+    // In-flight bytes move back to the FRONT of the queue. They were sent to a
+    // renderer that is now gone and will never ack them; the next renderer has
+    // an empty xterm and needs them replayed. Keeping only a count would bound
+    // the window but lose the content, which is exactly the "looks fine until
+    // Ctrl+R" failure.
+    for (const bucket of buckets.values()) {
+      if (bucket.inflight.length > 0) {
+        bucket.pending = [...bucket.inflight, ...bucket.pending];
+        bucket.pendingBytes += bucket.inflightBytes;
+        bucket.inflight = [];
+        bucket.inflightBytes = 0;
+      }
+
+      bucket.unackedBytes = 0;
+
+      // Replay shares the ring's cap. The window is smaller than the cap, so
+      // this is the only path that can push the queue over it; dropping here
+      // keeps the bound honest and owes the same notice as an overflow.
+      while (bucket.pendingBytes > pendingCapBytes) {
+        const oldest = bucket.pending.shift();
+
+        if (oldest === undefined) break;
+
+        bucket.pendingBytes -= oldest.bytes;
+        droppedBytes += oldest.bytes;
+        bucket.noticeBytes += oldest.bytes;
+        bucket.needsNotice = true;
+      }
+    }
 
     send = null;
   }
