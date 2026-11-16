@@ -65,3 +65,8 @@ ehthumbs.db
 .env.*.local
 *.local
 _acceptance/
+
+# --- G1 packaged runtime staging -------------------------------------------
+/apps/desktop/runtime/
+/apps/desktop/runtime-lock.json
+/apps/desktop/release/
