@@ -37,6 +37,7 @@ import {
   type DropEventLike,
   type DropListenerDeps,
 } from "../../preload/drop.js";
+import { createDropHandler } from "../drop-handler.js";
 import { validateDroppedPayload } from "../dropped-files.js";
 
 /** A recording drop environment. */
@@ -295,6 +296,84 @@ describe("installDropListener", () => {
     teardown();
 
     expect(env.listeners.size).toBe(0);
+  });
+});
+
+describe("the drop handler turns a report into an authorisation", () => {
+  /** A handler that records what it accepted and what it warned about. */
+  function handler() {
+    const accepted: string[][] = [];
+    const warnings: { event: string; detail: Record<string, unknown> }[] = [];
+
+    return {
+      accepted,
+      warnings,
+      run: createDropHandler({
+        acceptPaths: (paths) => accepted.push([...paths]),
+        warn: (event, detail) => warnings.push({ event, detail }),
+      }),
+    };
+  }
+
+  it("accepts the paths from a well-formed report, in one call", () => {
+    // One call rather than one per entry: the readable set is rebuilt from its previous
+    // value, so N calls would each rebuild from a stale copy and keep only the last.
+    const env = handler();
+
+    const answer = env.run({
+      entries: [
+        { name: "a.txt", path: "/work/a.txt" },
+        { name: "b.txt", path: "/work/b.txt" },
+      ],
+    });
+
+    expect(env.accepted).toEqual([["/work/a.txt", "/work/b.txt"]]);
+    expect(answer.acceptedCount).toBe(2);
+  });
+
+  it("reports an entry it could not locate, without accepting it", () => {
+    // The distinction the report already carries: seen but transparent is not the same as
+    // rejected, and the page may want to say so.
+    const env = handler();
+
+    const answer = env.run({
+      entries: [{ name: "ghost.png" }, { name: "a.txt", path: "/work/a.txt" }],
+    });
+
+    expect(env.accepted).toEqual([["/work/a.txt"]]);
+    expect(answer.acceptedCount).toBe(1);
+    expect(answer.entries).toHaveLength(2);
+  });
+
+  it("accepts nothing at all when every entry has no path", () => {
+    // And in particular does not call `acceptPaths` with an empty list, which would
+    // rebuild the readable set for no reason.
+    const env = handler();
+
+    const answer = env.run({ entries: [{ name: "ghost.png" }] });
+
+    expect(env.accepted).toEqual([]);
+    expect(answer.acceptedCount).toBe(0);
+  });
+
+  it("answers zero for a payload that is not the shape, and warns once", () => {
+    const env = handler();
+
+    const answer = env.run({ files: [] });
+
+    expect(answer).toEqual({ acceptedCount: 0, entries: [] });
+    expect(env.warnings).toHaveLength(1);
+    expect(env.warnings[0]?.event).toBe("drop.rejected");
+  });
+
+  it("tolerates a shell with no logger yet", () => {
+    // `warn` is optional because the logger is built during startup; a drop that arrives
+    // before it exists must not throw.
+    const accepted: string[][] = [];
+    const run = createDropHandler({ acceptPaths: (paths) => accepted.push([...paths]) });
+
+    expect(() => run({ nope: true })).not.toThrow();
+    expect(accepted).toEqual([]);
   });
 });
 

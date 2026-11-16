@@ -295,6 +295,45 @@ describe("the app name is set by the shell, before any getPath", () => {
     }
   });
 
+  it("registers the schemes before the first await in main()", () => {
+    // The failure this prevents, from a real launch: moving the directory creation above
+    // the registration -- because it needs an `await` -- suspended `main()` at a point
+    // before `registerSchemesAsPrivileged` ran, so it executed after the ready event and
+    // Electron threw "should be called before app is ready". The window then showed only
+    // the error page, and nothing in the test suite noticed, because no unit test starts
+    // the shell.
+    //
+    // The rule is stricter than "before whenReady": it must precede the first `await`,
+    // because an `await` is what reorders the rest of the function.
+    const source = read("apps/desktop/src/main/main.ts");
+
+    const body = source.slice(source.indexOf("async function main(): Promise<void> {"));
+    const registration = body.indexOf("protocol.registerSchemesAsPrivileged([");
+    const firstAwait = body.indexOf("await ");
+
+    expect(registration).toBeGreaterThan(-1);
+    expect(firstAwait).toBeGreaterThan(-1);
+
+    // The registration comes first, and before the ready event as well.
+    expect(registration).toBeLessThan(firstAwait);
+    expect(registration).toBeLessThan(body.indexOf("await app.whenReady()"));
+  });
+
+  it("sets the name before the registration, which is before the first await", () => {
+    // `setName` also has an ordering requirement, and the two are adjacent. Asserted
+    // together because a future edit inside this window can break either.
+    const source = read("apps/desktop/src/main/main.ts");
+
+    const body = source.slice(source.indexOf("async function main(): Promise<void> {"));
+    const name = body.indexOf("applyAppName()");
+    const registration = body.indexOf("protocol.registerSchemesAsPrivileged([");
+    const firstAwait = body.indexOf("await ");
+
+    expect(name).toBeGreaterThan(-1);
+    expect(name).toBeLessThan(registration);
+    expect(registration).toBeLessThan(firstAwait);
+  });
+
   it("has exactly one definition of the name-setting call", () => {
     // Two places calling `app.setName` is how the probe came to measure itself. One
     // function, called from both sides.

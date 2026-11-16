@@ -63,7 +63,7 @@ import { createDesktopMembers, type DesktopMembersResult } from "./host-members.
 import { desktopPaths, ensurePaths } from "./host-port.js";
 import { createDesktopSecrets, type SecretsPort } from "./secrets.js";
 import { DROPPED_FILES_CHANNEL } from "../shared/bridge.js";
-import { validateDroppedPayload } from "./dropped-files.js";
+import { createDropHandler } from "./drop-handler.js";
 import { APP_HOST, APP_SCHEME, APP_PRIVILEGES, createProtocolHandler } from "./protocol.js";
 import { shellError } from "../shared/shell-error.js";
 import { CSP, headersFor, shouldApplyFallbackCsp } from "./csp.js";
@@ -628,6 +628,22 @@ async function main(): Promise<void> {
   // symptom would be a duplicated settings directory rather than an error.
   applyAppName();
 
+  // Before ready, and before *any* `await`. Both schemes go in one call:
+  // `registerSchemesAsPrivileged` may only be called once before ready, and a second call
+  // would silently not take effect.
+  //
+  // **This has to precede the first `await` in this function, not merely the ready
+  // event.** An earlier version created the application directories first, with an
+  // `await`; that suspended `main()` at a point before this call, so the registration ran
+  // after the ready event and Electron threw
+  // `protocol.registerSchemesAsPrivileged should be called before app is ready` -- a
+  // startup failure with nothing on screen but the error page. Any future `await` added
+  // above this line reintroduces it.
+  protocol.registerSchemesAsPrivileged([
+    { scheme: APP_SCHEME, privileges: { ...APP_PRIVILEGES } },
+    { scheme: MEDIA_SCHEME, privileges: { ...MEDIA_PRIVILEGES } },
+  ]);
+
   // The four roots, created before anything writes into them.
   //
   // The requirement is explicit that they exist at the moment they are read, and that a
@@ -662,14 +678,6 @@ async function main(): Promise<void> {
     node: process.versions.node,
     packaged: app.isPackaged,
   });
-
-  // Before ready, and before anything reads the protocol. Both schemes go in one
-  // call: `registerSchemesAsPrivileged` may only be called once before ready, and
-  // a second call would silently not take effect.
-  protocol.registerSchemesAsPrivileged([
-    { scheme: APP_SCHEME, privileges: { ...APP_PRIVILEGES } },
-    { scheme: MEDIA_SCHEME, privileges: { ...MEDIA_PRIVILEGES } },
-  ]);
 
   // A second launch focuses the existing window instead of building a second one.
   // Without this, two shells share one settings file and overwrite each other.
@@ -833,40 +841,19 @@ async function main(): Promise<void> {
   // deliberately not matched yet, and that is the point of using `handle`: the moment the
   // preload is changed to `invoke`, a reply exists to receive. An `on` registration would
   // have to be rewritten at that moment instead.
-  ipcMain.handle(DROPPED_FILES_CHANNEL, (_event, payload: unknown) => {
-    const report = validateDroppedPayload(payload);
-
-    if (report === null) {
-      logger?.warn("drop.rejected", { detail: "payload did not match {name, path}[]" });
-
-      // A value rather than a throw: the caller classifies it, the same way every other
-      // refusal in this item is a value.
-      return { acceptedCount: 0, entries: [] };
-    }
-
-    // The readable set grows by what the user just dropped on the window. That is a real
-    // authorisation: the gesture is the user's own, and the alternative -- asking them to
-    // also pick it from a dialog -- would be asking twice for one decision.
-    const accepted = report.entries.flatMap((entry) =>
-      entry.path === undefined ? [] : [entry.path],
-    );
-
-    if (accepted.length > 0) {
-      setReadableRootsForMedia([...readableRootsForMedia, ...accepted]);
-    }
-
-    // Returned rather than echoed back over the channel. The first version sent a reply
-    // with `event.sender.send`, and nothing subscribed to it: the preload only ever
-    // sends on this channel, and `window.haruyuki` exposes no way to listen. A message
-    // that is emitted and discarded is worse than no message, because the code reads as
-    // though a consumer exists.
-    return {
-      entries: report.entries,
-      // A count rather than a boolean: "2 of 3 were usable" tells a caller what to say,
-      // where `ok: true` would claim more than happened.
-      acceptedCount: accepted.length,
-    };
-  });
+  ipcMain.handle(DROPPED_FILES_CHANNEL, (_event, payload: unknown) =>
+    // The receiving logic is in `drop-handler.ts`: what arrives on this channel is
+    // untrusted and turning it into an authorisation is a decision procedure, not
+    // startup wiring. This line is the wiring.
+    createDropHandler({
+      acceptPaths: (accepted) => {
+        setReadableRootsForMedia([...readableRootsForMedia, ...accepted]);
+      },
+      warn: (event, detail) => {
+        logger?.warn(event, detail);
+      },
+    })(payload),
+  );
 
   // The fallback. `protocol.handle` already sets the policy on its own responses;
   // this catches anything the session loads that did not come through the handler.
