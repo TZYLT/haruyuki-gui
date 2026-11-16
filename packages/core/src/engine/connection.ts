@@ -125,6 +125,19 @@ const WsWebSocket = loadWsConstructor();
  */
 export type ConnectEngineOptions = {
   timeoutMs?: number;
+  /**
+   * Runs on the open socket inside the `open` handler, before the promise settles.
+   *
+   * The window this closes: a server that writes its first frames in
+   * the same tick it accepts writes them before the caller's `await` can resume,
+   * so a listener attached after the promise resolves misses them (measured: 0 of
+   * 4 frames). A caller that needs those frames arms a capture here.
+   *
+   * Optional and unused by default, so every existing path behaves identically.
+   * Only one hook is expected; a second caller would silently replace it, which is
+   * why this is not exported from the package's public surface.
+   */
+  readonly onOpen?: (socket: EngineSocket) => void;
 };
 
 /**
@@ -260,6 +273,12 @@ export function connectEngine(
       }
 
       settled = true;
+
+      // Arm the caller's capture BEFORE detaching and resolving: this is the only
+      // point where a listener can exist while the server is still in the tick
+      // that may have written the first frames.
+      options.onOpen?.(socket);
+
       detach();
       resolve(socket);
     }
