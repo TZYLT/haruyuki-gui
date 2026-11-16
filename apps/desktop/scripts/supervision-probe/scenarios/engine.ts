@@ -8,8 +8,10 @@
  */
 
 import path from "node:path";
+import { mkdirSync, writeFileSync } from "node:fs";
 
 import { BrowserWindow } from "electron";
+import { isProcessAlive, readRuntimeMarker } from "@haruyuki/core";
 
 import {
   crashDirFor,
@@ -35,6 +37,7 @@ import {
   stopEngineHost,
   type EngineHost,
 } from "../../../src/main/supervision/engine-host.js";
+import { buildEngineSpawnSpec } from "../../../src/main/supervision/spawn-spec.js";
 
 // ---------------------------------------------------------------------------
 // A real engine child, killed while ready
@@ -286,5 +289,156 @@ async function loadNormalWindow(): Promise<BrowserWindow | null> {
   }
 }
 
-export { checkEngine };
+/**
+ * Load a crash URL and return what a user could read in the body.
+ *
+ * The normal page is loaded first because the crash route is a reload of the
+ * current shell URL; the same window then navigates to the crash page.
+ *
+ * @param query the built `?crash=engine...` query
+ * @returns the body text, or null when the renderer is unavailable
+ */
+async function crashPageText(query: string): Promise<string | null> {
+  if (!rendererAvailable()) return null;
+
+  const window = await loadNormalWindow();
+
+  if (window === null) return null;
+
+  try {
+    const url = crashPageUrl(window, query, APP_SCHEME);
+
+    if (url === null) return null;
+
+    await window.loadURL(url);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+
+    return (await window.webContents.executeJavaScript("document.body.innerText")) as string;
+  } catch (error) {
+    process.stderr.write(`probe: the engine crash page did not load: ${describe(error)}\n`);
+
+    return null;
+  } finally {
+    if (!window.isDestroyed()) window.destroy();
+  }
+}
+
+/**
+ * A watchdog preload that never prints `WATCHDOG_OK` makes the engine
+ * degrade. The status must reach the CrashRecord, the crash query and the page
+ * text, not stay "unknown" or "active".
+ */
+async function checkV03(): Promise<void> {
+  const id = "watchdog-start-timeout";
+
+  if (ENGINE_BUNDLE === null) {
+    record(id, "SKIP", "HARUYUKI_ENGINE_BUNDLE is not set");
+
+    return;
+  }
+
+  const userData = path.join(TEMP_ROOT, "v03");
+  const fakeWatchdog = path.join(userData, "watchdog.cjs");
+  let crashRecord: CrashRecord | null = null;
+  let host: EngineHost | null = null;
+
+  try {
+    mkdirSync(userData, { recursive: true });
+    // Preloaded but never prints WATCHDOG_OK, which is exactly the degradation
+    // B1 reports and the shell must surface.
+    writeFileSync(fakeWatchdog, "setInterval(() => {}, 1000);\n", "utf8");
+
+    const started = await startEngineHost({
+      userData,
+      appVersion: PROBE_APP_VERSION,
+      bundlePath: ENGINE_BUNDLE,
+      expectedEngineVersion: EXPECTED_ENGINE_VERSION,
+      resolveWatchdog: () => fakeWatchdog,
+      onLog: logSink,
+      onCrash: (record) => {
+        crashRecord = record;
+      },
+    });
+
+    if (!started.ok) {
+      record(id, "FAIL", `the engine did not start: ${started.reason}`);
+
+      return;
+    }
+
+    host = started.host;
+
+    if (host.watchdog !== "inactive") {
+      record(id, "FAIL", `host watchdog=${host.watchdog}, expected inactive`);
+      return;
+    }
+
+    process.kill(host.pid, "SIGKILL");
+
+    const recordResult = await waitFor(() => crashRecord, 10_000, 100);
+    const exit = host.engine.lastExit;
+
+    if (recordResult === null || exit === null) {
+      record(id, "FAIL", "the crash record or lastExit never arrived");
+      return;
+    }
+
+    const query = engineCrashQuery({ ...exit, watchdog: host.watchdog });
+    const text = await crashPageText(query);
+    const problems: string[] = [];
+    const oldPid = host.pid;
+
+    // The user's "pick an engine directory" path: the old engine is already
+    // failed, and a restart must still produce a different live pid and a marker
+    // that names it. This is S1-7 on a real process, not a fake.
+    const spec = buildEngineSpawnSpec({
+      userData,
+      bundlePath: ENGINE_BUNDLE,
+      watchdogPath: fakeWatchdog,
+    });
+    const restarted = await host.restartWithSpec(spec);
+
+    if (!restarted.ok) {
+      problems.push(`restart failed: ${restarted.reason}`);
+    } else {
+      const newHost = restarted.host;
+      const marker = await readRuntimeMarker(userData);
+
+      if (newHost.pid === oldPid) problems.push("restart kept the old pid");
+      if (isProcessAlive(oldPid)) problems.push("the old pid is still alive");
+      if (!marker.ok || marker.marker.engine?.pid !== newHost.pid) {
+        problems.push("runtime.json does not name the new pid");
+      }
+
+      host = newHost;
+    }
+
+    if (recordResult.engine?.watchdog !== "inactive") {
+      problems.push(`record watchdog=${String(recordResult.engine?.watchdog)}`);
+    }
+    if (!query.includes("watchdog=inactive")) problems.push(`query=${query}`);
+    if (text === null) {
+      problems.push("the engine crash page did not load");
+    } else if (!/看门狗|watchdog/i.test(text) || !/未|not confirmed/i.test(text)) {
+      problems.push("the page does not say the watchdog was not confirmed");
+    }
+
+    if (problems.length > 0) {
+      record(id, "FAIL", problems.join("; "));
+    } else {
+      record(
+        id,
+        "PASS",
+        `watchdog=inactive record=inactive query=watchdog%3Dinactive ` +
+          `page=not-confirmed pid=${String(host.pid)}`,
+      );
+    }
+  } catch (error) {
+    record(id, "FAIL", describe(error));
+  } finally {
+    if (host !== null) await stopEngineHost(host).catch(() => undefined);
+  }
+}
+
+export { checkEngine, checkV03 };
 export type { EngineObservation };

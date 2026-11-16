@@ -38,6 +38,8 @@ import {
 } from "../processes.js";
 import { logged, logSink, record } from "../report.js";
 import { runBootSupervision } from "../../../src/main/supervision/boot.js";
+import type { StaleCandidate } from "../../../src/main/supervision/boot.js";
+import { showStaleCleanupDialog } from "../../../src/main/supervision/stale-cleanup.js";
 
 // ---------------------------------------------------------------------------
 // A leaked child is reclaimed at boot on two-condition evidence
@@ -409,4 +411,156 @@ async function checkV04(): Promise<void> {
   }
 }
 
-export { checkV01, checkV04 };
+/**
+ * Another shell's live marker plus an unrelated live PID must not be killed, and
+ * the manual dialog must show that evidence, cancel without a kill, and only kill
+ * kill, and only kill after the explicit confirm.
+ *
+ * The marker deliberately names a different image and a younger start time, so
+ * the double-condition decision is `ambiguous`; that is the honest "another
+ * shell may own this PID" shape.
+ */
+async function checkV05V06(): Promise<void> {
+  const userData = path.join(TEMP_ROOT, "v06");
+  const child = spawnIdleNode();
+  const livePid = await childPid(child);
+
+  if (livePid === null) {
+    record("foreign-shell-pid-kept", "FAIL", "the live child never spawned");
+    record("manual-cleanup-dialog", "FAIL", "no candidate to show in the dialog");
+    return;
+  }
+
+  try {
+    mkdirSync(userData, { recursive: true });
+
+    const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+    const otherShell: RuntimeMarker = {
+      schemaVersion: 1,
+      instanceId: "probe-v06-other-shell",
+      startedAt: twoHoursAgo,
+      appVersion: PROBE_APP_VERSION,
+      engine: {
+        pid: livePid,
+        startedAt: twoHoursAgo,
+        exePath: path.join("C:", "Windows", "System32", "notepad.exe"),
+        bundlePath: "another-shell-engine",
+        runToken: "probe-v06-other-shell-token",
+        watchdog: "unknown",
+        tokenFile: null,
+        port: null,
+      },
+    };
+
+    await writeRuntimeMarker(userData, otherShell);
+
+    const boot = await runBootSupervision({
+      userData,
+      appVersion: PROBE_APP_VERSION,
+      onLog: logSink,
+    });
+    const candidate = boot.stale[0];
+    const aliveAfter = isProcessAlive(livePid);
+    const sixProblems: string[] = [];
+
+    if (boot.reclaimed.length !== 0) sixProblems.push(`reclaimed=${String(boot.reclaimed.length)}`);
+    if (candidate === undefined || candidate.decision !== "ambiguous") {
+      sixProblems.push(`decision=${String(candidate?.decision)}`);
+    }
+    if (!aliveAfter) sixProblems.push("the other shell's live PID was killed");
+
+    if (sixProblems.length > 0) {
+      record("foreign-shell-pid-kept", "FAIL", sixProblems.join("; "));
+    } else {
+      record(
+        "foreign-shell-pid-kept",
+        "PASS",
+        `pid=${String(livePid)} decision=ambiguous reclaimed=0 kept=alive marker=other-shell`,
+      );
+    }
+
+    const shown: StaleCandidate = candidate ?? {
+      pid: 4242,
+      evidence: decisionEvidence({
+        pid: 4242,
+        imagePath: path.join("C:", "Apps", "engine.exe"),
+        createdAt: twoHoursAgo,
+        reason: "image and time do not match",
+      }),
+      decision: "ambiguous",
+      reason: "image and time do not match",
+    };
+    const labels = {
+      title: "Leftover engine processes",
+      message: (count: number, details: string): string =>
+        `${String(count)} engine process(es) from an earlier run:\n\n${details}`,
+      confirm: "End Processes",
+      cancel: "Cancel",
+    };
+    let captured: { readonly message: string; readonly buttons: readonly string[] } | null = null;
+    let killed = 0;
+
+    const cancelled = await showStaleCleanupDialog([shown], {
+      labels,
+      showMessageBox: async (options) => {
+        captured = { message: options.message, buttons: options.buttons };
+
+        return { response: 1 };
+      },
+      kill: async () => {
+        killed += 1;
+      },
+      isAlive: () => true,
+      settle: async () => undefined,
+    });
+    const confirmed = await showStaleCleanupDialog([shown], {
+      labels,
+      showMessageBox: async (options) => {
+        captured = { message: options.message, buttons: options.buttons };
+
+        return { response: 0 };
+      },
+      kill: async () => {
+        killed += 1;
+      },
+      isAlive: () => false,
+      settle: async () => undefined,
+    });
+    const fiveProblems: string[] = [];
+
+    if (captured === null) {
+      fiveProblems.push("the dialog was never shown");
+    } else {
+      if (!captured.message.includes(`PID ${String(shown.pid)}`)) {
+        fiveProblems.push("the message has no PID");
+      }
+      if (!captured.message.includes("image")) fiveProblems.push("the message has no image");
+      if (!captured.message.includes("started")) fiveProblems.push("the message has no start time");
+      if (!captured.message.includes(shown.reason)) fiveProblems.push("the message has no reason");
+      if (!captured.buttons.includes("End Processes") || !captured.buttons.includes("Cancel")) {
+        fiveProblems.push("the confirm/cancel buttons are missing");
+      }
+    }
+
+    if (killed !== 1) fiveProblems.push(`kills=${String(killed)} (expected only the confirm)`);
+    if (cancelled.removed.length !== 0) fiveProblems.push("cancel removed a process");
+    if (confirmed.removed.length !== 1 || confirmed.removed[0] !== shown.pid) {
+      fiveProblems.push("confirm did not remove the shown pid");
+    }
+
+    if (fiveProblems.length > 0) {
+      record("manual-cleanup-dialog", "FAIL", fiveProblems.join("; "));
+    } else {
+      record(
+        "manual-cleanup-dialog",
+        "PASS",
+        `pid=${String(shown.pid)} evidence=pid+image+started+reason cancel=no-kill confirm=removed`,
+      );
+    }
+  } finally {
+    if (isProcessAlive(livePid)) killOwned(livePid);
+    untrack(livePid);
+  }
+}
+
+export { checkV01, checkV04, checkV05V06 };

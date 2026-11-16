@@ -68,14 +68,27 @@ import { crashVersions } from "../src/main/crash/wiring.js";
 import { TEMP_ROOT, registerAppProtocol } from "./supervision-probe/environment.js";
 import { killAllSpawned } from "./supervision-probe/processes.js";
 import { describe, info, outcomes, record, recordOnce } from "./supervision-probe/report.js";
-import { checkEngine } from "./supervision-probe/scenarios/engine.js";
+import { checkEngine, checkV03 } from "./supervision-probe/scenarios/engine.js";
 import { checkV09MainCrash } from "./supervision-probe/scenarios/main-crash.js";
-import { checkV01, checkV04 } from "./supervision-probe/scenarios/reclaim.js";
+import { checkV01, checkV04, checkV05V06 } from "./supervision-probe/scenarios/reclaim.js";
 import { checkV08 } from "./supervision-probe/scenarios/renderer.js";
-import { checkV07, checkV12 } from "./supervision-probe/scenarios/diagnostics.js";
+import { checkV07, checkV10V11, checkV12 } from "./supervision-probe/scenarios/diagnostics.js";
 
 /** Every id the smoke script requires; the summary is built from this list. */
-const REQUIRED_IDS = ["leaked-child-reclaimed", "engine-stop-exit-record", "ambiguous-pid-not-killed", "engine-crash-record", "renderer-recovery-sequence", "main-crash-record", "diagnostic-bundle-tree"];
+const REQUIRED_IDS = [
+  "leaked-child-reclaimed",
+  "engine-stop-exit-record",
+  "watchdog-start-timeout",
+  "ambiguous-pid-not-killed",
+  "manual-cleanup-dialog",
+  "foreign-shell-pid-kept",
+  "engine-crash-record",
+  "renderer-recovery-sequence",
+  "main-crash-record",
+  "crash-record-retention",
+  "log-retention-configured",
+  "diagnostic-bundle-tree",
+];
 
 /**
  * Run every check in an order that keeps dependencies explicit.
@@ -86,12 +99,15 @@ const REQUIRED_IDS = ["leaked-child-reclaimed", "engine-stop-exit-record", "ambi
 async function runChecks(): Promise<void> {
   await runSafely("leaked-child-reclaimed", checkV01);
   await runSafely("ambiguous-pid-not-killed", checkV04);
+  await runSafely("manual-cleanup-dialog", checkV05V06);
 
   const engine = await checkEngine();
 
+  await runSafely("watchdog-start-timeout", checkV03);
   await runSafely("main-crash-record", checkV09MainCrash);
   await runSafely("renderer-recovery-sequence", checkV08);
   await runSafely("engine-crash-record", checkV07);
+  await runSafely("crash-record-retention", checkV10V11);
   await runSafely("diagnostic-bundle-tree", () => checkV12(engine));
 }
 
@@ -146,27 +162,8 @@ async function main(): Promise<void> {
   await app.whenReady();
   registerAppProtocol();
 
-  // The docs' requirement table also has watchdog-start-timeout/manual-cleanup-dialog/foreign-shell-pid-kept/crash-record-retention/log-retention-configured. None is in the
-  // P11 required set, and this probe does not exercise them; saying so out loud is
-  // better than letting a reader assume seven green lines cover the whole table.
-  const absent: readonly (readonly [string, string])[] = [
-    [
-      "watchdog-start-timeout",
-      "watchdog degradation injection is not exercised (the probe only reads the live watchdog state)",
-    ],
-    [
-      "manual-cleanup-dialog",
-      "the ambiguous-kept-not-killed core is exercised as ambiguous-pid-not-killed; the stale-engine menu evidence list is not",
-    ],
-    ["foreign-shell-pid-kept", "no parallel shell is started; ambiguous-pid-not-killed uses an unrelated PID instead"],
-    ["crash-record-retention", "crash-record/minidump retention (30 d / 10 MB, 7 d / 200 MB) is not exercised"],
-    [
-      "log-retention-configured",
-      "configured log-retention overrides are not exercised; log-retention-configured-default covers the 7 d / 50 MB defaults",
-    ],
-  ];
-
-  for (const [absentId, reason] of absent) record(absentId, "SKIP", reason);
+  // Every table id now has an executable check; the smoke summary requires all
+  // twelve, so a check that stops producing a judgment fails the run.
 
   info(`temp=${TEMP_ROOT}`);
   info(

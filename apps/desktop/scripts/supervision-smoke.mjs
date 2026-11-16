@@ -71,7 +71,20 @@ const RENDERER_ROOT = path.join(DESKTOP_DIR, "dist", "renderer");
 const VITE_BIN = path.join(REPO_ROOT, "node_modules", "vite", "bin", "vite.js");
 
 /** Every id the probe must judge; a missing line is a failure. */
-const REQUIRED_IDS = ["leaked-child-reclaimed", "engine-stop-exit-record", "ambiguous-pid-not-killed", "engine-crash-record", "renderer-recovery-sequence", "main-crash-record", "diagnostic-bundle-tree"];
+const REQUIRED_IDS = [
+  "leaked-child-reclaimed",
+  "engine-stop-exit-record",
+  "watchdog-start-timeout",
+  "ambiguous-pid-not-killed",
+  "manual-cleanup-dialog",
+  "foreign-shell-pid-kept",
+  "engine-crash-record",
+  "renderer-recovery-sequence",
+  "main-crash-record",
+  "crash-record-retention",
+  "log-retention-configured",
+  "diagnostic-bundle-tree",
+];
 
 /** Total budget. The probe runs seven checks, two engine starts and three renderer
  * crashes; 120 s is generous without hiding a hang. */

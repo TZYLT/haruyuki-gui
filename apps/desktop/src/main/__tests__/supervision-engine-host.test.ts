@@ -69,6 +69,8 @@ class FakeEngine {
   stopFinalState = "closed";
   stopClearsPid = true;
   stderr = ["WATCHDOG_OK=4242"];
+  /** The pid the next `start` should report; null keeps the 4242 default. */
+  nextPid: number | null = null;
 
   private readonly listeners = new Set<(state: string) => void>();
 
@@ -82,7 +84,8 @@ class FakeEngine {
       throw this.startError;
     }
 
-    this.pid = 4242;
+    this.pid = this.nextPid ?? 4242;
+    this.nextPid = null;
     this.state = "ready";
     this.appServerInfo = { engineVersion: "0.6.0", protocolVersion: 1 };
 
@@ -138,6 +141,137 @@ async function bundleIn(dir: string): Promise<string> {
 
   return bundle;
 }
+
+describe("restartWithSpec", () => {
+  it("stops the old pid, starts the supplied spec once, and rewrites the marker", async () => {
+    const dir = await tempDir();
+    const bundle = await bundleIn(dir);
+    const first = new FakeEngine();
+    const second = new FakeEngine();
+    const engines = [first, second];
+    let index = 0;
+
+    second.nextPid = 5252;
+
+    const started = await startEngineHost({
+      userData: dir,
+      appVersion: "0.1.0",
+      bundlePath: bundle,
+      engineFactory: () => asEngine(engines[index++] ?? second),
+      resolveWatchdog: () => null,
+      onCrash: () => undefined,
+    });
+
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+
+    const spec = first.lastStart?.spawnSpec;
+
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+
+    const restarted = await started.host.restartWithSpec(spec);
+
+    expect(first.stopCalls).toBe(1);
+    expect(first.state).toBe("closed");
+    expect(restarted.ok).toBe(true);
+    if (!restarted.ok) return;
+
+    hosts.push(restarted.host);
+
+    expect(restarted.host.engine).toBe(second);
+    expect(restarted.host.pid).toBe(5252);
+    expect(second.startCalls).toBe(1);
+    expect(second.lastStart?.spawnSpec).toBe(spec);
+
+    const read = await readRuntimeMarker(dir);
+
+    expect(read.ok).toBe(true);
+    if (!read.ok) return;
+
+    expect(read.marker.engine?.pid).toBe(5252);
+  });
+
+  it("still restarts when the old engine is already failed", async () => {
+    const dir = await tempDir();
+    const bundle = await bundleIn(dir);
+    const first = new FakeEngine();
+    const second = new FakeEngine();
+    const engines = [first, second];
+    let index = 0;
+
+    second.nextPid = 6262;
+
+    const started = await startEngineHost({
+      userData: dir,
+      appVersion: "0.1.0",
+      bundlePath: bundle,
+      engineFactory: () => asEngine(engines[index++] ?? second),
+      resolveWatchdog: () => null,
+    });
+
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+
+    // The user is looking at a crashed engine, not a live one.
+    first.state = "failed";
+    first.pid = null;
+
+    const spec = first.lastStart?.spawnSpec;
+
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+
+    const restarted = await started.host.restartWithSpec(spec);
+
+    expect(restarted.ok).toBe(true);
+    if (!restarted.ok) return;
+
+    hosts.push(restarted.host);
+    expect(restarted.host.pid).toBe(6262);
+  });
+
+  it("does not start a second engine when the old one cannot be stopped", async () => {
+    const dir = await tempDir();
+    const bundle = await bundleIn(dir);
+    const first = new FakeEngine();
+    const second = new FakeEngine();
+
+    first.nextPid = process.pid;
+    first.stopFinalState = "ready";
+    first.stopClearsPid = false;
+
+    const started = await startEngineHost({
+      userData: dir,
+      appVersion: "0.1.0",
+      bundlePath: bundle,
+      engineFactory: () => asEngine(first),
+      resolveWatchdog: () => null,
+    });
+
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+
+    const spec = first.lastStart?.spawnSpec;
+
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+
+    const restarted = await started.host.restartWithSpec(spec);
+
+    expect(restarted.ok).toBe(false);
+    if (restarted.ok) return;
+
+    expect(restarted.reason).toBe("start-failed");
+    expect(second.startCalls).toBe(0);
+
+    // Release the still-live fake so the next test's single-host guard is not
+    // contaminated by this deliberately failed restart. The pid is the host's
+    // liveness fact; it is readonly to production code, not to this test.
+    (started.host as unknown as { pid: number }).pid = 1;
+    await stopEngineHost(started.host).catch(() => undefined);
+  });
+});
 
 describe("startEngineHost", () => {
   it("skips without starting, writing or throwing when no bundle exists", async () => {

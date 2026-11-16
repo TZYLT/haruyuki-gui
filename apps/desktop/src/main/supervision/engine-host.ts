@@ -26,13 +26,14 @@ import {
   TOKEN_FILE_NAME,
   isProcessAlive,
   type EngineMarker,
+  type EngineSpawnSpec,
 } from "@haruyuki/core";
 
 import { createEngineCrashWatcher } from "../crash/capture.js";
 import { crashDirFor, type CrashRecord, type CrashVersions } from "../crash/records.js";
 import type { SupervisionLog } from "./errors.js";
 import { describeError } from "./errors.js";
-import { writeMarkerEngine } from "./marker-write.js";
+import { writeMarkerEngine, clearMarkerAfterStop } from "./marker-write.js";
 import {
   TOKEN_DIR_NAME,
   buildEngineSpawnSpec,
@@ -60,6 +61,14 @@ export interface EngineHost {
   readonly tokenFile: string;
   /** ISO 8601 UTC; the moment the marker was written, not the OS spawn time. */
   readonly startedAt: string;
+  /**
+   * Stop this host, then start once with the spec the user chose.
+   *
+   * Explicit only: `R-13/B3` forbids the shell from reviving a dead engine on
+   * its own. This is the user's "pick an engine directory" path, which needs a
+   * new process after a failed or missing bundle. It does not retry or schedule.
+   */
+  restartWithSpec(spec: EngineSpawnSpec): Promise<EngineHostResult>;
 }
 
 /** Why start-up did not produce a host. */
@@ -98,6 +107,9 @@ let startInFlight = false;
 /** Crash subscriptions are private to the host; the public shape stays thin. */
 const crashWatchers = new WeakMap<EngineHost, () => void>();
 
+/** The start options a restart needs; kept off the public host shape. */
+const restartContexts = new WeakMap<EngineHost, EngineHostOptions>();
+
 /**
  * Resolve, spawn and hand off the engine.
  *
@@ -124,10 +136,13 @@ export async function startEngineHost(options: EngineHostOptions): Promise<Engin
 }
 
 /** The body of one start; the exported wrapper owns the single-flight guard. */
-async function startEngineHostOnce(options: EngineHostOptions): Promise<EngineHostResult> {
+async function startEngineHostOnce(
+  options: EngineHostOptions,
+  spawnSpecOverride?: EngineSpawnSpec,
+): Promise<EngineHostResult> {
   const log = createLog(options.onLog);
 
-  const bundlePath = resolveEngineBundle(options, log);
+  const bundlePath = spawnSpecOverride?.bundlePath ?? resolveEngineBundle(options, log);
 
   if (bundlePath === null) {
     log("supervision.engine.bootstrap", {
@@ -142,16 +157,23 @@ async function startEngineHostOnce(options: EngineHostOptions): Promise<EngineHo
     return { ok: false, reason: "missing-bundle" };
   }
 
-  const watchdogPath = resolveWatchdogPath(options.resolveWatchdog);
+  const watchdogPath =
+    spawnSpecOverride === undefined
+      ? resolveWatchdogPath(options.resolveWatchdog)
+      : options.resolveWatchdog !== undefined
+        ? resolveWatchdogPath(options.resolveWatchdog)
+        : watchdogPathFromSpec(spawnSpecOverride);
   const tokenDir = join(options.userData, TOKEN_DIR_NAME);
   const tokenFile = join(tokenDir, TOKEN_FILE_NAME);
   const markerPath = join(options.userData, RUNTIME_MARKER_FILE_NAME);
   const engine = options.engineFactory?.() ?? new Engine();
-  const spawnSpec = buildEngineSpawnSpec({
-    userData: options.userData,
-    bundlePath,
-    watchdogPath,
-  });
+  const spawnSpec =
+    spawnSpecOverride ??
+    buildEngineSpawnSpec({
+      userData: options.userData,
+      bundlePath,
+      watchdogPath,
+    });
 
   try {
     // B1 treats `tokenDir` as an existing directory. Creating it here keeps the
@@ -267,17 +289,95 @@ async function startEngineHostOnce(options: EngineHostOptions): Promise<EngineHo
     markerPath,
     tokenFile,
     startedAt,
+    restartWithSpec: (spec) => restartHost(host, spec),
   };
 
   if (unwatch !== null) {
     crashWatchers.set(host, unwatch);
   }
 
+  restartContexts.set(host, options);
   activeHost = host;
 
   log("supervision.engine.bootstrap", { state: "started", pid, bundlePath, watchdog });
 
   return { ok: true, host };
+}
+
+/**
+ * Start one process from a caller-provided spec.
+ *
+ * Separate from `startEngineHost` because a restart must not re-resolve or
+ * rebuild the spec the user just chose. It keeps the same single-host guard: a
+ * second start while one is live is `already-started`, not a second process.
+ */
+async function startEngineHostWithSpec(
+  options: EngineHostOptions,
+  spec: EngineSpawnSpec,
+): Promise<EngineHostResult> {
+  if (activeHost !== null || startInFlight) {
+    return { ok: false, reason: "already-started" };
+  }
+
+  startInFlight = true;
+
+  try {
+    return await startEngineHostOnce(options, spec);
+  } finally {
+    startInFlight = false;
+  }
+}
+
+/** Extract the watchdog preload path from a spec we did not build. */
+function watchdogPathFromSpec(spec: EngineSpawnSpec): string | null {
+  const options = spec.env["NODE_OPTIONS"] ?? "";
+  const match = /(?:^|\s)--require(?:=|\s+)(?:"([^"]+)"|(\S+))/.exec(options);
+
+  return match?.[1] ?? match?.[2] ?? null;
+}
+
+/**
+ * The explicit restart path.
+ *
+ * Stops the old process (using `stopEngineHost`, so the pid/liveness rule from
+ * S1-3 is reused), clears the marker, and starts once with the new spec. A stop
+ * that cannot prove the process gone is a failure: starting a second engine
+ * while the old one lives is the orphan this module exists to prevent.
+ *
+ * No retry, no timer, no `exit` listener: `R-13/B3` forbids automatic revival.
+ *
+ * @param host the current host, whose engine may be ready, closed or failed
+ * @param spec the spec the user's directory selection produced
+ * @returns the new host, or a failure with the existing reason vocabulary
+ */
+async function restartHost(host: EngineHost, spec: EngineSpawnSpec): Promise<EngineHostResult> {
+  const options = restartContexts.get(host);
+
+  if (options === undefined) {
+    return failure("start-failed", "this host has no restart context");
+  }
+
+  const stopped = await stopEngineHost(host);
+
+  if (!stopped.stopped) {
+    return failure(
+      "start-failed",
+      `the old engine could not be stopped: ${stopped.reason ?? "unknown"}`,
+    );
+  }
+
+  // The old marker names a pid that is now dead. Clear it before the attempt so
+  // a failed start cannot leave a marker pointing at the old process; a
+  // successful start writes the new engine facts immediately.
+  await clearMarkerAfterStop(
+    options.userData,
+    options.onLog === undefined ? {} : { onLog: options.onLog },
+  );
+
+  return startEngineHostWithSpec(
+    { ...options, resolveWatchdog: () => watchdogPathFromSpec(spec) },
+    spec,
+  );
 }
 
 /**

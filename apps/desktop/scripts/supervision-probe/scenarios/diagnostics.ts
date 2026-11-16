@@ -7,7 +7,7 @@
  * rather than against the writer's own list.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import path from "node:path";
 
@@ -17,6 +17,7 @@ import {
   type CrashRecord,
   type CrashVersions,
 } from "../../../src/main/crash/records.js";
+import { runShellCleanup } from "../../../src/main/diagnostics/cleanup.js";
 import { collectDiagnostics } from "../../../src/main/diagnostics/collect.js";
 import {
   REDACTED,
@@ -154,6 +155,163 @@ async function checkV07(): Promise<void> {
 /** Format bytes as MiB with one decimal. */
 function mb(bytes: number): string {
   return (bytes / (1024 * 1024)).toFixed(1);
+}
+
+// ---------------------------------------------------------------------------
+// The other two retention windows and the configured overrides
+// ---------------------------------------------------------------------------
+
+/** A crash record with only the fields the retention sweep reads. */
+function crashAt(at: Date, versions: CrashVersions): CrashRecord {
+  return {
+    schemaVersion: 1,
+    at: at.toISOString(),
+    kind: "engine",
+    code: "ENGINE_CRASHED",
+    app: versions,
+    engine: {
+      exitCode: 1,
+      signal: null,
+      engineVersion: "0.6.0",
+      protocolVersion: 1,
+      watchdog: "unknown",
+    },
+  };
+}
+
+/**
+ * Crash records and minidumps age/size out independently of logs, and the
+ * configured `logs.retentionDays` / `logs.maxTotalMb` overrides win over the
+ * over the defaults (and the production wrapper is what runs them).
+ *
+ * Both use temp trees. The crash-record case deliberately leaves the newest record
+ * window: it must survive because it is the only evidence, which is RD-17.
+ */
+async function checkV10V11(): Promise<void> {
+  const now = new Date();
+  const dayMs = 24 * 60 * 60 * 1000;
+  const root = path.join(TEMP_ROOT, "v10");
+  const userData = path.join(root, "userData");
+  const crashDir = crashDirFor(userData);
+  const crashDumpsDir = path.join(root, "crash-dumps");
+  const reports = path.join(crashDumpsDir, "reports");
+  const metadata = path.join(crashDumpsDir, "metadata");
+  const logsDir = path.join(root, "logs");
+  const oldRecord = path.join(crashDir, "crash-old.json");
+  const newRecord = path.join(crashDir, "crash-new.json");
+  const oldDump = path.join(reports, "old.dmp");
+  const newDump = path.join(reports, "new.dmp");
+  const metadataFile = path.join(metadata, "settings.dat");
+  const versions = probeVersions();
+
+  try {
+    mkdirSync(crashDir, { recursive: true });
+    mkdirSync(reports, { recursive: true });
+    mkdirSync(metadata, { recursive: true });
+    mkdirSync(logsDir, { recursive: true });
+
+    // Old and recent records. The newest is 31 days old and must survive.
+    writeFileSync(
+      oldRecord,
+      JSON.stringify(crashAt(new Date(now.getTime() - 60 * dayMs), versions)),
+    );
+    writeFileSync(
+      newRecord,
+      JSON.stringify(crashAt(new Date(now.getTime() - 31 * dayMs), versions)),
+    );
+
+    writeFileSync(oldDump, Buffer.alloc(1024));
+    writeFileSync(newDump, Buffer.alloc(1024));
+    writeFileSync(metadataFile, "crashpad settings\n", "utf8");
+    utimesSync(oldDump, new Date(now.getTime() - 8 * dayMs), new Date(now.getTime() - 8 * dayMs));
+
+    const ten = await runShellCleanup({
+      logsDir,
+      crashDir,
+      crashDumpsDir,
+      now,
+      onLog: () => undefined,
+    });
+
+    const tenProblems: string[] = [];
+
+    if (ten.crashes === null) tenProblems.push("no crash sweep result");
+    if (!ten.crashes?.deleted.includes(path.basename(oldRecord))) {
+      tenProblems.push("the 60-day crash record survived");
+    }
+    if (!existsSync(newRecord)) tenProblems.push("the newest crash record was deleted");
+    if (existsSync(oldDump)) tenProblems.push("the 8-day minidump survived");
+    if (!existsSync(newDump)) tenProblems.push("the newest minidump was deleted");
+    if (!existsSync(metadataFile)) tenProblems.push("a non-reports crashpad file was deleted");
+    if (ten.failures.length > 0) tenProblems.push(`failures=${String(ten.failures.length)}`);
+
+    if (tenProblems.length > 0) {
+      record("crash-record-retention", "FAIL", tenProblems.join("; "));
+    } else {
+      record(
+        "crash-record-retention",
+        "PASS",
+        `crashes=${String(ten.crashes?.deleted.length ?? 0)} minidumps=${String(
+          ten.minidumps?.deleted.length ?? 0,
+        )} newestKept=true metadataKept=true`,
+      );
+    }
+
+    // The same log tree, but 3 days / 10 MB instead of 7 / 50.
+    const v11Root = path.join(root, "v11");
+    const v11Logs = path.join(v11Root, "logs");
+
+    mkdirSync(v11Logs, { recursive: true });
+
+    const logName = (daysAgo: number): string =>
+      `shell-${new Date(now.getTime() - daysAgo * dayMs).toISOString().slice(0, 10)}.jsonl`;
+    const writeLog = (daysAgo: number, bytes: number): string => {
+      const file = path.join(v11Logs, logName(daysAgo));
+
+      writeFileSync(file, Buffer.alloc(bytes, 0x62));
+
+      return file;
+    };
+
+    const byAge = writeLog(4, 1024);
+    const bySize = writeLog(2, 6 * 1024 * 1024);
+    const oneDay = writeLog(1, 6 * 1024 * 1024);
+    const today = writeLog(0, 1024 * 1024);
+
+    const eleven = await runShellCleanup({
+      logsDir: v11Logs,
+      crashDir: path.join(v11Root, "crashes"),
+      crashDumpsDir: path.join(v11Root, "crash-dumps"),
+      logs: { retentionDays: 3, maxTotalMb: 10 },
+      now,
+      onLog: () => undefined,
+    });
+    const elevenProblems: string[] = [];
+
+    if (existsSync(byAge)) elevenProblems.push("a 4-day file survived the 3-day override");
+    if (existsSync(bySize)) elevenProblems.push("a 2-day/6 MB file survived the 10 MB override");
+    if (!existsSync(oneDay)) elevenProblems.push("the 1-day file inside the override was deleted");
+    if (!existsSync(today)) elevenProblems.push("today's file was deleted");
+    if ((eleven.logs?.bytesAfter ?? 0) > 10 * 1024 * 1024) {
+      elevenProblems.push(`bytesAfter=${String(eleven.logs?.bytesAfter)} is over 10 MB`);
+    }
+
+    if (elevenProblems.length > 0) {
+      record("log-retention-configured", "FAIL", elevenProblems.join("; "));
+    } else {
+      record(
+        "log-retention-configured",
+        "PASS",
+        `window=3d/10MB deleted=${String(eleven.logs?.deleted.length ?? 0)} ` +
+          `bytesAfter=${mb(eleven.logs?.bytesAfter ?? 0)}MB currentDayKept=true`,
+      );
+    }
+  } catch (error) {
+    record("crash-record-retention", "FAIL", describe(error));
+    record("log-retention-configured", "FAIL", describe(error));
+  } finally {
+    await rm(root, { recursive: true, force: true }).catch(() => undefined);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -443,4 +601,4 @@ function listZipEntries(buffer: Buffer): string[] {
   return names;
 }
 
-export { checkV07, checkV12 };
+export { checkV07, checkV10V11, checkV12 };

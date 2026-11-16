@@ -54,6 +54,7 @@ function hostFor(engine: FakeEngine, userData: string): EngineHost {
     markerPath: runtimeMarkerPath(userData),
     tokenFile: path.join(userData, "engine-token", "engine-token"),
     startedAt: "2026-11-16T12:00:00.000Z",
+    restartWithSpec: async () => ({ ok: false, reason: "already-started" }),
   };
 }
 
