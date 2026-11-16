@@ -1,9 +1,10 @@
 /**
- * The shell's own settings: theme, locale, window geometry.
+ * The shell's own settings: theme, locale, window geometry, log retention.
  *
- * `userData/shell-settings.json` holds four things and nothing else. It is *not*
- * the engine's `settings.json` and not C4's `LayoutDoc`; conflating them is how
- * a window position ends up in a document the renderer owns.
+ * `userData/shell-settings.json` holds the shell's own preferences and nothing
+ * else. It is *not* the engine's `settings.json` and not C4's `LayoutDoc`;
+ * conflating them is how a window position ends up in a document the renderer
+ * owns.
  *
  * Two rules shape this module:
  *
@@ -12,8 +13,8 @@
  *   back to its default instead of failing the launch. A settings file that
  *   makes the app unopenable is worse than one that forgets where the window was.
  *
- *   No schema library. Four fields with three enums between them do not justify
- *   a dependency, and a hand-written parser is testable without one.
+ *   No schema library. A handful of fields with three enums between them do not
+ *   justify a dependency, and a hand-written parser is testable without one.
  */
 
 import path from "node:path";
@@ -43,6 +44,40 @@ export interface WindowState {
 }
 
 /**
+ * How much log the shell keeps: a day window and a size cap.
+ *
+ * Both numbers are also the retention layer's input, so the type and the legal
+ * range live here rather than being restated by every caller. The requirement
+ * fixes the pair for the shipped default and for F5's settings page (`32`
+ * section 6.5); changing it is a requirement change, not a refactor.
+ */
+export interface LogRetention {
+  readonly retentionDays: number;
+  readonly maxTotalMb: number;
+}
+
+/** The default pair: a week of logs, 50 MB of them. */
+export const DEFAULT_LOG_RETENTION: LogRetention = { retentionDays: 7, maxTotalMb: 50 };
+
+/** The legal range for `logs.retentionDays` (`32` section 6.5). */
+export const MIN_LOG_RETENTION_DAYS = 1;
+export const MAX_LOG_RETENTION_DAYS = 90;
+
+/** The legal range for `logs.maxTotalMb` (`32` section 6.5). */
+export const MIN_LOG_TOTAL_MB = 10;
+export const MAX_LOG_TOTAL_MB = 1000;
+
+/**
+ * Which part of the `logs` section a document got wrong.
+ *
+ * Reported rather than thrown. It leaves `readSettings` through a callback
+ * because the log line (`settings.logs.invalid`) belongs to the caller that owns
+ * a logger; this module stays pure so tests and the retention layer can import
+ * it without Electron.
+ */
+export type LogsProblem = "not-an-object" | "retentionDays" | "maxTotalMb";
+
+/**
  * The settings file format this build understands.
  *
  * A number rather than a string: the only question ever asked of it is "is the
@@ -68,6 +103,14 @@ export interface ShellSettings {
   /** The user's choice, or `null` to follow the OS locale. */
   locale: Locale | null;
   window: WindowState | null;
+  /**
+   * The user's log retention, or absent when the file never set one.
+   *
+   * Absent is not "keep nothing": it means the defaults apply (see
+   * {@link DEFAULT_LOG_RETENTION}) and that a write must not turn them into a
+   * choice the user never made (`32` section 6.5: 缺失 → 用默认值，不写回).
+   */
+  logs?: LogRetention;
 }
 
 /**
@@ -190,6 +233,72 @@ function parseWindow(value: unknown): WindowState | null {
   return { x, y, width, height, maximized: record["maximized"] === true };
 }
 
+/** An integer inside an inclusive range, or `null`. */
+function integerIn(value: unknown, min: number, max: number): number | null {
+  return typeof value === "number" && Number.isInteger(value) && value >= min && value <= max
+    ? value
+    : null;
+}
+
+/**
+ * Parse the optional `logs` section, per field.
+ *
+ * The fallback is per field, not per section: a typo in `retentionDays` must not
+ * throw away a perfectly good `maxTotalMb`. What went wrong goes back to the
+ * caller so it can record `settings.logs.invalid` (`32` section 6.5).
+ *
+ * `undefined` means the section is absent. A section that exists but is unusable
+ * -- including `null` -- becomes the default pair rather than disappearing: the
+ * user did express an intent, and the next write may repair it.
+ *
+ * @param value the raw `logs` value, of unknown shape
+ * @param onInvalid called with the fields that fell back, if any
+ */
+function parseLogRetention(
+  value: unknown,
+  onInvalid?: (problems: readonly LogsProblem[]) => void,
+): LogRetention | undefined {
+  if (value === undefined) return undefined;
+
+  const report = (problems: LogsProblem[]): void => {
+    if (problems.length > 0) onInvalid?.(problems);
+  };
+
+  // Arrays, strings and numbers are all `typeof "object"`-adjacent traps; only a
+  // plain object can carry the two named fields.
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    report(["not-an-object"]);
+
+    return { ...DEFAULT_LOG_RETENTION };
+  }
+
+  const record = value as Record<string, unknown>;
+  const days = integerIn(record["retentionDays"], MIN_LOG_RETENTION_DAYS, MAX_LOG_RETENTION_DAYS);
+  const totalMb = integerIn(record["maxTotalMb"], MIN_LOG_TOTAL_MB, MAX_LOG_TOTAL_MB);
+  const problems: LogsProblem[] = [];
+
+  if (days === null) problems.push("retentionDays");
+  if (totalMb === null) problems.push("maxTotalMb");
+
+  report(problems);
+
+  return {
+    retentionDays: days ?? DEFAULT_LOG_RETENTION.retentionDays,
+    maxTotalMb: totalMb ?? DEFAULT_LOG_RETENTION.maxTotalMb,
+  };
+}
+
+/**
+ * Knobs for {@link readSettings}; both are optional so a caller can ignore them.
+ *
+ * The problem report is a callback rather than a field on {@link SettingsRead}:
+ * that result's key set is itself a contract, and a caller that does not log
+ * should not have to destructure a field it ignores.
+ */
+export interface SettingsReadOptions {
+  readonly onLogsInvalid?: (problems: readonly LogsProblem[]) => void;
+}
+
 /**
  * Parse the settings document.
  *
@@ -222,8 +331,9 @@ export function parseSettings(raw: string): ShellSettings {
  * is left as a plain equality test rather than an invented ladder.
  *
  * @param raw the file contents, or an empty string
+ * @param options optional callbacks; the values and verdict are unaffected
  */
-export function readSettings(raw: string): SettingsRead {
+export function readSettings(raw: string, options: SettingsReadOptions = {}): SettingsRead {
   const fallback: SettingsRead = {
     settings: { ...DEFAULT_SETTINGS },
     writable: true,
@@ -263,14 +373,27 @@ export function readSettings(raw: string): SettingsRead {
       ? rawVersion
       : null;
 
+  // A document written by a newer build is read but never written, so a `logs`
+  // section in it is only ever consulted. Its semantics are not this build's to
+  // guess (`32` section 6.5: 版本高于当前 → 用默认值), so it is dropped.
+  const newer = foundVersion !== null && foundVersion > SETTINGS_VERSION;
+
+  const settings: ShellSettings = {
+    version: SETTINGS_VERSION,
+    theme: oneOf(THEME_MODES, record["theme"], DEFAULT_SETTINGS.theme),
+    contrast: oneOf(CONTRAST_LEVELS, record["contrast"], DEFAULT_SETTINGS.contrast),
+    locale: parseLocale(record["locale"]),
+    window: parseWindow(record["window"]),
+  };
+
+  if (!newer) {
+    const logs = parseLogRetention(record["logs"], options.onLogsInvalid);
+
+    if (logs !== undefined) settings.logs = logs;
+  }
+
   return {
-    settings: {
-      version: SETTINGS_VERSION,
-      theme: oneOf(THEME_MODES, record["theme"], DEFAULT_SETTINGS.theme),
-      contrast: oneOf(CONTRAST_LEVELS, record["contrast"], DEFAULT_SETTINGS.contrast),
-      locale: parseLocale(record["locale"]),
-      window: parseWindow(record["window"]),
-    },
+    settings,
     // Missing means "written before the field existed", i.e. by this build.
     writable: foundVersion === null || foundVersion <= SETTINGS_VERSION,
     foundVersion,
@@ -284,6 +407,11 @@ export function readSettings(raw: string): SettingsRead {
  * Key order is fixed so a diff of two settings files is readable, and the output
  * ends with a newline so the file is a text file. `version` comes first: it is
  * the field a reader has to interpret before any other.
+ *
+ * `logs` is written only when the document already had one. Writing the default
+ * pair into a file that never set it would turn "unset" into "chosen 7/50", and a
+ * later build that changes the defaults would then keep the old numbers for
+ * every existing install (`32` section 6.5).
  */
 export function serializeSettings(settings: ShellSettings): string {
   const document = {
@@ -301,6 +429,14 @@ export function serializeSettings(settings: ShellSettings): string {
             height: Math.round(settings.window.height),
             maximized: settings.window.maximized,
           },
+    ...(settings.logs === undefined
+      ? {}
+      : {
+          logs: {
+            retentionDays: settings.logs.retentionDays,
+            maxTotalMb: settings.logs.maxTotalMb,
+          },
+        }),
   };
 
   return JSON.stringify(document, null, 2) + "\n";

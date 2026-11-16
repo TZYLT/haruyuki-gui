@@ -2,7 +2,12 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
+  DEFAULT_LOG_RETENTION,
   DEFAULT_SETTINGS,
+  MAX_LOG_RETENTION_DAYS,
+  MAX_LOG_TOTAL_MB,
+  MIN_LOG_RETENTION_DAYS,
+  MIN_LOG_TOTAL_MB,
   MIN_WINDOW_HEIGHT,
   MIN_WINDOW_WIDTH,
   SETTINGS_VERSION,
@@ -11,6 +16,7 @@ import {
   readSettings,
   serializeSettings,
   settingsPath,
+  type LogsProblem,
   type ShellSettings,
 } from "../settings.js";
 
@@ -175,13 +181,125 @@ describe("parseSettings", () => {
     );
 
     expect(settings.theme).toBe("dark");
-    expect(Object.keys(settings).sort()).toEqual([
-      "contrast",
-      "locale",
-      "theme",
-      "version",
-      "window",
-    ]);
+
+    // The five fields D1 wrote, plus the optional `logs` section D4 added. An
+    // exact key set would need editing for every future field; this states what
+    // the parser must produce instead.
+    const keys = Object.keys(settings).sort();
+    const known = ["contrast", "locale", "theme", "version", "window"];
+
+    expect(keys).toEqual(expect.arrayContaining(known));
+    expect(keys.filter((key) => key !== "logs")).toEqual(known);
+  });
+});
+
+describe("the log retention section", () => {
+  it("matches the requirement's defaults and ranges", () => {
+    // Literals from `32` section 6.5, asserted rather than compared against the
+    // constants: that is the only way a document and the code can disagree and
+    // fail. Changing them is a requirement change.
+    expect(DEFAULT_LOG_RETENTION).toEqual({ retentionDays: 7, maxTotalMb: 50 });
+    expect([MIN_LOG_RETENTION_DAYS, MAX_LOG_RETENTION_DAYS]).toEqual([1, 90]);
+    expect([MIN_LOG_TOTAL_MB, MAX_LOG_TOTAL_MB]).toEqual([10, 1000]);
+
+    const low = parseSettings(JSON.stringify({ logs: { retentionDays: 1, maxTotalMb: 10 } }));
+    const high = parseSettings(JSON.stringify({ logs: { retentionDays: 90, maxTotalMb: 1000 } }));
+
+    expect(low.logs).toEqual({ retentionDays: 1, maxTotalMb: 10 });
+    expect(high.logs).toEqual({ retentionDays: 90, maxTotalMb: 1000 });
+  });
+
+  it("stays absent when the file never set it", () => {
+    // Absent means "use the defaults", and a write must not turn that into a
+    // choice the user never made (`32` section 6.5: 缺失 → 用默认值，不写回).
+    expect(parseSettings(JSON.stringify({ theme: "dark" })).logs).toBeUndefined();
+    expect(parseSettings("").logs).toBeUndefined();
+  });
+
+  it("falls back per field, so one bad number does not discard the other", () => {
+    const cases: readonly [unknown, number, number][] = [
+      [{ retentionDays: 0, maxTotalMb: 200 }, 7, 200],
+      [{ retentionDays: 91, maxTotalMb: 200 }, 7, 200],
+      [{ retentionDays: 30, maxTotalMb: 9 }, 30, 50],
+      [{ retentionDays: 30, maxTotalMb: 1001 }, 30, 50],
+      [{ retentionDays: 7.5, maxTotalMb: 50 }, 7, 50],
+      [{ retentionDays: "30", maxTotalMb: null }, 7, 50],
+      [{}, 7, 50],
+    ];
+
+    for (const [logs, days, totalMb] of cases) {
+      expect(parseSettings(JSON.stringify({ logs })).logs, JSON.stringify(logs)).toEqual({
+        retentionDays: days,
+        maxTotalMb: totalMb,
+      });
+    }
+  });
+
+  it("falls back to the default pair when the section is not an object", () => {
+    for (const logs of [null, "7", 7, true, [], [{ retentionDays: 30, maxTotalMb: 50 }]]) {
+      expect(parseSettings(JSON.stringify({ logs })).logs, JSON.stringify(logs)).toEqual(
+        DEFAULT_LOG_RETENTION,
+      );
+    }
+  });
+
+  it("reports what was wrong so the caller can log settings.logs.invalid", () => {
+    const problems: LogsProblem[] = [];
+    const read = readSettings(JSON.stringify({ logs: { retentionDays: -1, maxTotalMb: 50 } }), {
+      onLogsInvalid: (found) => problems.push(...found),
+    });
+
+    expect(problems).toEqual(["retentionDays"]);
+    expect(read.settings.logs).toEqual({ retentionDays: 7, maxTotalMb: 50 });
+
+    // A valid pair and an absent section are not problems; reporting them would
+    // put a warning in the log of every healthy launch.
+    problems.length = 0;
+    readSettings(JSON.stringify({ logs: { retentionDays: 30, maxTotalMb: 200 } }), {
+      onLogsInvalid: (found) => problems.push(...found),
+    });
+    readSettings(JSON.stringify({ theme: "dark" }), {
+      onLogsInvalid: (found) => problems.push(...found),
+    });
+
+    expect(problems).toEqual([]);
+  });
+
+  it("uses the defaults, not a newer document's section, when it may not write", () => {
+    // The section's meaning in a newer format is not this build's to guess.
+    const problems: LogsProblem[] = [];
+    const read = readSettings(
+      JSON.stringify({
+        version: SETTINGS_VERSION + 1,
+        logs: { retentionDays: 30, maxTotalMb: 200 },
+      }),
+      { onLogsInvalid: (found) => problems.push(...found) },
+    );
+
+    expect(read.writable).toBe(false);
+    expect(read.settings.logs).toBeUndefined();
+    expect(problems).toEqual([]);
+  });
+
+  it("round-trips through the serialiser without bumping the version", () => {
+    const original: ShellSettings = {
+      ...DEFAULT_SETTINGS,
+      theme: "dark",
+      logs: { retentionDays: 30, maxTotalMb: 200 },
+    };
+    const document = JSON.parse(serializeSettings(original)) as Record<string, unknown>;
+
+    expect(document.version).toBe(1);
+    expect(SETTINGS_VERSION).toBe(1);
+    expect(document.logs).toEqual({ retentionDays: 30, maxTotalMb: 200 });
+    expect(parseSettings(serializeSettings(original))).toEqual(original);
+
+    // A document that never set the section must not gain one: writing the
+    // defaults back would turn "unset" into "chose 7/50".
+    const plain = JSON.parse(serializeSettings(DEFAULT_SETTINGS)) as Record<string, unknown>;
+
+    expect(plain).not.toHaveProperty("logs");
+    expect(Object.keys(plain).sort()).toEqual(["contrast", "locale", "theme", "version", "window"]);
   });
 });
 
