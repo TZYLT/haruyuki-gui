@@ -54,6 +54,7 @@ export const en = {
   "error.shell.bridgeDenied": "The application asked for a capability it does not have",
   "error.shell.settingsCorrupt": "Your settings could not be read, so defaults are in use",
   "error.shell.engineUnavailable": "The engine did not start",
+  "error.shell.unsupportedType": "This kind of file cannot be previewed",
 
   // ------------------------------------------------------------------ a11y
   "a11y.action.delete": "Delete",

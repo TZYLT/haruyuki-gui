@@ -8,7 +8,7 @@
  *
  * Two things these tests are really pinning:
  *
- *   The codes are five, and `ENGINE_PROBE_FAILED` is one of them. It subdivides
+ *   The codes are six, and `ENGINE_PROBE_FAILED` is one of them. It subdivides
  *   further using B1's `EngineErrorCode`s, and a second taxonomy for the
  *   subdivision is the mistake section 6.3 forbids by name.
  *
@@ -30,7 +30,7 @@ import {
 } from "../../shared/shell-error.js";
 
 describe("the shell error codes", () => {
-  it("is exactly the five the requirement names", () => {
+  it("is exactly the six the requirement names", () => {
     // Asserted as literals rather than by importing something, because the point
     // is that this list is frozen. Changing it is a contract change.
     expect([...SHELL_ERROR_CODES]).toEqual([
@@ -39,6 +39,10 @@ describe("the shell error codes", () => {
       "BRIDGE_CHANNEL_DENIED",
       "SHELL_SETTINGS_CORRUPT",
       "ENGINE_PROBE_FAILED",
+      // The one addition this item makes: the media channel's type refusal. The
+      // other two media refusals reuse existing codes (doc 29 section 6.4 pins
+      // the taxonomy at one addition).
+      "MEDIA_TYPE_DENIED",
     ]);
   });
 

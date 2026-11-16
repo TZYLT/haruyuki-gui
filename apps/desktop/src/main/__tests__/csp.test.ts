@@ -3,11 +3,69 @@ import { describe, expect, it } from "vitest";
 import { CSP, CSP_DIRECTIVES, headersFor, shouldApplyFallbackCsp } from "../csp.js";
 
 describe("CSP", () => {
-  it("has exactly the ten frozen directives", () => {
+  it("has exactly the eleven directives, one of which D2 added", () => {
     // The count is part of the contract: a policy that quietly gained or lost a
     // directive is a different policy, and the difference is invisible when you
     // read a long header value.
-    expect(CSP_DIRECTIVES).toHaveLength(10);
+    // Eleven, not the ten `D1` froze: D2 adds `media-src` so a user's local video
+    // can play, because `default-src 'none'` would otherwise block every media
+    // element. Nothing else moved -- see the diff-pin test below.
+    expect(CSP_DIRECTIVES).toHaveLength(11);
+  });
+
+  it("changed only by addition: every D1 directive is still there, and unchanged", () => {
+    // This is the assertion that makes "only add, never remove" checkable rather
+    // than a promise. The requirement allows D2 to add a scheme to three
+    // directives and forbids changing any existing value; the frozen contract stays
+    // compatible precisely because `D1`'s semantics are unchanged).
+    //
+    // Adding a source to `img-src` does change that directive's value, which is
+    // why the distinction has to be written down: "only add" means the *previous
+    // tokens are all still present in the same order*, not that the line is
+    // byte-identical. Anything that drops or reorders a token fails here.
+    const FROZEN_BY_D1: readonly [string, readonly string[]][] = [
+      ["default-src", ["'none'"]],
+      ["script-src", ["'self'"]],
+      ["style-src", ["'self'", "'unsafe-inline'"]],
+      ["img-src", ["'self'", "data:"]],
+      ["font-src", ["'self'", "data:"]],
+      ["connect-src", ["'self'"]],
+      ["object-src", ["'none'"]],
+      ["base-uri", ["'none'"]],
+      ["form-action", ["'none'"]],
+      ["frame-ancestors", ["'none'"]],
+    ];
+
+    for (const [directive, tokens] of FROZEN_BY_D1) {
+      const line = CSP_DIRECTIVES.find((d) => d.startsWith(`${directive} `));
+
+      expect(line, directive).toBeDefined();
+      if (line === undefined) continue;
+
+      // The D1 tokens must be a prefix of the current value, in order.
+      expect(line, directive).toBe(
+        `${directive} ${[...tokens].join(" ")}`.concat(
+          line.slice(`${directive} ${[...tokens].join(" ")}`.length),
+        ),
+      );
+      expect(line.split(" ").slice(0, tokens.length + 1), directive).toEqual([
+        directive,
+        ...tokens,
+      ]);
+    }
+  });
+
+  it("grants the media scheme to exactly the three directives D2 needs", () => {
+    // Images, fonts and media elements. Not `connect-src` (the channel forbids
+    // fetch), not `script-src` (nothing from a user's disk may run), not
+    // `default-src` (the deny-by-default rule stays absolute).
+    const withMedia = CSP_DIRECTIVES.filter((d) => d.includes("haruyuki-media:"));
+
+    expect(withMedia.map((d) => d.split(" ")[0]).sort()).toEqual([
+      "font-src",
+      "img-src",
+      "media-src",
+    ]);
   });
 
   it("denies by default", () => {
@@ -28,8 +86,8 @@ describe("CSP", () => {
   });
 
   it("allows data: fonts and images but not data: scripts", () => {
-    expect(CSP_DIRECTIVES).toContain("font-src 'self' data:");
-    expect(CSP_DIRECTIVES).toContain("img-src 'self' data:");
+    expect(CSP_DIRECTIVES).toContain("font-src 'self' data: haruyuki-media:");
+    expect(CSP_DIRECTIVES).toContain("img-src 'self' data: haruyuki-media:");
 
     const scriptSrc = CSP_DIRECTIVES.find((d) => d.startsWith("script-src"));
     expect(scriptSrc).not.toContain("data:");

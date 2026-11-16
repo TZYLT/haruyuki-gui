@@ -31,6 +31,12 @@ export const SHELL_ERROR_CODES = [
   "BRIDGE_CHANNEL_DENIED",
   "SHELL_SETTINGS_CORRUPT",
   "ENGINE_PROBE_FAILED",
+  // Exactly one new code, because the requirement pins the taxonomy at one
+  // addition (doc 29 section 6.4). The other two media refusals reuse existing
+  // codes: a path outside the readable set is `APP_PROTOCOL_DENIED` (same
+  // meaning: a boundary refused), and an unusable URL is
+  // `APP_PROTOCOL_NOT_FOUND` (the same answer a malformed `app://` path gets).
+  "MEDIA_TYPE_DENIED",
 ] as const;
 
 /** One shell error code. */
@@ -55,6 +61,11 @@ export const SHELL_ERROR_MESSAGE_KEYS = {
   BRIDGE_CHANNEL_DENIED: "error.shell.bridgeDenied",
   SHELL_SETTINGS_CORRUPT: "error.shell.settingsCorrupt",
   ENGINE_PROBE_FAILED: "error.shell.engineUnavailable",
+  // Its own sentence rather than reusing `resourceDenied`: "this type is not
+  // previewable" and "you are not allowed to read this" are different answers,
+  // and a user who sees the wrong one goes looking for a permission problem that
+  // does not exist.
+  MEDIA_TYPE_DENIED: "error.shell.unsupportedType",
 } as const satisfies Record<ShellErrorCode, string>;
 
 /**

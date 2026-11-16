@@ -45,6 +45,9 @@ import path from "node:path";
 const HERE = __dirname;
 
 import { bootstrapErrorHtml, type BootstrapFailure } from "./bootstrap-error.js";
+import { createMediaHandler, MEDIA_PRIVILEGES, MEDIA_SCHEME } from "./media-protocol.js";
+import { MEDIA_TYPE_POLICY } from "./media-mime.js";
+import { mediaAccessPath, readMediaAccess, skipsPositionCheck } from "./media-access.js";
 import { APP_HOST, APP_SCHEME, APP_PRIVILEGES, createProtocolHandler } from "./protocol.js";
 import { shellError } from "../shared/shell-error.js";
 import { CSP, headersFor, shouldApplyFallbackCsp } from "./csp.js";
@@ -104,6 +107,84 @@ let settingsWritable = true;
  * mechanism and its cleanup is part of the mechanism.
  */
 let bootstrapPagePath: string | null = null;
+
+/**
+ * The paths the user has authorised this session, for the media channel.
+ *
+ * `cwd` comes from core and the picked/dropped paths come from the user; this item
+ * only holds the set, because it is the layer that answers "may this path be
+ * served". The set is replaced wholesale on a session switch rather than
+ * accumulated: it expresses "which workspace am I looking at", not "what have I
+ * ever opened" (doc 29 section 4.7.3).
+ *
+ * Empty until something fills it, which is the correct initial answer: nothing has
+ * been authorised yet.
+ */
+let readableRootsForMedia: readonly string[] = [];
+
+/**
+ * Whether the user has switched the position check off.
+ *
+ * Cached from `media-access.json` and refreshed when the file's mtime changes, so a
+ * switch flipped in `F5` takes effect without a restart while still costing one
+ * `stat` per request rather than a file read.
+ */
+let trustAllPathsForMedia = false;
+let mediaAccessMtime = -1;
+
+/**
+ * The current position-trust answer, refreshed when the file changes.
+ *
+ * One `stat` per request rather than a file read per request, and one file read
+ * rather than none, because the alternative to a cache here is either a switch that
+ * needs a restart or a disk read on every image load. The mtime is the cache key
+ * because it is exactly the question "has someone written the file since I last
+ * looked", and the answer is stable when the file is absent.
+ *
+ * Synchronous on purpose: it is called from inside the protocol handler, where the
+ * contract is a synchronous predicate. The read is kicked off without awaiting and
+ * the *previous* answer is used for this request, which is the right trade for a
+ * switch a human flips by hand -- one request served under the old decision is not
+ * a defect, and blocking every media request on a file read would be.
+ */
+function currentTrustAllPaths(): boolean {
+  const file = mediaAccessPath(app.getPath("userData"));
+
+  void (async () => {
+    try {
+      const { statSync } = await import("node:fs");
+      const mtime = statSync(file).mtimeMs;
+
+      if (mtime === mediaAccessMtime) return;
+
+      mediaAccessMtime = mtime;
+      trustAllPathsForMedia = skipsPositionCheck(await readMediaAccess(app.getPath("userData")));
+    } catch {
+      // Absent is the normal case until `F5` ships. It also covers "removed while
+      // running", which must fall back to the closed default rather than keeping
+      // a stale `true`.
+      mediaAccessMtime = -1;
+      trustAllPathsForMedia = false;
+    }
+  })();
+
+  return trustAllPathsForMedia;
+}
+
+/**
+ * Set the paths the media channel may serve.
+ *
+ * Called by whatever owns the session and the picker. Exported so the readable set
+ * has one write point; a second caller assigning the array directly would be a
+ * second definition of the set.
+ *
+ * @param roots the paths to allow, replacing whatever was there
+ */
+export function setReadableRootsForMedia(roots: readonly string[]): void {
+  // Replaced, never merged: the set answers "which workspace am I looking at",
+  // and merging would make it grow for the lifetime of the process.
+  readableRootsForMedia = [...roots];
+}
 
 /**
  * Put the bootstrap failure page in front of the user.
@@ -492,8 +573,13 @@ async function main(): Promise<void> {
     packaged: app.isPackaged,
   });
 
-  // Before ready, and before anything reads the protocol.
-  protocol.registerSchemesAsPrivileged([{ scheme: APP_SCHEME, privileges: { ...APP_PRIVILEGES } }]);
+  // Before ready, and before anything reads the protocol. Both schemes go in one
+  // call: `registerSchemesAsPrivileged` may only be called once before ready, and
+  // a second call would silently not take effect.
+  protocol.registerSchemesAsPrivileged([
+    { scheme: APP_SCHEME, privileges: { ...APP_PRIVILEGES } },
+    { scheme: MEDIA_SCHEME, privileges: { ...MEDIA_PRIVILEGES } },
+  ]);
 
   // A second launch focuses the existing window instead of building a second one.
   // Without this, two shells share one settings file and overwrite each other.
@@ -529,6 +615,31 @@ async function main(): Promise<void> {
       // a blank window and nothing in the log.
       onFailure: (error) => {
         logger?.warn("protocol.refused", {
+          code: error.code,
+          messageKey: error.messageKey,
+          detail: error.detail,
+        });
+      },
+    }),
+  );
+
+  // The media channel. Registered here rather than inside its module because the
+  // scheme list has to be a single call, and because a scheme registered twice in
+  // one process does not take effect the second time (measured during the route
+  // probe).
+  protocol.handle(
+    MEDIA_SCHEME,
+    createMediaHandler({
+      // The type table lives behind this policy; the seam is deliberate so the two
+      // packages never edit the same region of this file.
+      types: MEDIA_TYPE_POLICY,
+      readableRoots: () => readableRootsForMedia,
+      // Read per request rather than cached: the file is the user's, and `F5`'s
+      // switch would otherwise need a message to this process to take effect.
+      // Until `F5` ships there is no writer, so this is always the closed default.
+      trustAllPaths: () => currentTrustAllPaths(),
+      onFailure: (error) => {
+        logger?.warn("media.refused", {
           code: error.code,
           messageKey: error.messageKey,
           detail: error.detail,

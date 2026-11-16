@@ -51,6 +51,7 @@ export const zhCN = {
   "error.shell.bridgeDenied": "应用请求了一项它没有的能力",
   "error.shell.settingsCorrupt": "设置文件无法读取，已改用默认值",
   "error.shell.engineUnavailable": "引擎未能启动",
+  "error.shell.unsupportedType": "这种文件无法预览",
 
   // ------------------------------------------------------------------ a11y
   "a11y.action.delete": "删除",
