@@ -60,6 +60,7 @@ import { createMediaHandler, MEDIA_PRIVILEGES, MEDIA_SCHEME } from "./media-prot
 import { MEDIA_TYPE_POLICY } from "./media-mime.js";
 import { mediaAccessPath, readMediaAccess, skipsPositionCheck } from "./media-access.js";
 import { createDesktopMembers, type DesktopMembersResult } from "./host-members.js";
+import { desktopPaths, ensurePaths } from "./host-port.js";
 import { createDesktopSecrets, type SecretsPort } from "./secrets.js";
 import { DROPPED_FILES_CHANNEL } from "../shared/bridge.js";
 import { validateDroppedPayload } from "./dropped-files.js";
@@ -627,7 +628,34 @@ async function main(): Promise<void> {
   // symptom would be a duplicated settings directory rather than an error.
   applyAppName();
 
-  logger = createLogger({ logDir: app.getPath("logs"), minLevel: "info" });
+  // The four roots, created before anything writes into them.
+  //
+  // The requirement is explicit that they exist at the moment they are read, and that a
+  // failure to create one is a startup failure -- a shell whose cache directory is
+  // missing would fail later and somewhere less obvious. `cache` in particular had no
+  // creator at all: `ensurePaths` existed and was called by the probe and the unit test,
+  // but never by the shell, so `paths.cache` pointed at a directory that did not exist
+  // and nothing noticed.
+  //
+  // Deliberately before `createLogger`: the logger writes into `logs`, so creating the
+  // roots has to come first for the same reason the name does.
+  // The cast is because `desktopPaths` takes `(name: string)` so it stays testable
+  // without Electron's literal-union types; `app.getPath` only accepts known names, and
+  // every name this function asks for is one of them.
+  const paths = desktopPaths((name) => app.getPath(name as Parameters<typeof app.getPath>[0]));
+
+  try {
+    await ensurePaths(paths);
+  } catch (error) {
+    // A startup failure, reported the way the shell reports startup failures rather
+    // than as an unhandled rejection.
+    process.stderr.write(`haruyuki: cannot create the application directories: ${String(error)}\n`);
+    app.exit(1);
+
+    return;
+  }
+
+  logger = createLogger({ logDir: paths.logs, minLevel: "info" });
   logger.info("shell.boot", {
     electron: process.versions.electron,
     chrome: process.versions.chrome,

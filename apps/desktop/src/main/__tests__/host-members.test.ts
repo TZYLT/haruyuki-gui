@@ -289,6 +289,23 @@ describe("pickPaths", () => {
 describe("resolveLocalResource", () => {
   const ROOT = process.platform === "win32" ? "C:\\work" : "/work";
 
+  it("has a fixed mapping from its refusal to the shell code it reports", async () => {
+    // Two vocabularies, one refusal: `APP_PROTOCOL_DENIED` is the shell code the log and
+    // UI speak, `OUT_OF_ROOT` is the port code the frozen union makes a caller branch on.
+    // Neither table has the other's value, so they cannot be the same string -- what makes
+    // that safe is the mapping being fixed and total. If a second refusal reason is added,
+    // it has to pick a shell code here rather than appearing only in the return value.
+    const outside = process.platform === "win32" ? "C:\\Windows\\win.ini" : "/etc/passwd";
+    const deps = shell({ readableRoots: () => [ROOT] });
+    const { members } = createDesktopMembers(deps);
+
+    const answer = await members.resolveLocalResource(outside);
+
+    // One refusal, both names present, no third possibility.
+    expect(answer).toEqual({ ok: false, code: "OUT_OF_ROOT" });
+    expect(deps.failures).toEqual(["APP_PROTOCOL_DENIED"]);
+  });
+
   it("answers a media URL for a path inside the readable set", async () => {
     const inside = path.join(ROOT, "shot.png");
     const deps = shell({ readableRoots: () => [ROOT] });

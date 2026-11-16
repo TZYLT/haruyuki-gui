@@ -614,6 +614,88 @@ describe("plaintext and ciphertext are never mixed in one document", () => {
   });
 });
 
+describe("a key is a key, whatever its name", () => {
+  /**
+   * A store that will write plaintext without asking.
+   *
+   * The default `build` refuses, because that is the safe default -- these cases are
+   * about key names, not about consent, so the answer is fixed here rather than repeated.
+   */
+  function plaintextStore(userData: string): SecretsPort {
+    return build(userData, {
+      keyringAvailable: false,
+      consent: consentAnswering("allow-always").consent,
+    });
+  }
+
+  // A caller must be able to tell "absent" from "unreadable", and the frozen
+  // union says a value is a string. A plain object container broke both: `entries
+  // ["toString"]` inherited a function, so `secureGet("toString")` answered
+  // `{ok: true, value: <function>}` -- absent reported as present, and a return type
+  // violated in a way TypeScript could not see because the annotation said
+  // `Record<string, string>`.
+  //
+  // Reachable only with names nobody types on purpose, which is exactly why it survived:
+  // every other case in this file uses `token`, `added`, `empty`. A store that works only
+  // for callers who avoid certain strings is not a store.
+
+  it("answers NOT_FOUND for a name the prototype happens to own", async () => {
+    const store = plaintextStore(scratch());
+    await store.secureSet("token", "abc");
+
+    for (const inherited of ["toString", "valueOf", "hasOwnProperty", "constructor", "__proto__"]) {
+      if (inherited === "__proto__") continue;
+
+      const answer = await store.secureGet(inherited);
+
+      // Not "truthy but odd": the frozen union has no shape for a non-string value.
+      expect(answer, inherited).toEqual({ ok: false, code: "NOT_FOUND" });
+    }
+  });
+
+  it("round-trips a key literally named __proto__", async () => {
+    // The prototype setter used to swallow the entry on read: `secureSet` reported
+    // `{ok: true}`, `secureGet` reported a different value, and the next write dropped it
+    // from the document entirely. A success that no read can confirm is the failure this
+    // contract's third rule forbids by name.
+    const dir = scratch();
+    const store = plaintextStore(dir);
+
+    await expect(store.secureSet("__proto__", "SECRET-42")).resolves.toEqual({ ok: true });
+    await expect(store.secureGet("__proto__")).resolves.toEqual({ ok: true, value: "SECRET-42" });
+  });
+
+  it("still has it after a restart, and after another write", async () => {
+    // The loss was silent and deferred: the key disappeared from disk on the *next*
+    // write, so a single set-and-get in one process would have looked fine.
+    const dir = scratch();
+
+    await plaintextStore(dir).secureSet("__proto__", "SECRET-42");
+    await plaintextStore(dir).secureSet("other", "xyz");
+
+    const reopened = plaintextStore(dir);
+
+    await expect(reopened.secureGet("__proto__")).resolves.toEqual({
+      ok: true,
+      value: "SECRET-42",
+    });
+    await expect(reopened.secureGet("other")).resolves.toEqual({ ok: true, value: "xyz" });
+  });
+
+  it("does not pollute the prototype of anything", async () => {
+    // The narrower failure mode worth ruling out explicitly: `parseDocument` refuses a
+    // document whose values are not strings, so the setter could only ever be handed a
+    // string -- but "could not" written down is worth more than "did not happen".
+    const dir = scratch();
+    const store = plaintextStore(dir);
+
+    await store.secureSet("__proto__", "polluted?");
+
+    expect(({} as Record<string, unknown>)["polluted?"]).toBeUndefined();
+    expect(Object.getPrototypeOf({})).toBe(Object.prototype);
+  });
+});
+
 describe("the files are owner-only on POSIX", () => {
   // **Unverified on this machine, and marked so rather than silently passing.**
   //

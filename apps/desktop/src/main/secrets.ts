@@ -275,7 +275,17 @@ function parseDocument(text: string): StoredDocument | null {
     return null;
   }
 
-  const entries: Record<string, string> = {};
+  // `Object.create(null)`, not `{}`. A plain object inherits from `Object.prototype`,
+  // so `entries["toString"]` is a function rather than `undefined` -- which made
+  // `secureGet("toString")` answer `{ok: true, value: <function>}`, violating the frozen
+  // return type and reporting an absent key as present. And `entries["__proto__"] = x`
+  // invokes the prototype setter instead of creating an entry, so a key written under
+  // that name was silently dropped from the document on the next read.
+  //
+  // Both are only reachable with keys nobody uses deliberately, which is why they
+  // survived: the tests use names like `token`. A store must not depend on its callers
+  // avoiding certain strings.
+  const entries: Record<string, string> = Object.create(null) as Record<string, string>;
 
   for (const [key, stored] of Object.entries(rawEntries)) {
     if (typeof stored !== "string") return null;
@@ -478,9 +488,13 @@ export function createDesktopSecrets(options: DesktopSecretsOptions): SecretsPor
     document: StoredDocument | null,
     mode: StoreMode,
   ): Promise<Record<string, string> | null> {
-    if (document === null) return {};
+    // Null-prototype for the same reason the read side is: a key literally named
+    // `__proto__` must become an entry, and on a plain object that assignment invokes
+    // the prototype setter instead. Losing one entry during a mode conversion would
+    // silently drop a token the user had stored.
+    if (document === null) return Object.create(null) as Record<string, string>;
 
-    const converted: Record<string, string> = {};
+    const converted: Record<string, string> = Object.create(null) as Record<string, string>;
 
     for (const [key, stored] of Object.entries(document.entries)) {
       const value = decodeValue(stored, document.mode);
@@ -600,12 +614,19 @@ export function createDesktopSecrets(options: DesktopSecretsOptions): SecretsPor
       if (read.kind === "absent") return { ok: false, code: "NOT_FOUND" };
       if (read.kind === "unreadable") return { ok: false, code: "STORAGE_UNAVAILABLE" };
 
-      // `undefined` is unambiguous here: the parser refuses a document unless
-      // every value is a string, so a key with no entry is the only way to get
-      // it - the same distinction `Map.get` gives the headless store.
-      const stored = read.document.entries[key];
+      // An *own* property, not merely a non-`undefined` one. The distinction is what
+      // `Map.get` gives the headless store, and `=== undefined` does not reproduce it:
+      // an inherited member answers with a function, which is neither absent nor a
+      // string. `hasOwn` is the check that means "this document has this key".
+      //
+      // The container is null-prototype too (see `parseDocument`), so this is belt and
+      // braces -- but the check is the one that states the intent, and it stays correct
+      // if the container ever changes back.
+      if (!Object.hasOwn(read.document.entries, key)) {
+        return { ok: false, code: "NOT_FOUND" };
+      }
 
-      if (stored === undefined) return { ok: false, code: "NOT_FOUND" };
+      const stored = read.document.entries[key] as string;
 
       const value = decodeValue(stored, read.document.mode);
 
@@ -655,7 +676,18 @@ export function createDesktopSecrets(options: DesktopSecretsOptions): SecretsPor
 
           if (converted === null) return unavailable();
 
-          await writeDocument({ mode, entries: { ...converted, [key]: encodeValue(value, mode) } });
+          // Built by assignment rather than a spread with a computed key: spreading into
+          // an object literal creates a *plain* object, so a `__proto__` key was applied
+          // as the prototype setter and vanished from the document.
+          const next: Record<string, string> = Object.create(null) as Record<string, string>;
+
+          for (const [existingKey, stored] of Object.entries(converted)) {
+            next[existingKey] = stored;
+          }
+
+          next[key] = encodeValue(value, mode);
+
+          await writeDocument({ mode, entries: next });
         } catch {
           // Encryption or the disk failed. The payload is not formatted into the
           // answer, which is why this is a bare code.

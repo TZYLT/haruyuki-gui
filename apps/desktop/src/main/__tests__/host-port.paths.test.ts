@@ -1,3 +1,6 @@
+import { statSync } from "node:fs";
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -239,9 +242,52 @@ describe("buildSpawnSpec", () => {
 
 describe("ensurePaths", () => {
   it("creates every root, tolerating ones that already exist", async () => {
-    // Called twice on purpose: the second call must not fail on EEXIST, because
-    // the engine may already have written into a directory from a previous run.
-    await expect(ensurePaths(PATHS)).resolves.toBeUndefined();
-    await expect(ensurePaths(PATHS)).resolves.toBeUndefined();
+    // A real temporary tree, not the fake `PATHS`. The earlier version asserted only
+    // "does not throw" and then ran against a fabricated `C:/Users/x/...` answer, which
+    // meant two problems: `ensurePaths` could have been emptied without failing the
+    // test, and the test created a directory tree inside another user's profile.
+    //
+    // `mkdtemp` gives a path nobody else owns, so the assertion is about the code rather
+    // than about a leftover on this machine.
+    const root = await mkdtemp(path.join(tmpdir(), "haruyuki-ensure-"));
+    const paths = {
+      userData: path.join(root, "userData"),
+      logs: path.join(root, "logs"),
+      cache: path.join(root, "cache"),
+      temp: path.join(root, "temp"),
+    };
+
+    await ensurePaths(paths);
+
+    // The point of the function: they exist now.
+    for (const dir of Object.values(paths)) {
+      expect(statSync(dir).isDirectory(), dir).toBe(true);
+    }
+
+    // Called twice on purpose: the second call must not fail on EEXIST, because the
+    // engine may already have written into a directory from a previous run.
+    await expect(ensurePaths(paths)).resolves.toBeUndefined();
+
+    // And the second call did not remove or replace anything.
+    for (const dir of Object.values(paths)) {
+      expect(statSync(dir).isDirectory(), dir).toBe(true);
+    }
+  });
+
+  it("creates the cache root, which nothing else did", async () => {
+    // The specific gap review found in the shell: `ensurePaths` existed and was called by
+    // this file and the probe, but never by `main.ts`, so `paths.cache` pointed at a
+    // directory that did not exist and no startup step missed it.
+    const root = await mkdtemp(path.join(tmpdir(), "haruyuki-ensure2-"));
+    const paths = {
+      userData: path.join(root, "userData"),
+      logs: path.join(root, "logs"),
+      cache: path.join(root, "cache"),
+      temp: path.join(root, "temp"),
+    };
+
+    await ensurePaths(paths);
+
+    expect(statSync(paths.cache).isDirectory()).toBe(true);
   });
 });

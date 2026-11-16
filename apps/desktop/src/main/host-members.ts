@@ -212,6 +212,18 @@ export function createDesktopMembers(
       const result = mediaUrlFor(absPath, deps.readableRoots(), deps.trustAllPaths());
 
       if (!result.ok || result.url === undefined) {
+        // Two codes here, and the difference from `openExternal` is deliberate rather
+        // than an oversight of the rule stated above. `openExternal` has one failure
+        // path whose value is forced to `REJECTED_SCHEME`, so reporting a different code
+        // to the observer meant two names for one event. Here the two codes come from
+        // **two different vocabularies that serve different readers**: `APP_PROTOCOL_*`
+        // is the `ShellErrorCode` the log and the UI speak, `OUT_OF_ROOT` is the
+        // `HostPort` refusal the frozen union requires a caller to branch on.
+        //
+        // They cannot be the same string, because neither table has the other's value.
+        // What keeps this honest is that the mapping is fixed and total: every refusal
+        // this member produces is `OUT_OF_ROOT` to the caller and `APP_PROTOCOL_DENIED`
+        // to the log, with no path where one appears without the other. Asserted below.
         deps.onFailure?.({
           code: "APP_PROTOCOL_DENIED",
           detail: `resolveLocalResource refused: ${absPath} (${result.reason ?? "unknown"})`,
