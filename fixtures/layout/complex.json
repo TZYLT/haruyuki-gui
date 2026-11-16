@@ -37,9 +37,9 @@
             "type": "panel",
             "id": "bottom",
             "tabs": [
-              { "tabId": "settings", "pageId": "sample.settings" }
+              { "tabId": "settings-bottom", "pageId": "sample.settings" }
             ],
-            "activeTabId": "settings"
+            "activeTabId": "settings-bottom"
           }
         ],
         "sizes": [0.55, 0.45],
