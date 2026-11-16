@@ -108,6 +108,8 @@ export type { EngineTransport, InboundFrame, TransportWrite } from "./transport"
 export { createChannel, EngineChannel } from "./channel";
 export type { ChannelClock, ChannelOptions, ChannelReadiness, EngineFrameReader } from "./channel";
 
+export { createFrameReader } from "./frame-reader";
+
 export { buildFrame } from "./send";
 export type { OutgoingFrame } from "./send";
 

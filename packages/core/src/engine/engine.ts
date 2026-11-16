@@ -133,8 +133,8 @@ export class Engine {
 
   private socket: EngineSocket | null = null;
 
-  /** The current ready attempt's endpoint, or `null`; see {@link endpoint}. */
-  private readyEndpoint: { readonly url: string; readonly token: string } | null = null;
+  /** The current attempt's endpoint; see {@link endpoint}. */
+  #readyEndpoint: { readonly url: string; readonly token: string } | null = null;
 
   /** Raw-frame subscribers for B2's `onMessage`; separate from `frameListeners`. */
   private readonly messageListeners = new Set<(data: string) => void>();
@@ -197,27 +197,28 @@ export class Engine {
   }
 
   /**
-   * The endpoint of this engine, or `null` while it is not usable.
+   * The endpoint of this engine, or `null` while it is not usable. The facade needs
+   * B2 needs `url` + `token` for the second and later connections of a multi-agent
+   * and the endpoint has to be exposed because `url` is a local in `start`.
    *
-   * Read-only side channel for B2, which needs `url` + `token` to open the second
-   * and later connections of a multi-agent session (docs/26 §6.6): `` makes
-   * it unavoidable, because `url` is a local variable in `start`.
-   *
-   * Written just before `transition("ready")` by both entries and cleared where
-   * the socket is dropped. Non-null **only** in `ready`: the gate is the facade
-   * state, never `socketState`, which flips to `"open"` while the handshake answer
-   * is still unknown - a caller holding a non-null endpoint then would open N
-   * connections on an engine that may yet fail  §3.6.2.1, `this case`).
-   *
-   * The value carries the plaintext token, so it must never be logged, put in a
-   * diagnostic or attached to a crash record  §3.6.2 boundary 2).
+   * Non-null **only** in `ready`, and this state test is the whole gate. The field
+   * behind it is filled in earlier (when the attempt starts) and is deliberately
+   * not cleared on every socket close: were it populated only in `ready` and
+   * cleared everywhere else, this test and a `socketState`-based one would answer
+   * identically, no test could tell them apart, and the state guard would be
+   * decoration. `socketState` flips to `"open"` while the handshake answer is still
+   * unknown, so reaching the token through it would open N connections on an engine
+   * engine that may yet fail. It carries the plaintext token, so it must never be
+   * must never be logged, put in a diagnostic or attached to a crash record
+   * (boundary 2) - also why the field is `#private`: a TypeScript `private` is
+   * erased at runtime, leaving the token on the object a crash reporter serialises.
    */
   get endpoint(): { readonly url: string; readonly token: string } | null {
     if (this.currentState !== "ready") {
       return null;
     }
 
-    return this.readyEndpoint;
+    return this.#readyEndpoint;
   }
 
   /** Writes one already-serialised frame; the text passes through unmodified. */
@@ -352,6 +353,12 @@ export class Engine {
 
       await this.settleWatchdog();
 
+      // Store it when the attempt starts, not when it succeeds: the gate is what
+      // keeps it unreachable, so storing it here changes nothing a caller can
+      // observe, but storing it only on success would make that gate untestable -
+      // every non-ready state would hold `null` anyway, so the mutation that
+      // (`currentState` -> `socketState`) would stay green.
+      this.#readyEndpoint = Object.freeze({ url, token });
       this.transition("handshaking");
 
       const socket = await this.openSocket(url, token, fault);
@@ -373,11 +380,6 @@ export class Engine {
       }
 
       this.currentAppServerInfo = info;
-      // Before the transition: the getter gates on `state`, still `handshaking`
-      // here, so this stays unreachable until it runs. Assigning after would also
-      // satisfy boundary 5 but leaves a `ready` subscriber reading `null`, and
-      // that subscriber is the caller about to open the second connection.
-      this.readyEndpoint = Object.freeze({ url, token });
       this.transition("ready");
       return info;
     } catch (error) {
@@ -417,7 +419,7 @@ export class Engine {
       this.currentAppServerInfo = info;
       // See `start`: assigned before the transition, which is safe because the
       // getter gates on `state`, and a `ready` subscriber must already see it.
-      this.readyEndpoint = Object.freeze({ url: options.url, token: options.token });
+      this.#readyEndpoint = Object.freeze({ url: options.url, token: options.token });
       this.transition("ready");
       return info;
     } catch (error) {
@@ -533,7 +535,7 @@ export class Engine {
     this.latestFrameAt = null;
     this.currentAppServerInfo = null;
     // A new attempt must not read the previous attempt's endpoint.
-    this.readyEndpoint = null;
+    this.#readyEndpoint = null;
     this.lastFailureCode = null;
     this.lastExitInfo = null;
     this.stderrHistory.clear();
@@ -876,7 +878,6 @@ export class Engine {
   /** The transport closed; the facade state is untouched here. */
   private handleSocketClose = (): void => {
     this.currentSocketState = "closed";
-    this.readyEndpoint = null;
   };
 
   /**
@@ -907,7 +908,7 @@ export class Engine {
     }
 
     this.currentSocketState = "closed";
-    this.readyEndpoint = null;
+    this.#readyEndpoint = null;
   }
 
   /** Detach the child listeners so a stop cannot be mistaken for a crash. */

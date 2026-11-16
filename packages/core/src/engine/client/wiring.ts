@@ -40,6 +40,7 @@
 import { completionOf } from "./capability-names";
 import { createChannel } from "./channel";
 import type { CapabilityProbePort, EngineChannel, EngineFrameReader } from "./channel";
+import { createFrameReader } from "./frame-reader";
 import { duplicateIdError } from "./channel-errors";
 import { OutboundDedupe } from "./dedupe";
 import type { ChannelFactory, ChannelOpenContext } from "./pool";
@@ -170,11 +171,12 @@ export interface WiringOptions {
    * write every command and watch every event, but a `send` that expects an
    * answer waits for a frame nobody correlates and ends in `TIMEOUT`.
    *
-   * This is the one production gap of the wiring layer and it is **not fillable
-   * here**: no production reader exists in this package yet (the only
-   * implementations are test doubles and `channel-test-support`'s). The port is
-   * threaded through so the work package that owns the frame decode  can
-   * pass one in without touching this file again.
+   * Omitted means {@link createFrameReader}, the real one - not the kernel's
+   * do-nothing default. That default exists so the kernel has *something* when a
+   * test does not care about answers; defaulting the production wiring to it would
+   * mean every command that expects a reply times out, which is the whole stack
+   * failing quietly. Pass one explicitly to override (a test double, or a future
+   * decoder), not to enable answers.
    */
   readonly reader?: EngineFrameReader;
   /**
@@ -333,7 +335,7 @@ export function createWiredChannelFactory(
       // The token, and only the token: the channel never holds the endpoint, it
       // only knows what to erase from a diagnostic.
       secrets: [endpoint.token],
-      ...(options.reader === undefined ? {} : { reader: options.reader }),
+      reader: options.reader ?? createFrameReader(),
       ...(options.probe === undefined ? {} : { probe: options.probe }),
       ...(options.knownEventTypes === undefined
         ? {}
