@@ -62,7 +62,8 @@ import { APP_NAME, chooseLocale } from "./i18n.js";
 import { createLogger, type Logger } from "./log.js";
 import { installApplicationMenu } from "./menu-wiring.js";
 import { handleRendererGone, installMainCrashHandlers } from "./crash/capture.js";
-import { engineCrashQuery, rendererCrashQuery } from "./crash/page.js";
+import { engineCrashQuery } from "./crash/page.js";
+import { createRendererRecovery } from "./crash/renderer-recovery.js";
 import { showCrashPage, crashVersions } from "./crash/wiring.js";
 import { crashDirFor, readCrashRecords, type CrashRecord } from "./crash/records.js";
 import { collectDiagnostics } from "./diagnostics/collect.js";
@@ -499,11 +500,9 @@ async function createWindow(allowedDevtools: boolean, locale: string): Promise<B
     mainWindow = null;
   });
 
-  // P3 records every renderer death; P9 switches to the crash page once and
-  // falls back to the static inline page afterwards. Both counters are per
-  // window: a second window is a new surface and gets its own first attempt,
-  // while the same window reloading its crash page must not loop (`RD-13`).
-  let rendererCrashes = 0;
+  // P3 records every renderer death; the recovery policy reloads the normal
+  // interface once, shows the D4 error page on a second death, and falls back to
+  // the static inline page afterwards. The fallback flag is per window.
   let rendererFallbackShown = false;
 
   /**
@@ -544,6 +543,13 @@ async function createWindow(allowedDevtools: boolean, locale: string): Promise<B
     );
   };
 
+  const handleRendererRecovery = createRendererRecovery({
+    window,
+    appScheme: APP_SCHEME,
+    log: logSupervision,
+    showFallback: showRendererFallback,
+  });
+
   window.webContents.on("render-process-gone", (_event, details) => {
     void handleRendererGone(
       { reason: details.reason, exitCode: details.exitCode ?? null },
@@ -551,36 +557,10 @@ async function createWindow(allowedDevtools: boolean, locale: string): Promise<B
         dir: crashDirFor(app.getPath("userData")),
         versions: crashVersions(),
         onCrash: (record) => {
-          rendererCrashes += 1;
-
           const reason = record.renderer?.reason ?? "";
           const exitCode = record.renderer?.exitCode ?? null;
 
-          logger?.error("supervision.renderer.crash", {
-            code: record.code,
-            reason,
-            exitCode,
-            attempt: rendererCrashes,
-          });
-
-          if (rendererCrashes > 1) {
-            showRendererFallback(reason, exitCode, "the crash page did not survive");
-
-            return;
-          }
-
-          void showCrashPage(
-            window,
-            rendererCrashQuery({ reason, exitCode }),
-            "renderer",
-            APP_SCHEME,
-            logSupervision,
-          ).then((shown) => {
-            // No normal page to derive the route from, or the load failed:
-            // the static page is the only floor left.
-            if (!shown)
-              showRendererFallback(reason, exitCode, "the crash route could not be shown");
-          });
+          handleRendererRecovery(reason, exitCode);
         },
       },
     ).catch((error: unknown) => {
