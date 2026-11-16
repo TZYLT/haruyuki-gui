@@ -137,7 +137,10 @@ describe("the diagnostics allowlist", () => {
   });
 
   it("freezes ping, the three diagnostics commands and D2's drop report", () => {
-    expect([...CHANNEL_ALLOWLIST]).toEqual([
+    // D3 appends its seven channels after this block, so the assertion pins the prefix
+    // this item owns rather than the whole list: a change inside the prefix still fails,
+    // and the full twelve-channel list is asserted in `shared/__tests__/bridge.test.ts`.
+    expect([...CHANNEL_ALLOWLIST].slice(0, 5)).toEqual([
       "bridge:control.app.ping",
       "bridge:control.diagnostics.export",
       "bridge:control.diagnostics.relaunch",
