@@ -6,25 +6,27 @@
  * means the error page cannot invent a field the main process never sends, and
  * the main process cannot rename one without breaking the page's type check.
  *
+ * The failure kinds are the route's vocabulary (`42` §3.7): a missing bundle, an
+ * entry mismatch, a tree mismatch, an invalid external pick and a failed start.
  * This is not a `ShellErrorCode`: a runtime failure is a state with a recovery
- * action, not a thrown shell error. `bootstrap-error.ts` remains the static
- * page for a shell that never loaded.
+ * action, not a thrown shell error.
  */
 
 /** Where the running engine came from. */
 export type RuntimeSource = "bundled" | "external" | "path";
 
-/** What failed, in the page's vocabulary. */
-export type RuntimeFailureKind = "missing" | "mismatch" | "spawn";
+/** What failed, in the route's vocabulary. */
+export type RuntimeFailureKind =
+  "missing-bundle" | "entry-mismatch" | "tree-mismatch" | "external-invalid" | "start-failed";
 
 /** A failure the runtime error page can explain and offer actions for. */
 export interface RuntimeFailure {
   readonly kind: RuntimeFailureKind;
   /** One sentence, already suitable as secondary text. */
   readonly detail: string;
-  readonly enginePath?: string;
-  readonly expected?: string;
-  readonly actual?: string;
+  readonly engineDir?: string;
+  readonly expectedSha256?: string;
+  readonly actualSha256?: string;
   readonly logPath?: string;
   /** Present when an external pick was invalid and the app fell back. */
   readonly externalInvalid?: { readonly dir: string; readonly reason: string };
@@ -47,7 +49,7 @@ export type RuntimeStatus =
       readonly externalNotice?: string;
     };
 
-/** The four actions the renderer may ask for. */
+/** A directory choice, kept as a named shape for the picker payload. */
 export interface RuntimeChoice {
   readonly engineDir: string;
 }

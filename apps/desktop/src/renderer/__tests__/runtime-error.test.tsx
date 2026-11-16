@@ -20,9 +20,9 @@ function withProvider(node: ReactElement): ReactElement {
 }
 
 const MISSING: RuntimeFailure = {
-  kind: "missing",
+  kind: "missing-bundle",
   detail: "The bundled engine was not found.",
-  enginePath: "C:/app/resources/engine",
+  engineDir: "C:/app/resources/engine",
   logPath: "C:/Users/x/AppData/Roaming/Haruyuki/logs",
 };
 
@@ -41,10 +41,10 @@ describe("RuntimeErrorPage", () => {
       withProvider(
         <RuntimeErrorPage
           failure={{
-            kind: "mismatch",
+            kind: "entry-mismatch",
             detail: "The entry hash changed.",
-            expected: "a".repeat(64),
-            actual: "b".repeat(64),
+            expectedSha256: "a".repeat(64),
+            actualSha256: "b".repeat(64),
           }}
         />,
       ),

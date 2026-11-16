@@ -90,14 +90,14 @@ class RuntimeController implements RuntimeChannelHost {
     });
 
     if (picked.canceled || picked.filePaths.length === 0) {
-      return { ok: false, failureKind: "missing", detail: "No directory selected." };
+      return { ok: false, failureKind: "missing-bundle", detail: "No directory selected." };
     }
 
     const chosen = picked.filePaths[0]!;
     const selected = await selectBundle({ bundledDir: chosen, externalDir: chosen });
 
     if (selected.kind === "missing") {
-      return { ok: false, failureKind: "missing", detail: selected.reason };
+      return { ok: false, failureKind: "missing-bundle", detail: selected.reason };
     }
 
     const location = selected.location;
@@ -117,7 +117,11 @@ class RuntimeController implements RuntimeChannelHost {
       });
 
       if (confirm.response !== 1) {
-        return { ok: false, failureKind: "spawn", detail: "Cancelled at the version warning." };
+        return {
+          ok: false,
+          failureKind: "start-failed",
+          detail: "Cancelled at the version warning.",
+        };
       }
     }
 
@@ -221,9 +225,9 @@ class RuntimeController implements RuntimeChannelHost {
 
       if (!result.ok) {
         const failure: RuntimeFailure = {
-          kind: "spawn",
+          kind: "start-failed",
           detail: result.detail ?? result.reason,
-          enginePath: engineDir,
+          engineDir: engineDir,
           logPath: this.layout.logsDir,
         };
         this.fail(failure);
@@ -247,9 +251,9 @@ class RuntimeController implements RuntimeChannelHost {
 
     if (!result.ok) {
       const failure: RuntimeFailure = {
-        kind: "spawn",
+        kind: "start-failed",
         detail: result.detail ?? result.reason,
-        enginePath: engineDir,
+        engineDir: engineDir,
         logPath: this.layout.logsDir,
       };
       this.fail(failure);
@@ -260,9 +264,9 @@ class RuntimeController implements RuntimeChannelHost {
 
     if (!accepted) {
       const failure: RuntimeFailure = {
-        kind: "spawn",
+        kind: "start-failed",
         detail: "The engine was stopped because the app is quitting.",
-        enginePath: engineDir,
+        engineDir: engineDir,
         logPath: this.layout.logsDir,
       };
       this.fail(failure);
@@ -296,9 +300,9 @@ class RuntimeController implements RuntimeChannelHost {
       return {
         ok: false,
         failure: {
-          kind: "spawn",
+          kind: "start-failed",
           detail: built.reason,
-          enginePath: path.dirname(bundlePath),
+          engineDir: path.dirname(bundlePath),
           logPath: this.layout.logsDir,
         },
       };
@@ -373,7 +377,7 @@ export async function startRuntimeShell(deps: RuntimeShellDeps): Promise<void> {
 
   if (host === null) {
     controller.fail({
-      kind: "spawn",
+      kind: "start-failed",
       detail: "The engine did not start; see the log for the spawn failure.",
       logPath: layout.logsDir,
     });

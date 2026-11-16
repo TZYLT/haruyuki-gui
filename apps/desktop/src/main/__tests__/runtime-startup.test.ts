@@ -102,9 +102,9 @@ describe("prepareRuntime", () => {
 
     expect(plan.ok).toBe(false);
     if (plan.ok) return;
-    expect(plan.failure.kind).toBe("mismatch");
-    expect(plan.failure.expected).toHaveLength(64);
-    expect(plan.failure.actual).toHaveLength(64);
+    expect(plan.failure.kind).toBe("entry-mismatch");
+    expect(plan.failure.expectedSha256).toHaveLength(64);
+    expect(plan.failure.actualSha256).toHaveLength(64);
     expect(plan.state.lastResult).toBe("entry-mismatch");
   });
 
@@ -129,7 +129,7 @@ describe("prepareRuntime", () => {
 
     expect(plan.ok).toBe(false);
     if (plan.ok) return;
-    expect(plan.failure.kind).toBe("missing");
+    expect(plan.failure.kind).toBe("missing-bundle");
   });
 
   it("falls back from a gone external directory and carries the reason", async () => {

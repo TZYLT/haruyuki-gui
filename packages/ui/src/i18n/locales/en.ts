@@ -137,6 +137,7 @@ export const en = {
   "error.runtimeMissing": "The bundled engine is missing",
   "error.runtimeMismatch": "The engine failed its integrity check",
   "error.runtimeSpawn": "The engine did not start",
+  "error.runtimeExternal": "The external engine is unavailable",
   "error.runtimeExternalFallback": "The external engine is unavailable; using the bundled engine",
   "error.runtimeChoose": "Choose engine folder",
   "error.runtimeUseBundled": "Use bundled engine",

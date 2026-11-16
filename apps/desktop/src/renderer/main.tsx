@@ -248,7 +248,7 @@ async function resetRuntimeEngine(
   }
 
   setFailure({
-    kind: "spawn",
+    kind: "start-failed",
     detail: result?.detail ?? "The bundled engine could not be started.",
   });
 }
@@ -262,18 +262,27 @@ function asRuntimeFailure(value: unknown): RuntimeFailure | null {
   const detail = candidate["detail"];
 
   if (
-    (kind !== "missing" && kind !== "mismatch" && kind !== "spawn") ||
-    typeof detail !== "string"
+    kind !== "missing-bundle" &&
+    kind !== "entry-mismatch" &&
+    kind !== "tree-mismatch" &&
+    kind !== "external-invalid" &&
+    kind !== "start-failed"
   ) {
     return null;
   }
 
+  if (typeof detail !== "string") return null;
+
   return {
     kind,
     detail,
-    ...(typeof candidate["enginePath"] === "string" ? { enginePath: candidate["enginePath"] } : {}),
-    ...(typeof candidate["expected"] === "string" ? { expected: candidate["expected"] } : {}),
-    ...(typeof candidate["actual"] === "string" ? { actual: candidate["actual"] } : {}),
+    ...(typeof candidate["engineDir"] === "string" ? { engineDir: candidate["engineDir"] } : {}),
+    ...(typeof candidate["expectedSha256"] === "string"
+      ? { expectedSha256: candidate["expectedSha256"] }
+      : {}),
+    ...(typeof candidate["actualSha256"] === "string"
+      ? { actualSha256: candidate["actualSha256"] }
+      : {}),
     ...(typeof candidate["logPath"] === "string" ? { logPath: candidate["logPath"] } : {}),
   };
 }

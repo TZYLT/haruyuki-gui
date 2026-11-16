@@ -83,9 +83,9 @@ export async function prepareRuntime(options: PrepareRuntimeOptions): Promise<Ru
 
   if (selection.kind === "missing") {
     const failure: RuntimeFailure = {
-      kind: "missing",
+      kind: "missing-bundle",
       detail: selection.reason,
-      enginePath: options.layout.engineDir,
+      engineDir: options.layout.engineDir,
       logPath: options.layout.logsDir,
       ...(selection.externalInvalid === undefined
         ? {}
@@ -111,12 +111,12 @@ export async function prepareRuntime(options: PrepareRuntimeOptions): Promise<Ru
 
     if (!lock.ok) {
       const failure: RuntimeFailure = {
-        kind: "mismatch",
+        kind: lock.problem === "missing" ? "missing-bundle" : "entry-mismatch",
         detail:
           lock.problem === "missing"
             ? "The bundled engine lock is missing from app.asar."
             : `The bundled engine lock is invalid: ${lock.detail}`,
-        enginePath: location.engineDir,
+        engineDir: location.engineDir,
         logPath: options.layout.logsDir,
       };
       const state = await recordFailure(options, stateRead.state, "missing");
@@ -134,7 +134,7 @@ export async function prepareRuntime(options: PrepareRuntimeOptions): Promise<Ru
 
     if (!verified.ok) {
       const state = await recordFailure(options, stateRead.state, verified.problem);
-      const failure = failureOf(verified, options.layout.logsDir);
+      const failure = failureOf(verified, location.engineDir, options.layout.logsDir);
 
       return { ok: false, failure, state, treeChecked: false };
     }
@@ -194,9 +194,9 @@ async function prepareDev(
     return {
       ok: false,
       failure: {
-        kind: "missing",
+        kind: "missing-bundle",
         detail: `development engine not found: ${options.layout.bundlePath}`,
-        enginePath: options.layout.engineDir,
+        engineDir: options.layout.engineDir,
         logPath: options.layout.logsDir,
       },
       state,
@@ -215,15 +215,20 @@ async function prepareDev(
 }
 
 /** Turn a verification failure into the page's shape. */
-function failureOf(result: RuntimeVerifyResult & { ok: false }, logsDir: string): RuntimeFailure {
+function failureOf(
+  result: RuntimeVerifyResult & { ok: false },
+  engineDir: string,
+  logsDir: string,
+): RuntimeFailure {
   return {
-    kind: "mismatch",
+    kind: result.problem,
     detail:
       result.problem === "entry-mismatch"
         ? "The engine entry does not match runtime-lock.json."
         : "The engine tree does not match runtime-lock.json.",
-    expected: result.expected,
-    actual: result.actual,
+    engineDir,
+    expectedSha256: result.expected,
+    actualSha256: result.actual,
     logPath: logsDir,
   };
 }

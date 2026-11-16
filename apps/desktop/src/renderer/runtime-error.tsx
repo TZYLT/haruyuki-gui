@@ -122,12 +122,15 @@ export function RuntimeErrorPage({
  */
 function titleOf(failure: RuntimeFailure, t: (key: MessageKey) => string): string {
   switch (failure.kind) {
-    case "mismatch":
+    case "entry-mismatch":
+    case "tree-mismatch":
       return t("error.runtimeMismatch");
-    case "spawn":
+    case "start-failed":
       return t("error.runtimeSpawn");
-    case "missing":
+    case "missing-bundle":
       return t("error.runtimeMissing");
+    case "external-invalid":
+      return t("error.runtimeExternal");
   }
 }
 
@@ -144,16 +147,16 @@ function titleOf(failure: RuntimeFailure, t: (key: MessageKey) => string): strin
 function detailOf(failure: RuntimeFailure, t: (key: MessageKey) => string): string {
   const parts = [failure.detail];
 
-  if (failure.enginePath !== undefined) {
-    parts.push(`${t("error.runtimePath")}: ${failure.enginePath}`);
+  if (failure.engineDir !== undefined) {
+    parts.push(`${t("error.runtimePath")}: ${failure.engineDir}`);
   }
 
-  if (failure.expected !== undefined) {
-    parts.push(`${t("error.runtimeExpected")}: ${failure.expected}`);
+  if (failure.expectedSha256 !== undefined) {
+    parts.push(`${t("error.runtimeExpected")}: ${failure.expectedSha256}`);
   }
 
-  if (failure.actual !== undefined) {
-    parts.push(`${t("error.runtimeActual")}: ${failure.actual}`);
+  if (failure.actualSha256 !== undefined) {
+    parts.push(`${t("error.runtimeActual")}: ${failure.actualSha256}`);
   }
 
   if (failure.logPath !== undefined) {

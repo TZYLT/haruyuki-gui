@@ -118,6 +118,7 @@ export const zhCN = {
   "error.runtimeMissing": "找不到随包引擎",
   "error.runtimeMismatch": "引擎校验失败",
   "error.runtimeSpawn": "引擎没能启动",
+  "error.runtimeExternal": "外部引擎不可用",
   "error.runtimeExternalFallback": "外部引擎已不可用，已回退随包引擎",
   "error.runtimeChoose": "选择引擎目录",
   "error.runtimeUseBundled": "改用随包引擎",
