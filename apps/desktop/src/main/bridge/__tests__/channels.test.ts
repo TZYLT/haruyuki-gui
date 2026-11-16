@@ -1,8 +1,14 @@
 import { describe, expect, it } from "vitest";
 
-import { CHANNEL_ALLOWLIST, validateChannelName } from "../../../shared/bridge.js";
+import {
+  CHANNEL_ALLOWLIST,
+  BRIDGE_CHANNEL_NAMES,
+  BRIDGE_VERSION as SHARED_VERSION,
+  validateChannelName,
+} from "../../../shared/bridge.js";
 import {
   APP_PING,
+  BRIDGE_VERSION,
   FRAME_CHANNEL_KEYS,
   FRAME_DELIVER,
   FRAME_SUBMIT,
@@ -40,6 +46,16 @@ describe("D3 channel names", () => {
 
   it("keeps the allowlist at exactly the eight channels this item registers", () => {
     expect([...CHANNEL_ALLOWLIST].sort()).toEqual([...D3_CHANNELS].sort());
+  });
+
+  it("mirrors the shared names the preload and renderer use", () => {
+    expect(BRIDGE_VERSION).toBe(SHARED_VERSION);
+    expect(FRAME_SUBMIT).toBe(BRIDGE_CHANNEL_NAMES.frameSubmit);
+    expect(FRAME_DELIVER).toEqual(BRIDGE_CHANNEL_NAMES.frameDeliver);
+    expect(LAYOUT_SAVE).toBe(BRIDGE_CHANNEL_NAMES.layoutSave);
+    expect(TERMINAL_ACK).toBe(BRIDGE_CHANNEL_NAMES.terminalAck);
+    expect(TERMINAL_NOTICE).toBe(BRIDGE_CHANNEL_NAMES.terminalNotice);
+    expect(APP_PING).toBe(BRIDGE_CHANNEL_NAMES.appPing);
   });
 
   it("maps each frame channel to one delivery channel", () => {

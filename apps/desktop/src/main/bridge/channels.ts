@@ -6,33 +6,41 @@
  * serialized frame. Keeping the two lists apart is what lets the frame envelope
  * stay frozen (no new frame types) while the channel allowlist grows.
  *
- * The literals live in `shared/bridge.ts` because the renderer subscribes to the
- * same names and the desktop package must not grow two spellings of a channel.
- * This module only re-shapes them for the main-process code.
+ * The literals are duplicated in `shared/bridge.ts` on purpose. That module is
+ * imported by the preload and the renderer; importing it from the main process
+ * too would make the two-entry main/preload build emit a shared chunk, and a
+ * sandboxed preload cannot `require` a relative chunk. `channels.test.ts`
+ * asserts this list and the shared one agree, so the duplication cannot drift
+ * silently.
  */
 
-import { BRIDGE_CHANNEL_NAMES } from "../../shared/bridge.js";
+/** The bridge protocol version this shell speaks (C5-Q07 exact equality). */
+export const BRIDGE_VERSION = "1" as const;
 
 /** One delivery channel per frame `ch`. */
-export const FRAME_DELIVER = BRIDGE_CHANNEL_NAMES.frameDeliver;
+export const FRAME_DELIVER = {
+  control: "bridge:control.frame.deliver",
+  stream: "bridge:stream.frame.deliver",
+  bulk: "bridge:bulk.frame.deliver",
+} as const;
 
 /** The frame channel a `ch` value delivers on. */
 export type FrameChannelKey = keyof typeof FRAME_DELIVER;
 
 /** renderer -> main: the first frame (`bridge.ready`) and later UI control frames. */
-export const FRAME_SUBMIT = BRIDGE_CHANNEL_NAMES.frameSubmit;
+export const FRAME_SUBMIT = "bridge:control.frame.submit" as const;
 
 /** renderer -> main: terminal byte acknowledgement. Transport-level, not a frame. */
-export const TERMINAL_ACK = BRIDGE_CHANNEL_NAMES.terminalAck;
+export const TERMINAL_ACK = "bridge:stream.terminal.ack" as const;
 
 /** main -> renderer: "the terminal entry dropped N bytes". Transport-level, not a frame. */
-export const TERMINAL_NOTICE = BRIDGE_CHANNEL_NAMES.terminalNotice;
+export const TERMINAL_NOTICE = "bridge:stream.terminal.notice" as const;
 
 /** renderer -> main: C4's layout document write-back. */
-export const LAYOUT_SAVE = BRIDGE_CHANNEL_NAMES.layoutSave;
+export const LAYOUT_SAVE = "bridge:control.layout.save" as const;
 
 /** renderer -> main: D1's existing availability probe. */
-export const APP_PING = BRIDGE_CHANNEL_NAMES.appPing;
+export const APP_PING = "bridge:control.app.ping" as const;
 
 /** The frame channels, in `ch` order. */
 export const FRAME_CHANNEL_KEYS: readonly FrameChannelKey[] = ["control", "stream", "bulk"];

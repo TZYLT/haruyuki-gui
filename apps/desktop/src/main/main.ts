@@ -45,8 +45,6 @@ import path from "node:path";
 
 import { FRAME_PROTOCOL_VERSION } from "@haruyuki/protocol";
 
-import { BRIDGE_VERSION } from "../shared/bridge.js";
-
 /**
  * This file's directory at runtime.
  *
@@ -95,6 +93,7 @@ import {
   rememberGeometry,
   saveSettings,
 } from "./settings-io.js";
+import { BRIDGE_VERSION } from "./bridge/channels.js";
 import { createBridgeHost } from "./bridge/host.js";
 import { registerBridgeIpc } from "./bridge/register.js";
 import type { BridgeSessionHost } from "./bridge/types.js";
