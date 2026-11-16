@@ -20,7 +20,7 @@
 import { createRequire } from "node:module";
 import { join } from "node:path";
 
-import type { SupervisionLog } from "./boot.js";
+import type { SupervisionLog } from "./errors.js";
 import { STOP_TIMEOUT_MS, stopEngineHost, type EngineHost } from "./engine-host.js";
 import { describeError } from "./errors.js";
 import { clearMarkerAfterStop } from "./marker-write.js";

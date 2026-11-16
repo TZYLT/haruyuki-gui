@@ -19,7 +19,7 @@ import {
   type RuntimeMarker,
 } from "@haruyuki/core";
 
-import type { SupervisionLog } from "./boot.js";
+import type { SupervisionLog } from "./errors.js";
 import { describeError } from "./errors.js";
 
 /**

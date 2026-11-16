@@ -30,7 +30,7 @@ import {
 
 import { createEngineCrashWatcher } from "../crash/capture.js";
 import { crashDirFor, type CrashRecord, type CrashVersions } from "../crash/records.js";
-import type { SupervisionLog } from "./boot.js";
+import type { SupervisionLog } from "./errors.js";
 import { describeError } from "./errors.js";
 import { writeMarkerEngine } from "./marker-write.js";
 import {

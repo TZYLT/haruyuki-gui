@@ -40,7 +40,7 @@ import {
   type StaleEngineRecord,
 } from "@haruyuki/core";
 
-import { describeError } from "./errors.js";
+import { describeError, type SupervisionLog } from "./errors.js";
 
 export { clearMarkerAfterStop, writeMarkerEngine } from "./marker-write.js";
 
@@ -51,8 +51,6 @@ export { clearMarkerAfterStop, writeMarkerEngine } from "./marker-write.js";
  * the detail is structured and must never contain the engine token, the run
  * token, a key or session content.
  */
-export type SupervisionLog = (event: string, detail?: Record<string, unknown>) => void;
-
 /**
  * One old marker that could not be dropped silently.
  *

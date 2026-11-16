@@ -5,6 +5,8 @@
  * importing each other, and so `String` on a hostile object cannot throw while
  * a crash or a failed write is being reported.
  */
+export type SupervisionLog = (event: string, detail?: Record<string, unknown>) => void;
+
 export function describeError(error: unknown): string {
   if (error instanceof Error) return error.message;
 

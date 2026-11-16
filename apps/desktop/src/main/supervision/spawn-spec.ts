@@ -16,7 +16,7 @@ import { dirname, join, resolve } from "node:path";
 
 import type { Engine, EngineSpawnSpec } from "@haruyuki/core";
 
-import type { SupervisionLog } from "./boot.js";
+import type { SupervisionLog } from "./errors.js";
 
 /** The dev engine bundle, relative to a repository root. */
 const DEV_BUNDLE_RELATIVE = join("_research", "engine-0.6.0", "package", "haruyuki.js");
