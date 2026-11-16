@@ -31,7 +31,16 @@ import { app } from "electron";
 import { APP_NAME } from "./i18n.js";
 
 /**
- * Set the application name.
+ * The Windows Application User Model ID.
+ *
+ * Kept in this module so the `appId` in electron-builder and the runtime call
+ * cannot drift: a toast belongs to the AUMID the process set, not to the name in
+ * the installer. G1's builder config uses the same literal.
+ */
+export const APP_USER_MODEL_ID = "com.haruyuki.desktop" as const;
+
+/**
+ * Set the application name and (on Windows) the AUMID.
  *
  * Must run before any `app.getPath` call, because `setName` only affects paths resolved
  * after it. A `getPath` moved to module scope would silently undo this, and the symptom
@@ -41,4 +50,11 @@ import { APP_NAME } from "./i18n.js";
  */
 export function applyAppName(): void {
   app.setName(APP_NAME);
+
+  // Windows uses the AUMID to attribute notifications and taskbar identity.
+  // Calling it on the other platforms is unnecessary; the guard keeps the
+  // behaviour explicit rather than relying on a no-op.
+  if (process.platform === "win32") {
+    app.setAppUserModelId(APP_USER_MODEL_ID);
+  }
 }
