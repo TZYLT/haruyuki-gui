@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "root": {
+    "type": "split",
+    "orientation": "horizontal",
+    "children": [
+      {
+        "type": "panel",
+        "id": "left",
+        "tabs": [
+          { "tabId": "conversation", "pageId": "sample.conversation" },
+          { "tabId": "future", "pageId": "vendor.future", "props": { "seed": 7 }, "x-tab": "keep" }
+        ],
+        "activeTabId": "future",
+        "extras": { "widthHint": 0.62 },
+        "x-panel": "keep"
+      },
+      {
+        "type": "panel",
+        "id": "right",
+        "tabs": [
+          { "tabId": "settings", "pageId": "sample.settings" },
+          { "tabId": "closed-future", "pageId": "vendor.closed", "hidden": true }
+        ],
+        "activeTabId": "settings"
+      }
+    ],
+    "sizes": [0.62, 0.38],
+    "extras": { "locked": false },
+    "x-split": "keep"
+  },
+  "activePanelId": "left",
+  "extras": { "schemaNote": "C4 sample" },
+  "x-doc": "keep"
+}

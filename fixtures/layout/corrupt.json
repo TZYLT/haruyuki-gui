@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "root": {
+    "type": "split",
+    "orientation": "horizontal",
+    "children": [
+      {
+        "type": "panel",
+        "id": "dup",
+        "tabs": [
+          { "tabId": "future", "pageId": "vendor.future" }
+        ]
+      }
+    ]
+  },
+  "activePanelId": "missing"
+}

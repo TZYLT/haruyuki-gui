@@ -47,6 +47,7 @@ describe("FRAME_TYPES", () => {
       "bridge.reject": true,
       "bulk.page": true,
       "term.output": true,
+      "layout.snapshot": true,
     };
 
     // Runtime: the two sets must agree, which catches a table edited through a
