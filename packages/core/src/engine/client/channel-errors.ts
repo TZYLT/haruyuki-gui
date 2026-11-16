@@ -27,11 +27,23 @@ import type { DiagnosticKind } from "./types";
 /**
  * Response code -> diagnostic signal, for the codes that have one.
  *
- * `NOT_CONNECTED` and `AUTH_FAILED` are deliberately absent. `types.ts` records
- * the reason: a dead channel has no channel left to report on, and those two codes
- * surface through the rejected `send` result instead. Giving them a signal here
- * would mean a diagnostics panel reporting a failure on a channel that cannot
- * deliver the report.
+ * `NOT_CONNECTED` is deliberately absent. `types.ts` records the reason: a dead
+ * channel has no channel left to report on, and that code surfaces through the
+ * rejected `send` result instead. Giving it a signal here would mean a
+ * diagnostics panel reporting a failure on a channel that cannot deliver the
+ * report.
+ *
+ * `AUTH_FAILED` is also absent, but **not** because it arrives on a `send`
+ * result - it does not. A dial that fails to authenticate is reported where the
+ * dial happens (the engine facade, which closes the channel and keeps the reason
+ * for the caller), and the channel that never opened answers `NOT_CONNECTED`,
+ * because "there is no connection" is what the frozen `Channel` can say. This
+ * comment used to claim the code surfaced through a rejected `send`; nothing ever
+ * produced that, and a reader would have gone looking for it.
+ *
+ * If B3 needs to tell "the token was rejected" apart from "the port was shut"
+ * when retrying, the code has to be carried out of the dial rather than guessed
+ * from its message. That is an addition to the wiring state, not a signal here.
  *
  * `MALFORMED_RESPONSE` is present but is not the only producer of the `malformed`
  * signal: a frame that does not parse at all is reported by the channel directly,

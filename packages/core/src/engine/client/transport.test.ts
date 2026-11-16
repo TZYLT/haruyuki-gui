@@ -498,3 +498,73 @@ describe("against a live server", () => {
     transport.close();
   });
 });
+
+/* The two things the returned object must not get wrong                */
+
+describe("openTransport's wrapper keeps the transport's own answers", () => {
+  it("reports isOpen false once the connection has gone away", async () => {
+    // Red when: `isOpen` is spread in rather than re-declared. Spreading evaluates
+    // the getter once and freezes the answer, so the copy says `true` forever -
+    // including after the socket closed. `wiring.ts` gates three decisions on this
+    // flag, so a frozen `true` means it keeps claiming it can write.
+    //
+    // Measured before the fix: `createTransport().isOpen` went false while
+    // `openTransport().isOpen` stayed true.
+    const url = await serverWritingOnAccept(['{"n":1}']);
+
+    const transport = await openTransport(url, "token");
+    expect(transport.isOpen).toBe(true);
+
+    transport.close();
+
+    expect(transport.isOpen, "a closed transport must not still report open").toBe(false);
+  });
+
+  it("delivers each captured frame to the first subscriber exactly once", async () => {
+    // Red when: the capture listener stays attached after the transport takes the
+    // socket over. A frame arriving in that window then lands in BOTH queues - the
+    // capture buffer and the transport's own early queue - and the first subscriber
+    // receives it twice.
+    //
+    // The window has to be manufactured: the server writes a second frame *after*
+    // the transport exists but *before* anyone subscribes. Writing only on accept
+    // would put every frame in the capture buffer alone, and removing the detach
+    // would then change nothing - a test that passes for the wrong reason.
+    const server = createServer();
+    servers.push(server);
+    const wss = new WebSocketServer({ server });
+    sockets.push(wss);
+
+    let writeLate: (() => void) | undefined;
+    wss.on("connection", (client) => {
+      client.send('{"n":1}');
+      // Fires on a later tick, after `openTransport` has resolved.
+      writeLate = () => {
+        client.send('{"n":2}');
+      };
+    });
+
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", () => {
+        resolve();
+      });
+    });
+    const address = server.address() as AddressInfo;
+
+    const transport = await openTransport(`ws://127.0.0.1:${String(address.port)}`, "token");
+
+    writeLate?.();
+    // Let the late frame reach the socket before subscribing, so it is queued in
+    // whichever buffers are listening.
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 50);
+    });
+
+    const seen: string[] = [];
+    transport.onFrame((frame) => seen.push(frame.raw));
+
+    expect(seen, "each frame once, in order").toEqual(['{"n":1}', '{"n":2}']);
+
+    transport.close();
+  });
+});

@@ -246,16 +246,43 @@ export async function openTransport(
   /** Frames captured between `open` and the transport adopting the socket. */
   const captured: InboundFrame[] = [];
 
+  /**
+   * The capture listener, so it can be detached once the transport takes over.
+   *
+   * Assigned inside `onOpen`, which runs before `connectEngine` resolves, so by the
+   * time the line below is reached it is either the function or `undefined` (no
+   * socket ever opened).
+   */
+  let captureListener: ((data: Buffer, isBinary: boolean) => void) | undefined;
+
   const socket = await connectEngine(url, token, {
     ...options,
     onOpen: (opened) => {
-      opened.on("message", (data: Buffer, isBinary: boolean) => {
+      const onCapturedFrame = (data: Buffer, isBinary: boolean): void => {
         if (!isBinary) {
           captured.push({ raw: data.toString("utf8"), at: now() });
         }
-      });
+      };
+      // Detached the moment the transport adopts the socket - see below. Kept as a
+      // named function only so the removal can name the same listener.
+      captureListener = onCapturedFrame;
+      opened.on("message", onCapturedFrame);
     },
   });
+
+  // Stop capturing before `createTransport` installs its own listener. Two
+  // listeners alive at once would put a frame arriving in this window into BOTH
+  // queues: the capture buffer and the transport's own early queue. The first
+  // subscriber would then receive it twice, and the capture buffer - which has no
+  // bound - would keep growing for the life of the socket.
+  //
+  // The window is genuinely narrow (between `connectEngine` resolving and this
+  // line), but "narrow" is how a frame arrives twice under load and never in a
+  // test.
+  if (captureListener !== undefined) {
+    socket.removeListener("message", captureListener);
+    captureListener = undefined;
+  }
 
   const transport = createTransport(socket, options);
 
@@ -271,7 +298,14 @@ export async function openTransport(
   const deliverEarly = transport.onFrame;
 
   return {
-    ...transport,
+    // `isOpen` must stay live, so it is re-declared as a getter rather than spread
+    // in. Spreading evaluates the getter once and freezes the answer: the copy
+    // would report `isOpen === true` forever, including after the connection went
+    // away. Everything else on this object is a method or a stable value, so the
+    // spread is fine for them.
+    get isOpen(): boolean {
+      return transport.isOpen;
+    },
     onFrame(listener: (frame: InboundFrame) => void): Unsubscribe {
       for (const frame of captured.splice(0, captured.length)) {
         listener(frame);
@@ -279,5 +313,11 @@ export async function openTransport(
 
       return deliverEarly(listener);
     },
+    // Bound to the transport rather than spread, because they are called as
+    // properties of the returned object and spreading would keep the original
+    // `this`. Explicit for the same reason `isOpen` is explicit.
+    send: (raw: string): TransportWrite => transport.send(raw),
+    onClose: (listener: (reason: string) => void): Unsubscribe => transport.onClose(listener),
+    close: (): void => transport.close(),
   };
 }
