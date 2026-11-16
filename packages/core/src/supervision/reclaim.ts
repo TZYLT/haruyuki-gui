@@ -205,10 +205,17 @@ async function killOnWindows(pid: number, deadline: number): Promise<KillResult>
   }
 
   if (!command.ok) {
-    // A failed taskkill can also win the race with a process that is already
-    // dying: the command reports an error, but the OS has removed the PID. Give
-    // the OS a short window before turning that into a user-visible failure.
-    if (await waitForExit(pid, Math.min(remainingMs(deadline), 500))) {
+    // `taskkill /T` can fail when the caller is itself inside a job object (the
+    // DSH host is), even though the PID is ours and still killable. Try the
+    // direct signal before reporting failure; the tree claim still belongs to
+    // taskkill, so a surviving child remains a failure rather than a success.
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+      // Already gone or not ours; the liveness check below is authoritative.
+    }
+
+    if (await waitForExit(pid, remainingMs(deadline))) {
       return { ok: true };
     }
 
