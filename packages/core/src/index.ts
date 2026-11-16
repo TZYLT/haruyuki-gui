@@ -20,6 +20,9 @@
  * - `./supervision`: the runtime-marker, process-evidence and reclaim primitives
  *   shared by the desktop shell and, later, the VSCode shell (docs/33-D4). They
  *   are policy-free: the shell decides when to write a marker or kill a process.
+ * - `./layout`: the C4 layout store, validator, draft store and transport-neutral
+ *   channel (a layout load, docs/36). The document schema itself is in
+ *   `@haruyuki/protocol`; this surface is the core half.
  *
  * The placeholder constant stays: it is the package's self-identity, and removing
  * it would break the "not a barrel" shape this file has to keep (see
@@ -29,6 +32,7 @@ export const CORE_PACKAGE_NAME = "@haruyuki/core" as const;
 
 export * from "./bridge/index.js";
 export * from "./engine";
+export * from "./layout/index.js";
 export * from "./port/host-port";
 export * from "./port/headless-host-port";
 export * from "./supervision/index.js";

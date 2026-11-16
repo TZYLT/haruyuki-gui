@@ -114,6 +114,7 @@ export const zhCN = {
   "error.shell.diagnosticExportFailed": "诊断包导出失败",
   "error.shell.staleEngineFound": "上次运行留下的引擎进程仍在运行",
   "error.shell.staleEngineCleanFailed": "无法结束上次留下的引擎进程",
+  "error.shell.unsupportedType": "这种文件无法预览",
 
   // ------------------------------------------------------------------ a11y
   "a11y.action.delete": "删除",

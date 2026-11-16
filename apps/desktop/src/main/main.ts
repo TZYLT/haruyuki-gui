@@ -34,7 +34,9 @@ import {
   crashReporter,
   dialog,
   ipcMain,
+  Notification,
   protocol,
+  safeStorage,
   session,
   shell,
 } from "electron";
@@ -54,42 +56,46 @@ import path from "node:path";
  */
 const HERE = __dirname;
 
-import { bootstrapErrorHtml, type BootstrapFailure } from "./bootstrap-error.js";
+import { failBoot, removeBootstrapPage, showBootstrapError } from "./bootstrap-surface.js";
+import { createMediaHandler, MEDIA_PRIVILEGES, MEDIA_SCHEME } from "./media-protocol.js";
+import { MEDIA_TYPE_POLICY } from "./media-mime.js";
+import { mediaAccessPath, readMediaAccess, skipsPositionCheck } from "./media-access.js";
+import { createDesktopMembers, type DesktopMembersResult } from "./host-members.js";
+import { desktopPaths, ensurePaths } from "./host-port.js";
+import { createDesktopSecrets, type SecretsPort } from "./secrets.js";
+import { DROPPED_FILES_CHANNEL } from "../shared/bridge.js";
+import { createDropHandler } from "./drop-handler.js";
 import { APP_HOST, APP_SCHEME, APP_PRIVILEGES, createProtocolHandler } from "./protocol.js";
 import { shellError } from "../shared/shell-error.js";
 import { CSP, headersFor, shouldApplyFallbackCsp } from "./csp.js";
 import { APP_NAME, chooseLocale } from "./i18n.js";
+import { applyAppName } from "./app-identity.js";
 import { createLogger, type Logger } from "./log.js";
 import { installApplicationMenu } from "./menu-wiring.js";
 import { handleRendererGone, installMainCrashHandlers } from "./crash/capture.js";
 import { engineCrashQuery } from "./crash/page.js";
 import { createRendererRecovery } from "./crash/renderer-recovery.js";
+import { createEngineCrashHandler } from "./crash/engine-handler.js";
 import { showCrashPage, crashVersions } from "./crash/wiring.js";
 import { crashDirFor, readCrashRecords, type CrashRecord } from "./crash/records.js";
-import { collectDiagnostics } from "./diagnostics/collect.js";
 import { runShellCleanup } from "./diagnostics/cleanup.js";
-import { runDiagnosticsExport, type DiagnosticsExportContext } from "./diagnostics/export.js";
-import { registerDiagnosticsIpc } from "./diagnostics/ipc.js";
+import { registerMainDiagnosticsIpc } from "./diagnostics/main-ipc.js";
 import { getSessionDiagnosticsSource } from "./diagnostics/session.js";
-import {
-  diagnosticsEngineFacts,
-  diagnosticsLabels,
-  diagnosticsSecrets,
-} from "./diagnostics/wiring.js";
-import { writeZip } from "./diagnostics/zip.js";
 import { runBootSupervision, type StaleCandidate } from "./supervision/boot.js";
 import { startShellEngine } from "./supervision/engine-lifecycle.js";
 import { type EngineHost } from "./supervision/engine-host.js";
 import { installQuitSupervisor, type QuitSupervisor } from "./supervision/quit.js";
 import {
+  chosenStorageBackend,
+  loadSettings,
+  rememberGeometry,
+  saveSettings,
+} from "./settings-io.js";
+import {
   DEFAULT_SETTINGS,
   isWindowVisible,
   MIN_WINDOW_HEIGHT,
   MIN_WINDOW_WIDTH,
-  readSettings,
-  serializeSettings,
-  SETTINGS_VERSION,
-  settingsPath,
   type ShellSettings,
 } from "./settings.js";
 
@@ -102,8 +108,6 @@ const DEVTOOLS_ENV = "HARUYUKI_DEVTOOLS";
  * Long enough for a local append; short enough that a wedged disk does not turn a
  * crash into a hang. The message is already on stderr by then.
  */
-const BOOT_FLUSH_TIMEOUT_MS = 2000;
-
 /** The initial window size on a first launch, in DIP. */
 const DEFAULT_WIDTH = 1280;
 const DEFAULT_HEIGHT = 800;
@@ -151,6 +155,110 @@ let settingsWritable = true;
 let bootstrapPagePath: string | null = null;
 
 /**
+ * The paths the user has authorised this session, for the media channel.
+ *
+ * `cwd` comes from core and the picked/dropped paths come from the user; this item
+ * only holds the set, because it is the layer that answers "may this path be
+ * served". The set is replaced wholesale on a session switch rather than
+ * accumulated: it expresses "which workspace am I looking at", not "what have I
+ * ever opened" (doc 29 section 4.7.3).
+ *
+ * Empty until something fills it, which is the correct initial answer: nothing has
+ * been authorised yet.
+ */
+let readableRootsForMedia: readonly string[] = [];
+
+/**
+ * Whether the user has switched the position check off.
+ *
+ * Cached from `media-access.json` and refreshed when the file's mtime changes, so a
+ * switch flipped in `F5` takes effect without a restart while still costing one
+ * `stat` per request rather than a file read.
+ */
+let trustAllPathsForMedia = false;
+let mediaAccessMtime = -1;
+
+/**
+ * The operating-system-facing members, built after ready.
+ *
+ * `null` before then, which is honest: a caller that runs earlier has no port yet,
+ * and pretending otherwise would mean a port whose dependencies are half-built.
+ */
+let desktopMembers: DesktopMembersResult | null = null;
+
+/** The secure store, built after ready because `safeStorage` needs a ready app. */
+let desktopSecrets: SecretsPort | null = null;
+
+/**
+ * Which storage backend `safeStorage` chose.
+ *
+ * Wrapped because `getSelectedStorageBackend` exists on Linux only. On Windows and
+ * macOS the question is moot -- encryption is always available -- so a platform that
+ * has no such call is reported as "not basic_text", which is the correct answer there.
+ */
+/**
+ * The shutdown registry.
+ *
+ * One list for the process rather than one per consumer, so cleanup registered by two
+ * different callers both runs. `runShutdown` drains it exactly once.
+ */
+const shutdownCallbacks: (() => void)[] = [];
+
+/**
+ * The current position-trust answer, refreshed when the file changes.
+ *
+ * One `stat` per request rather than a file read per request, and one file read
+ * rather than none, because the alternative to a cache here is either a switch that
+ * needs a restart or a disk read on every image load. The mtime is the cache key
+ * because it is exactly the question "has someone written the file since I last
+ * looked", and the answer is stable when the file is absent.
+ *
+ * Synchronous on purpose: it is called from inside the protocol handler, where the
+ * contract is a synchronous predicate. The read is kicked off without awaiting and
+ * the *previous* answer is used for this request, which is the right trade for a
+ * switch a human flips by hand -- one request served under the old decision is not
+ * a defect, and blocking every media request on a file read would be.
+ */
+function currentTrustAllPaths(): boolean {
+  const file = mediaAccessPath(app.getPath("userData"));
+
+  void (async () => {
+    try {
+      const { statSync } = await import("node:fs");
+      const mtime = statSync(file).mtimeMs;
+
+      if (mtime === mediaAccessMtime) return;
+
+      mediaAccessMtime = mtime;
+      trustAllPathsForMedia = skipsPositionCheck(await readMediaAccess(app.getPath("userData")));
+    } catch {
+      // Absent is the normal case until `F5` ships. It also covers "removed while
+      // running", which must fall back to the closed default rather than keeping
+      // a stale `true`.
+      mediaAccessMtime = -1;
+      trustAllPathsForMedia = false;
+    }
+  })();
+
+  return trustAllPathsForMedia;
+}
+
+/**
+ * Set the paths the media channel may serve.
+ *
+ * Called by whatever owns the session and the picker. Exported so the readable set
+ * has one write point; a second caller assigning the array directly would be a
+ * second definition of the set.
+ *
+ * @param roots the paths to allow, replacing whatever was there
+ */
+export function setReadableRootsForMedia(roots: readonly string[]): void {
+  // Replaced, never merged: the set answers "which workspace am I looking at",
+  // and merging would make it grow for the lifetime of the process.
+  readableRootsForMedia = [...roots];
+}
+
+/**
  * Put the bootstrap failure page in front of the user.
  *
  * The requirement names two error surfaces and this is the first one
@@ -170,98 +278,6 @@ let bootstrapPagePath: string | null = null;
  * @param failure what to report
  * @param target an existing window to reuse, or `undefined` to make one
  */
-async function showBootstrapError(
-  failure: BootstrapFailure,
-  target?: BrowserWindow,
-): Promise<boolean> {
-  const { writeFile } = await import("node:fs/promises");
-  const file = path.join(app.getPath("temp"), `haruyuki-bootstrap-${String(process.pid)}.html`);
-
-  try {
-    await writeFile(file, bootstrapErrorHtml(failure), "utf8");
-
-    // Remember it so the quit handler can remove it: one file per failed launch
-    // would otherwise accumulate in the user's temp directory forever.
-    bootstrapPagePath = file;
-
-    const window =
-      target ??
-      new BrowserWindow({
-        width: 900,
-        height: 560,
-        show: false,
-        // The same hardening as the shell window. This page is static text, but a
-        // second window with weaker settings is a second attack surface, and the
-        // rule would then have an exception nobody remembers.
-        webPreferences: {
-          preload: path.join(HERE, "preload.cjs"),
-          contextIsolation: true,
-          sandbox: true,
-          nodeIntegration: false,
-          webviewTag: false,
-          devTools: false,
-        },
-      });
-
-    window.once("ready-to-show", () => window.show());
-    await window.loadFile(file);
-
-    return true;
-  } catch (error) {
-    logger?.error("shell.bootstrap-error.failed", { detail: String(error) });
-
-    return false;
-  }
-}
-
-/**
- * Report a failure that happened before the window could show a page.
- *
- * Writes to stderr and to the log, then tries to render the failure page. Exits
- * with the platform's failure code only when the page could not be shown -- a
- * visible explanation outranks a specific exit code, and the code is in the log
- * either way.
- *
- * The log write is awaited before anything else happens. `app.exit()`
- * terminates without draining anything, and the logger writes through a promise
- * chain, so the first version of this function queued an error record and then
- * killed the process before the record reached the file: the one line that
- * explains a failed launch was the line most likely to be lost.
- *
- * @param event short stable identifier
- * @param detail human-readable detail
- */
-async function failBoot(event: string, detail: string): Promise<void> {
-  process.stderr.write(`[haruyuki] ${event}: ${detail}\n`);
-
-  const logDir = logger === null ? undefined : app.getPath("logs");
-
-  if (logDir !== undefined) process.stderr.write(`[haruyuki] log: ${logDir}\n`);
-
-  logger?.error(event, { detail });
-
-  // A flush that never settles would turn "the app failed" into "the app hangs",
-  // so it is bounded. The record is best-effort by then; stderr already has it.
-  if (logger !== null) {
-    await Promise.race([
-      logger.flush(),
-      new Promise<void>((resolve) => {
-        setTimeout(resolve, BOOT_FLUSH_TIMEOUT_MS);
-      }),
-    ]);
-  }
-
-  const shown = await showBootstrapError({
-    event,
-    detail,
-    ...(logDir === undefined ? {} : { logPath: logDir }),
-  });
-
-  if (shown) return;
-
-  app.exit(1);
-}
-
 /** Whether the inspector may be opened in this run. */
 function devtoolsAllowed(): boolean {
   return process.env[DEVTOOLS_ENV] === "1";
@@ -280,106 +296,6 @@ function devtoolsAllowed(): boolean {
  * decision belongs where the version was seen: once the values are in memory the
  * evidence is gone.
  */
-async function loadSettings(): Promise<ShellSettings> {
-  const { readFile } = await import("node:fs/promises");
-  const file = settingsPath(app.getPath("userData"));
-
-  let raw: string;
-
-  try {
-    raw = await readFile(file, "utf8");
-  } catch {
-    // Not an error: this is a first launch, or the file was removed.
-    logger?.info("settings.first-launch", { file });
-
-    settingsWritable = true;
-
-    return { ...DEFAULT_SETTINGS };
-  }
-
-  const read = readSettings(raw, {
-    onLogsInvalid: (problems) => {
-      logger?.warn("settings.logs.invalid", { fields: problems });
-    },
-  });
-
-  settingsWritable = read.writable;
-
-  // A file that exists but could not be understood is a different event from a
-  // first launch. Reporting both as "first launch" is how a settings file being
-  // written over by a half-crashed process goes unnoticed until someone wonders
-  // why their preferences never stick.
-  if (read.corrupt) {
-    logger?.warn("settings.corrupt", {
-      code: shellError("SHELL_SETTINGS_CORRUPT", `unparsable document: ${file}`).code,
-      detail: file,
-    });
-  }
-
-  if (!read.writable) {
-    // Warn, not error: the shell works, it just will not persist. The user
-    // needs to know the next launch will forget this session's window.
-    logger?.warn("settings.read-only", {
-      file,
-      foundVersion: read.foundVersion,
-      supportedVersion: SETTINGS_VERSION,
-    });
-  }
-
-  logger?.info("settings.loaded", {
-    file,
-    theme: read.settings.theme,
-    locale: read.settings.locale,
-    writable: read.writable,
-  });
-
-  return read.settings;
-}
-
-/**
- * Persist the settings. Failures are logged, never surfaced: a settings file that
- * cannot be written must not close the window the user is working in.
- *
- * The write is skipped entirely when the file on disk is a newer format. Writing
- * would drop the fields this build cannot represent, and the newer build would
- * then find them gone -- a downgrade the user never asked for.
- */
-async function saveSettings(next: ShellSettings): Promise<void> {
-  if (!settingsWritable) {
-    logger?.info("settings.write-skipped", { detail: "the file was written by a newer version" });
-
-    return;
-  }
-
-  const { writeFile } = await import("node:fs/promises");
-  const file = settingsPath(app.getPath("userData"));
-
-  try {
-    await writeFile(file, serializeSettings(next), "utf8");
-  } catch (error) {
-    logger?.warn("settings.write-failed", { detail: String(error) });
-  }
-}
-
-/**
- * Capture the window's geometry into `settings` and persist.
- *
- * Saved on `close`, not on every `move`/`resize`: a drag fires dozens of events and
- * only the last position matters. Reading the *normal* bounds rather than the current
- * ones means a maximised window restores to the rectangle the user had before
- * maximising, which is what they expect.
- *
- * @param window the window to read
- */
-function rememberGeometry(window: BrowserWindow): void {
-  if (window.isMinimized()) return;
-
-  const maximized = window.isMaximized();
-  const bounds = maximized ? window.getNormalBounds() : window.getBounds();
-
-  settings = { ...settings, window: { ...bounds, maximized } };
-}
-
 /**
  * Versions attached to every crash record.
  *
@@ -391,51 +307,13 @@ function logSupervision(event: string, detail?: Record<string, unknown>): void {
   logger?.info(event, detail);
 }
 
-/**
- * The engine crashed after reporting ready.
- *
- * A start failure never reaches here: engine-host only installs the watcher on a
- * ready engine, so there is nothing to suppress in this layer (R-13). The crash
- * page is a whole-window surface; a null window is only logged.
- *
- * @param record the crash record the P3 watcher wrote
- */
-function handleEngineCrash(record: CrashRecord): void {
-  lastEngineCrash = record;
-
-  const exitCode = record.engine?.exitCode ?? null;
-  const signal = record.engine?.signal ?? null;
-
-  logger?.error("supervision.engine.crash", {
-    code: record.code,
-    exitCode,
-    signal,
-  });
-
-  const window = mainWindow;
-
-  if (window === null) {
-    logger?.warn("shell.crash.page", {
-      state: "skipped",
-      kind: "engine",
-      detail: "no window is open",
-    });
-
-    return;
-  }
-
-  void showCrashPage(
-    window,
-    engineCrashQuery({
-      code: exitCode,
-      signal,
-      watchdog: record.engine?.watchdog ?? "unknown",
-    }),
-    "engine",
-    APP_SCHEME,
-    logSupervision,
-  );
-}
+const handleEngineCrash = createEngineCrashHandler({
+  setLastCrash: (record) => {
+    lastEngineCrash = record;
+  },
+  getWindow: () => mainWindow,
+  log: logSupervision,
+});
 
 /**
  * Create the window and load the shell.
@@ -506,8 +384,8 @@ async function createWindow(allowedDevtools: boolean, locale: string): Promise<B
   window.once("ready-to-show", () => window.show());
 
   window.on("close", () => {
-    rememberGeometry(window);
-    void saveSettings(settings);
+    settings = rememberGeometry(settings, window);
+    void saveSettings(settings, settingsWritable, logger);
   });
 
   window.on("closed", () => {
@@ -554,6 +432,7 @@ async function createWindow(allowedDevtools: boolean, locale: string): Promise<B
         detail: `the interface process stopped (reason ${reason}, exit code ${String(exitCode)})`,
       },
       window,
+      { preloadPath: path.join(HERE, "preload.cjs"), logger },
     );
   };
 
@@ -648,7 +527,10 @@ async function createWindow(allowedDevtools: boolean, locale: string): Promise<B
   if (loadFailure !== null) {
     logger?.error("shell.page.failed", { detail: loadFailure, url });
 
-    await showBootstrapError({ event: "shell.page.failed", detail: loadFailure }, window);
+    await showBootstrapError({ event: "shell.page.failed", detail: loadFailure }, window, {
+      preloadPath: path.join(HERE, "preload.cjs"),
+      logger,
+    });
   }
 
   return window;
@@ -661,11 +543,52 @@ async function createWindow(allowedDevtools: boolean, locale: string): Promise<B
  * effects that matter to the process.
  */
 async function main(): Promise<void> {
+  // The application's own name, set before anything asks for a path.
+  //
+  // The call is in `app-identity.ts` rather than inline so that `verify:host-port` can
+  // exercise the *same* function: the probe runs in its own Electron process and cannot
+  // import this file, and when it called `app.setName` itself the resulting assertion
+  // passed on a tree with this call deleted. A check that cannot fail is not a check.
+  //
+  // **This must stay the first statement in `main()`.** `app.setName` only affects
+  // paths resolved after it, and every `getPath` call in this file is inside a function
+  // that runs later. Moving one to module scope would silently undo this, and the
+  // symptom would be a duplicated settings directory rather than an error.
+  applyAppName();
+
+  // Both schemes go in one call: `registerSchemesAsPrivileged` may only be called once
+  // before ready, and a second call would silently not take effect.
+  //
+  // **This has to precede `app.ready`, which in this file means it must precede the first
+  // `await` in `main()`.** The `await` form is the *executable equivalent*, not the rule:
+  // it holds only while `main()` is the file's sole async entry point. A module-scope
+  // `await` above this call would make that assertion give the wrong answer -- and it
+  // would err toward "legal", which is worse than no answer.
+  protocol.registerSchemesAsPrivileged([
+    { scheme: APP_SCHEME, privileges: { ...APP_PRIVILEGES } },
+    { scheme: MEDIA_SCHEME, privileges: { ...MEDIA_PRIVILEGES } },
+  ]);
+
+  // The four roots, created before anything writes into them.
+  //
+  // Deliberately before `createLogger`: the logger writes into `logs`, so creating the
+  // roots has to come first for the same reason the name does.
+  const paths = desktopPaths((name) => app.getPath(name as Parameters<typeof app.getPath>[0]));
+
+  try {
+    await ensurePaths(paths);
+  } catch (error) {
+    process.stderr.write(`haruyuki: cannot create the application directories: ${String(error)}\n`);
+    app.exit(1);
+
+    return;
+  }
+
+  // The crash reporter starts before ready: a crash during start-up is still a crash
+  // worth recording. The dump path is set before the reporter starts so an early crash
+  // has somewhere to land; the directory is created by the retention/ensure path above.
   const userData = app.getPath("userData");
 
-  // P3 first, before ready (docs/33 section 5.5): a crash during start-up is
-  // still a crash worth recording. The dump path is set before the reporter
-  // starts so an early crash has somewhere to land.
   app.setPath("crashDumps", path.join(userData, "crash-dumps"));
   crashReporter.start({ uploadToServer: false, compress: false, rateLimit: false });
   installMainCrashHandlers({
@@ -675,16 +598,13 @@ async function main(): Promise<void> {
     onUnhandled: (detail) => logger?.warn("crash.unhandled-rejection", { detail }),
   });
 
-  logger = createLogger({ logDir: app.getPath("logs"), minLevel: "info" });
+  logger = createLogger({ logDir: paths.logs, minLevel: "info" });
   logger.info("shell.boot", {
     electron: process.versions.electron,
     chrome: process.versions.chrome,
     node: process.versions.node,
     packaged: app.isPackaged,
   });
-
-  // Before ready, and before anything reads the protocol.
-  protocol.registerSchemesAsPrivileged([{ scheme: APP_SCHEME, privileges: { ...APP_PRIVILEGES } }]);
 
   // A second launch focuses the existing window instead of building a second one.
   // Without this, two shells share one settings file and overwrite each other.
@@ -728,6 +648,140 @@ async function main(): Promise<void> {
     }),
   );
 
+  // The secure store. Built after ready because `safeStorage` is only usable then,
+  // and synchronous because its construction touches no disk: if it wrote on
+  // construction, a plaintext file could appear before the user was ever asked.
+  desktopSecrets = createDesktopSecrets({
+    userData: app.getPath("userData"),
+    safeStorage,
+    // `getSelectedStorageBackend` rather than `isEncryptionAvailable`: on Linux with
+    // the `basic_text` backend the latter answers `true` while only obfuscating, so
+    // deriving the answer from it would silently skip the consent prompt that the
+    // requirement exists to guarantee (D2-Q05).
+    keyringAvailable: chosenStorageBackend() !== "basic_text",
+    consent: async ({ storePath }) => {
+      // The question is asked only when the user is about to store something in
+      // plaintext, and it names the file: "encrypted" versus "plaintext in
+      // C:\...\secrets.json" is a decision a person can make, where "your secrets may
+      // be at risk" is not.
+      //
+      // A modal dialog with three answers, because the three outcomes are genuinely
+      // different: accept for good, accept this once, or nothing is stored.
+      const answer = await dialog.showMessageBox({
+        type: "warning",
+        title: APP_NAME,
+        message: "This machine has no system keyring.",
+        detail: `Credentials will be saved in plain text to ${storePath}. Any program that can read that directory can read them.`,
+        buttons: ["Save anyway (do not ask again)", "Save this time only", "Do not save"],
+        defaultId: 2,
+        cancelId: 2,
+      });
+
+      if (answer.response === 0) return "allow-always";
+      if (answer.response === 1) return "allow-once";
+
+      return "deny";
+    },
+  });
+
+  // The operating-system-facing members. Built here rather than at module scope
+  // because every dependency below needs a ready app: `Notification` before ready
+  // throws, and the dialog needs a window to be modal to.
+  desktopMembers = createDesktopMembers(
+    {
+      showNotification: (title, body) => {
+        // `Notification` rather than a renderer toast: this is the OS surface the
+        // requirement names, and whether it is *visible* depends on the app having a
+        // Start Menu entry, which belongs to packaging (requirement T-3).
+        //
+        // The construction is wrapped because a throw here would take down whatever
+        // tried to report a problem -- a failure path that crashes the reporter is
+        // worse than one that stays quiet.
+        try {
+          new Notification({ title, body }).show();
+        } catch (error) {
+          logger?.warn("notify.failed", { detail: String(error).slice(0, 120) });
+        }
+      },
+      openExternal: (url) => shell.openExternal(url),
+      showOpenDialog: async ({ kind, multiple }) => {
+        const answer = await dialog.showOpenDialog({
+          properties:
+            kind === "directory"
+              ? ["openDirectory", ...(multiple ? (["multiSelections"] as const) : [])]
+              : ["openFile", ...(multiple ? (["multiSelections"] as const) : [])],
+        });
+
+        return { cancelled: answer.canceled, paths: answer.filePaths };
+      },
+      // True in this build. The measured caveat about toast visibility is packaging's
+      // (requirement T-3) and does not change whether a notification can be raised.
+      canNotify: () => true,
+      readableRoots: () => readableRootsForMedia,
+      trustAllPaths: () => currentTrustAllPaths(),
+      onFailure: (error) => {
+        logger?.warn("host.refused", {
+          code: error.code,
+          messageKey: error.messageKey,
+          detail: error.detail,
+        });
+      },
+    },
+    shutdownCallbacks,
+  );
+
+  // The media channel. Registered here rather than inside its module because the
+  // scheme list has to be a single call, and because a scheme registered twice in
+  // one process does not take effect the second time (measured during the route
+  // probe).
+  protocol.handle(
+    MEDIA_SCHEME,
+    createMediaHandler({
+      // The type table lives behind this policy; the seam is deliberate so the two
+      // packages never edit the same region of this file.
+      types: MEDIA_TYPE_POLICY,
+      readableRoots: () => readableRootsForMedia,
+      // Read per request rather than cached: the file is the user's, and `F5`'s
+      // switch would otherwise need a message to this process to take effect.
+      // Until `F5` ships there is no writer, so this is always the closed default.
+      trustAllPaths: () => currentTrustAllPaths(),
+      onFailure: (error) => {
+        logger?.warn("media.refused", {
+          code: error.code,
+          messageKey: error.messageKey,
+          detail: error.detail,
+        });
+      },
+    }),
+  );
+
+  // Drag-drop: the one channel this item adds.
+  //
+  // The preload has already converted the drop to `{name, path}[]`, because a `File`
+  // cannot cross into this process at all. What arrives here is therefore untrusted
+  // data that claims to describe files, and it is re-checked rather than believed:
+  // the requirement is explicit that the main process validates the path again
+  // (section 4.6 item 7).
+  //
+  // `ipcMain.handle` rather than `on`, as the requirement specifies. The preload sends
+  // with `ipcRenderer.send` today, which `handle` does not answer -- so the two sides are
+  // deliberately not matched yet, and that is the point of using `handle`: the moment the
+  // preload is changed to `invoke`, a reply exists to receive. An `on` registration would
+  // have to be rewritten at that moment instead.
+  ipcMain.handle(DROPPED_FILES_CHANNEL, (_event, payload: unknown) =>
+    // The receiving logic is in `drop-handler.ts`: what arrives on this channel is
+    // untrusted and turning it into an authorisation is a decision procedure, not
+    // startup wiring. This line is the wiring.
+    createDropHandler({
+      acceptPaths: (accepted) => {
+        setReadableRootsForMedia([...readableRootsForMedia, ...accepted]);
+      },
+      warn: (event, detail) => {
+        logger?.warn(event, detail);
+      },
+    })(payload),
+  );
+
   // The fallback. `protocol.handle` already sets the policy on its own responses;
   // this catches anything the session loads that did not come through the handler.
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
@@ -749,7 +803,9 @@ async function main(): Promise<void> {
     callback({ responseHeaders: headers });
   });
 
-  settings = await loadSettings();
+  const loaded = await loadSettings(logger);
+  settings = loaded.settings;
+  settingsWritable = loaded.writable;
   // Retention runs before supervision and the window; a failed sweep is a log line only.
   await runShellCleanup({
     logsDir: app.getPath("logs"),
@@ -807,75 +863,23 @@ async function main(): Promise<void> {
 
   logger.info("shell.ready", { locale, allowRoot });
 
-  // D4's three diagnostics channels. Registered after the window exists so a
-  // menu/crash-page "open" has a webContents, and before the engine starts so a
-  // crash during start-up can already be exported. No second engine, window or
-  // preload member is involved: the channels are the only extension.
-  registerDiagnosticsIpc({
+  registerMainDiagnosticsIpc({
     ipcMain,
     getWindow: () => mainWindow,
-    sessionAvailable: getSessionDiagnosticsSource() !== null,
+    sessionSource: getSessionDiagnosticsSource,
     logger,
     app,
-    export: async (run) => {
-      // Second sweep: before the save dialog, so a cleanup failure cannot hide behind it.
+    userData,
+    settings,
+    locale,
+    getEngineHost: () => engineHost,
+    cleanup: async () => {
       await runShellCleanup({
         logsDir: app.getPath("logs"),
         crashDir: crashDirFor(userData),
         crashDumpsDir: app.getPath("crashDumps"),
         ...(settings.logs === undefined ? {} : { logs: settings.logs }),
         onLog: logSupervision,
-      });
-      const context: DiagnosticsExportContext = {
-        userData,
-        logsDir: app.getPath("logs"),
-        crashDumpsDir: app.getPath("crashDumps"),
-        downloadsDir: app.getPath("downloads"),
-        appVersion: app.getVersion(),
-        commit: null,
-        electron: process.versions.electron ?? "unknown",
-        chrome: process.versions.chrome ?? "unknown",
-        node: process.versions.node,
-        platform: process.platform,
-        arch: process.arch,
-        release: osRelease(),
-        locale,
-        theme: settings.theme,
-        settings,
-        engine: diagnosticsEngineFacts(engineHost),
-        crashes: readCrashRecords(crashDirFor(userData)),
-        sessionSource: getSessionDiagnosticsSource(),
-        secrets: diagnosticsSecrets(engineHost),
-      };
-
-      return runDiagnosticsExport({ options: run.options }, context, {
-        now: () => new Date(),
-        onEvent: run.onEvent,
-        abortSignal: run.signal,
-        collect: collectDiagnostics,
-        writeZip,
-        labels: diagnosticsLabels(locale),
-        showSaveDialog: async (options) => {
-          const result =
-            mainWindow === null
-              ? await dialog.showSaveDialog(options)
-              : await dialog.showSaveDialog(mainWindow, options);
-
-          return { canceled: result.canceled, filePath: result.filePath };
-        },
-        showMessageBox: async (options) => {
-          const result =
-            mainWindow === null
-              ? await dialog.showMessageBox(options)
-              : await dialog.showMessageBox(mainWindow, options);
-
-          return { response: result.response };
-        },
-        openPath: async (target) => {
-          const failure = await shell.openPath(target);
-
-          if (failure !== "") throw new Error(failure);
-        },
       });
     },
   });
@@ -918,22 +922,6 @@ async function main(): Promise<void> {
  * Best effort and silent: it runs during shutdown, where there is no one to tell
  * and nothing to fall back to. A leftover temp file is a nuisance, not a failure.
  */
-async function removeBootstrapPage(): Promise<void> {
-  if (bootstrapPagePath === null) return;
-
-  const file = bootstrapPagePath;
-
-  bootstrapPagePath = null;
-
-  try {
-    const { rm } = await import("node:fs/promises");
-
-    await rm(file, { force: true });
-  } catch {
-    // Nothing to do; the OS clears temp directories.
-  }
-}
-
 app.on("window-all-closed", () => {
   // On macOS a closed window does not quit the app; everywhere else it does.
   if (process.platform !== "darwin") app.quit();
@@ -945,6 +933,15 @@ app.on("window-all-closed", () => {
 // ended -- are the ones most likely to be missing. `will-quit` because it can be
 // cancelled, and an async drain needs to hold the quit open to be worth anything.
 app.on("will-quit", (event) => {
+  // The port's cleanup runs first, and only once. It is not awaited here: the drain
+  // below already holds the quit open, so awaiting two independent things in one
+  // handler would need a join for no benefit -- the callbacks are synchronous by
+  // contract, and `runShutdown` resolves immediately after them.
+  //
+  // `void` rather than `await` is deliberate and safe for that reason: there is
+  // nothing asynchronous inside it to miss.
+  void desktopMembers?.runShutdown();
+
   // The guard is `logger !== null` rather than "is there anything to do", because
   // this handler re-enters itself: it calls `app.quit()` once it is done, and the
   // second entry must not preventDefault again forever.
@@ -973,10 +970,13 @@ void main().catch((error: unknown) => {
   // `failBoot` is async because it awaits the log flush. Nothing is left to
   // await it *for* once the process is exiting, but an unhandled rejection here
   // would print over the message it is trying to deliver.
-  void failBoot("shell.boot.failed", detail);
+  void failBoot("shell.boot.failed", detail, {
+    preloadPath: path.join(HERE, "preload.cjs"),
+    logger,
+  });
 });
 
-export { bootstrapErrorHtml };
+export { bootstrapErrorHtml } from "./bootstrap-error.js";
 
 /**
  * Stale-engine candidates from the last boot scan.

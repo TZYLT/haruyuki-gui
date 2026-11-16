@@ -32,6 +32,8 @@ import {
   createBridge,
   type HaruyukiBridge,
 } from "../shared/bridge.js";
+import { installDropListener } from "./drop.js";
+import type { DroppedFileReport } from "../shared/bridge.js";
 
 /**
  * Electron's preload surface.
@@ -42,7 +44,7 @@ import {
  * which overloads `NodeRequire` for exactly this name, so the values below are
  * fully typed even though the load is not an ESM one.
  */
-const { contextBridge, ipcRenderer } = require("electron") as typeof import("electron");
+const { contextBridge, ipcRenderer, webUtils } = require("electron") as typeof import("electron");
 
 /**
  * `ipcRenderer` as the bridge's IPC surface.
@@ -69,3 +71,47 @@ const bridge: HaruyukiBridge = createBridge(ipc);
  * other's allowlist.
  */
 contextBridge.exposeInMainWorld(BRIDGE_GLOBAL_NAME, bridge);
+
+/**
+ * Drag-drop, installed inside the preload rather than exposed to the page.
+ *
+ * This is the only place a dropped file's path can be read: `File` is a renderer-side
+ * object and `webUtils.getPathForFile` takes one, so the main process has no way to
+ * do it -- not a policy choice, a type fact. The listener therefore converts the drop
+ * itself and sends an already-converted `{name, path}[]` over one channel.
+ *
+ * `window.haruyuki` is still exactly three members. The
+ * requirement is explicit that other items add *channels*, never members, and a
+ * fourth member here would be a change to the frozen surface.
+ */
+installDropListener({
+  addEventListener: (type, listener) => {
+    // `window` rather than `document`: a drop on any part of the page is a drop, and
+    // listening on `document` misses the areas outside the document box.
+    window.addEventListener(type, listener as EventListener);
+  },
+  removeEventListener: (type, listener) => {
+    window.removeEventListener(type, listener as EventListener);
+  },
+  pathForFile: (file) => {
+    // `""` for a `File` the browser constructed -- measured, and a normal return
+    // value rather than an error. The main process treats "no path" as one case.
+    try {
+      return webUtils.getPathForFile(file);
+    } catch {
+      return "";
+    }
+  },
+  invoke: (channel, payload) => {
+    // `invoke` rather than `send`: the main process decides which dropped paths are
+    // usable, so the answer is the part worth having. A one-way send would report the
+    // page's guess instead of the outcome.
+    return ipcRenderer.invoke(channel, payload) as Promise<DroppedFileReport>;
+  },
+  onError: (detail) => {
+    // A trace rather than silence. There is no logger in the preload, and a drop that
+    // fails without a word is the failure mode users report as "drag and drop does
+    // nothing".
+    console.warn("[haruyuki] drop", detail);
+  },
+});

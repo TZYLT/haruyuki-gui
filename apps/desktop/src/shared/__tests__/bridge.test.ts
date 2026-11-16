@@ -178,12 +178,13 @@ describe("allowlist", () => {
     expect(CHANNEL_ALLOWLIST).toHaveLength(length);
   });
 
-  it("registers ping plus the D4 diagnostics channels", () => {
+  it("registers ping, D4's diagnostics channels and D2's drop report", () => {
     expect(CHANNEL_ALLOWLIST).toEqual([
       PING,
       "bridge:control.diagnostics.export",
       "bridge:control.diagnostics.relaunch",
       "bridge:control.diagnostics.quit",
+      "bridge:control.resource.dropped",
     ]);
   });
 

@@ -36,3 +36,11 @@ export type {
  */
 export * from "./frame/frame.js";
 export * from "./frame/frame-types.js";
+
+/**
+ * The layout wire contract: the document schema and the one
+ * `layout.snapshot` payload set. These are transport-neutral types only; the
+ * store and channel that use them live in @haruyuki/core.
+ */
+export * from "./layout/layout-doc.js";
+export * from "./layout/layout-frame.js";

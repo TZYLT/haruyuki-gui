@@ -9,8 +9,8 @@
   },
   "scripts": {
     "setup:electron": "node ../../node_modules/electron/install.js",
-    "build": "vite build --config vite.main.mts && vite build --config vite.renderer.mts && vite build --config vite.probe.mts",
-    "build:main": "vite build --config vite.main.mts",
+    "build": "node scripts/build-main.mjs && vite build --config vite.renderer.mts && vite build --config vite.probe.mts",
+    "build:main": "node scripts/build-main.mjs",
     "build:renderer": "vite build --config vite.renderer.mts",
     "start": "electron dist/main/main.cjs",
     "typecheck": "tsc --noEmit",
@@ -18,7 +18,9 @@
     "smoke:engine": "node scripts/smoke-engine.mjs",
     "smoke:supervision": "node scripts/supervision-smoke.mjs",
     "verify:gui-host": "node scripts/verify-gui-host.mjs",
-    "verify:bootstrap-error": "node scripts/verify-bootstrap-error.mjs"
+    "verify:bootstrap-error": "node scripts/verify-bootstrap-error.mjs",
+    "verify:media": "node scripts/verify-media.mjs",
+    "verify:host-port": "node scripts/verify-host-port.mjs"
   },
   "dependencies": {
     "@haruyuki/core": "workspace:*",

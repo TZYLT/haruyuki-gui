@@ -49,6 +49,12 @@ export const SHELL_ERROR_CODES = [
   "DIAGNOSTIC_EXPORT_FAILED",
   "STALE_ENGINE_FOUND",
   "STALE_ENGINE_CLEAN_FAILED",
+  // Exactly one new code, because the requirement pins the taxonomy at one
+  // addition (doc 29 section 6.4). The other two media refusals reuse existing
+  // codes: a path outside the readable set is `APP_PROTOCOL_DENIED` (same
+  // meaning: a boundary refused), and an unusable URL is
+  // `APP_PROTOCOL_NOT_FOUND` (the same answer a malformed `app://` path gets).
+  "MEDIA_TYPE_DENIED",
 ] as const;
 
 /** One shell error code. */
@@ -77,6 +83,11 @@ export const SHELL_ERROR_MESSAGE_KEYS = {
   DIAGNOSTIC_EXPORT_FAILED: "error.shell.diagnosticExportFailed",
   STALE_ENGINE_FOUND: "error.shell.staleEngineFound",
   STALE_ENGINE_CLEAN_FAILED: "error.shell.staleEngineCleanFailed",
+  // Its own sentence rather than reusing `resourceDenied`: "this type is not
+  // previewable" and "you are not allowed to read this" are different answers,
+  // and a user who sees the wrong one goes looking for a permission problem that
+  // does not exist.
+  MEDIA_TYPE_DENIED: "error.shell.unsupportedType",
 } as const satisfies Record<ShellErrorCode, string>;
 
 /**

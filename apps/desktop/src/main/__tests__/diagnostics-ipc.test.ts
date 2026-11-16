@@ -136,12 +136,13 @@ describe("the diagnostics allowlist", () => {
     expect(guardChannel("bridge:control.app.ping").ok).toBe(true);
   });
 
-  it("freezes exactly ping plus the three diagnostics commands", () => {
+  it("freezes ping, the three diagnostics commands and D2's drop report", () => {
     expect([...CHANNEL_ALLOWLIST]).toEqual([
       "bridge:control.app.ping",
       "bridge:control.diagnostics.export",
       "bridge:control.diagnostics.relaunch",
       "bridge:control.diagnostics.quit",
+      "bridge:control.resource.dropped",
     ]);
   });
 

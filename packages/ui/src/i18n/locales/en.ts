@@ -133,6 +133,7 @@ export const en = {
   "error.shell.diagnosticExportFailed": "The diagnostic bundle could not be exported",
   "error.shell.staleEngineFound": "An engine process from an earlier run is still running",
   "error.shell.staleEngineCleanFailed": "The leftover engine process could not be ended",
+  "error.shell.unsupportedType": "This kind of file cannot be previewed",
 
   // ------------------------------------------------------------------ a11y
   "a11y.action.delete": "Delete",
