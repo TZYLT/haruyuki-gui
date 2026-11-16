@@ -467,7 +467,12 @@ describe("save", () => {
 
     const onDisk = JSON.parse(await readFile(targetPath(), "utf8")) as LayoutDoc;
     expect(onDisk.extras).toEqual({ step: 2 });
-    expect(await readFile(targetPath(), "utf8")).toBe(`${JSON.stringify(onDisk)}\n`);
+
+    // Exactly the bytes the validator measured, with no trailing newline: the
+    // 256 KiB budget is a promise about the file on disk, so a
+    // document that passes at the limit must not write one byte more.
+    const written = await readFile(targetPath(), "utf8");
+    expect(written).toBe(JSON.stringify(onDisk));
   });
 
   it("keeps the old file readable and the revision unchanged when rename fails", async () => {
@@ -624,3 +629,100 @@ function createFakeFs(
 
   return { fs, files };
 }
+
+describe("a failed backup (W3 R-03)", () => {
+  it("does not promise writability when the copy did not land", async () => {
+    const { fs } = createFakeFs({ [targetPath()]: "{ definitely not json" }, { copy: true });
+    const codes: string[] = [];
+    const store = makeStore({
+      fs,
+      log: (code) => {
+        codes.push(code);
+      },
+    });
+
+    const result = loaded(await store.load());
+
+    expect(result.outcome).toBe("corrupt");
+    // `writable: true` is granted on the ground that the damaged
+    // file was copied aside. Without a copy that ground is gone: allowing the
+    // next save would destroy the only remaining bytes.
+    expect(result.writable).toBe(false);
+    expect(codes).toContain("LAYOUT_IO_ERROR");
+
+    const refused = await store.save(defaultDoc);
+    expect(refused).toMatchObject({ ok: false, code: "LAYOUT_IO_ERROR" });
+  });
+
+  it("still reports the damaged load as writable once the copy lands", async () => {
+    const { fs } = createFakeFs({ [targetPath()]: "{ definitely not json" });
+    const store = makeStore({ fs });
+
+    const result = loaded(await store.load());
+
+    expect(result.outcome).toBe("corrupt");
+    expect(result.writable).toBe(true);
+  });
+});
+
+describe("a successful save clears the load-time verdict (W3 R-13)", () => {
+  it("reports outcome ok after the damaged file has been replaced", async () => {
+    const corrupt = await readFixture("corrupt.json");
+    const store = makeStore({
+      fs: createFakeFs({ [targetPath()]: corrupt }).fs,
+    });
+
+    expect(loaded(await store.load()).outcome).toBe("fell-back-to-default");
+    expect(store.getStatus().outcome).toBe("fell-back-to-default");
+
+    const saved = await store.save(store.getDoc());
+    expect(saved).toMatchObject({ ok: true, revision: 1 });
+
+    // The document on disk is good now, so a renderer that reconnects must not
+    // be told again that its layout was replaced by the default one.
+    expect(store.getStatus().outcome).toBe("ok");
+    expect(store.getStatus().writable).toBe(true);
+  });
+});
+
+describe("unknown panels that cannot be recovered (W3 R-05)", () => {
+  it("logs the number it had to drop instead of returning an empty list", async () => {
+    // 256 panels is the documented ceiling, so a 256-panel fallback plus one
+    // recovery panel no longer validates: the tabs cannot be kept.
+    const manyPanels: LayoutDoc = {
+      version: 1,
+      root: {
+        type: "split",
+        orientation: "horizontal",
+        children: Array.from({ length: 256 }, (_unused, index) => ({
+          type: "panel" as const,
+          id: `p${String(index)}`,
+          tabs: [{ tabId: `t${String(index)}`, pageId: "sample.conversation" }],
+        })),
+        sizes: Array.from({ length: 256 }, (): number => 1),
+      },
+    };
+    const corrupt = await readFixture("corrupt.json");
+    const entries: Array<{ code: string; detail: Record<string, unknown> | undefined }> = [];
+    const store = makeStore({
+      fs: createFakeFs({ [targetPath()]: corrupt }).fs,
+      defaultDoc: manyPanels,
+      log: (code, detail) => {
+        entries.push({ code, detail });
+      },
+    });
+
+    const result = loaded(await store.load());
+
+    expect(result.outcome).toBe("fell-back-to-default");
+    expect(result.unknownPageIds).toEqual([]);
+
+    // An empty list is not the same fact as "panel dropped": the log carries
+    // the difference.
+    const dropped = entries.find(
+      (entry) => entry.code === "LAYOUT_INVALID" && entry.detail?.["step"] === "recovery",
+    );
+    expect(dropped).toBeDefined();
+    expect(dropped?.detail?.["dropped"]).toBe(1);
+  });
+});

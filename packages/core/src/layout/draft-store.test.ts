@@ -97,14 +97,19 @@ function createMemoryFs(initial: Record<string, string> = {}): {
   fs: LayoutFs;
   files: Map<string, string>;
   failWrites(flag: boolean): void;
+  failCopies(flag: boolean): void;
 } {
   const files = new Map<string, string>(Object.entries(initial));
   let failing = false;
+  let copying = false;
   const fail = (): Error => Object.assign(new Error("injected write failure"), { code: "EIO" });
   return {
     files,
     failWrites(flag) {
       failing = flag;
+    },
+    failCopies(flag) {
+      copying = flag;
     },
     fs: {
       async readFile(path) {
@@ -122,6 +127,7 @@ function createMemoryFs(initial: Record<string, string> = {}): {
         files.set(to, data);
       },
       async copyFile(from, to) {
+        if (copying) throw Object.assign(new Error("injected copy failure"), { code: "EIO" });
         const data = files.get(from);
         if (data === undefined) throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
         files.set(to, data);
@@ -434,5 +440,61 @@ describe("createDraftStore", () => {
       drafts: { c1: { text: "旧草稿" } },
     });
     expect(entries.map((entry) => entry.code)).toContain("DRAFT_IO_ERROR");
+  });
+});
+
+describe("a draft file with no version field (W3 R-06)", () => {
+  it("loads as v1, the same reading the layout store gives the same situation", async () => {
+    const memory = createMemoryFs({
+      [draftsPath]: JSON.stringify({
+        drafts: { c1: { text: "未版本化", updatedAt: "2026-11-16T12:00:00.000Z" } },
+      }),
+    });
+    const captured = createLog();
+    const store = open({ fs: memory.fs, log: captured.log });
+
+    // Two files in one directory must not disagree about a missing version:
+    // the layout store substitutes 1, so drafts do too.
+    await expect(store.loadDraft("c1")).resolves.toBe("未版本化");
+    expect(captured.entries.some((entry) => entry.code === "DRAFT_VERSION_ASSUMED")).toBe(true);
+
+    await expect(store.saveDraft("c1", "改过")).resolves.toEqual({ ok: true });
+    const raw = JSON.parse(memory.files.get(draftsPath) ?? "{}") as { version?: number };
+
+    expect(raw.version).toBe(1);
+  });
+
+  it("still refuses a genuinely newer file instead of reading it", async () => {
+    const memory = createMemoryFs({
+      [draftsPath]: JSON.stringify({
+        version: 2,
+        drafts: { c1: { text: "来自更新版本", updatedAt: "2026-11-16T12:00:00.000Z" } },
+      }),
+    });
+    const store = open({ fs: memory.fs });
+
+    await expect(store.loadDraft("c1")).resolves.toBeNull();
+    await expect(store.saveDraft("c1", "覆盖尝试")).resolves.toMatchObject({
+      ok: false,
+      code: "DRAFT_INVALID",
+    });
+  });
+});
+
+describe("a failed draft backup (W3 R-03)", () => {
+  it("keeps the store read-only instead of overwriting the only copy", async () => {
+    const memory = createMemoryFs({ [draftsPath]: "{ this is not json" });
+    memory.failCopies(true);
+    const store = open({ fs: memory.fs });
+
+    await expect(store.loadDraft("c1")).resolves.toBeNull();
+
+    // Without a copy there is nothing to recover from, so the next keystroke
+    // must be refused rather than replace the damaged file with an empty one.
+    await expect(store.saveDraft("c1", "新草稿")).resolves.toMatchObject({
+      ok: false,
+      code: "DRAFT_IO_ERROR",
+    });
+    expect(memory.files.get(draftsPath)).toBe("{ this is not json");
   });
 });

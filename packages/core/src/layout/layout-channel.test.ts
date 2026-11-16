@@ -30,6 +30,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import type {
+  BulkFrame,
   Frame,
   LayoutDoc,
   LayoutSaveAck,
@@ -38,6 +39,7 @@ import type {
 } from "@haruyuki/protocol";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { createFrameSender } from "../bridge/sender";
 import { createDraftStore } from "./draft-store";
 import type { DraftStore } from "./draft-store";
 import { createNodeLayoutFs } from "./layout-fs";
@@ -596,5 +598,106 @@ describe("end to end over a real store", () => {
     await channel.close();
     await drafts.close();
     await store.close();
+  });
+});
+
+/**
+ * The three page fields are minted by `createFrameSender`, not by the layout
+ * channel, so "one snapshot, `page.more === false`, `items[0]` unchanged" can
+ * can only be shown through the real sender. The second case drives the pager
+ * past one page to pin the snapshot identity rules: one snapshot keeps one
+ * watermark, every page mints its own token, `more` stays true until the last
+ * page, and the items tile the snapshot in document order.
+ */
+describe("layout.snapshot through the real frame sender", () => {
+  function wire(): { payloads: BulkFrame[]; sender: ReturnType<typeof createFrameSender> } {
+    const payloads: BulkFrame[] = [];
+
+    const sender = createFrameSender({
+      frameTypes: new Set(["layout.snapshot"]),
+      transport: (payload) => {
+        payloads.push(JSON.parse(payload) as BulkFrame);
+      },
+    });
+
+    return { payloads, sender };
+  }
+
+  it("delivers the authoritative document as one page with more=false", () => {
+    const { payloads, sender } = wire();
+    const fake = createFakeStore({ revision: 7 });
+    const channel = createLayoutChannel({
+      store: fake.store,
+      draftStore: createFakeDraftStore().store,
+      send: (frame) => {
+        sender.send(frame);
+      },
+    });
+
+    channel.publish();
+    sender.flush();
+
+    expect(payloads).toHaveLength(1);
+
+    const delivered = payloads[0];
+    expect(delivered).toMatchObject({ v: 1, ch: "bulk", t: "layout.snapshot" });
+    expect(delivered?.page?.more).toBe(false);
+    expect(typeof delivered?.page?.watermark).toBe("number");
+    expect(typeof delivered?.page?.token).toBe("string");
+    expect(typeof delivered?.seq).toBe("number");
+
+    const body = delivered?.body as LayoutSnapshotBody;
+    expect(body.revision).toBe(7);
+    expect(body.items).toHaveLength(1);
+    // The page carries the document itself, unchanged: this is the one wire
+    // promise E1 reconstructs from.
+    expect(body.items[0]).toEqual(fake.store.getDoc());
+  });
+
+  it("splits an over-budget snapshot without losing or reordering items", () => {
+    // Five documents of ~250 KiB: the snapshot exceeds the 1 MiB page budget
+    // while every item still fits one page on its own.
+    const documents: LayoutDoc[] = Array.from({ length: 5 }, (_unused, index) => ({
+      version: 1,
+      root: {
+        type: "panel",
+        id: `p${String(index)}`,
+        tabs: [{ tabId: `t${String(index)}`, pageId: "sample.conversation" }],
+      },
+      extras: { pad: "x".repeat(250 * 1024) },
+    }));
+
+    const { payloads, sender } = wire();
+    const body: LayoutSnapshotBody = {
+      outcome: "ok",
+      writable: true,
+      foundVersion: 1,
+      unknownPageIds: [],
+      revision: 3,
+      items: documents,
+    };
+
+    sender.send({ v: 1, ch: "bulk", seq: 0, t: "layout.snapshot", body });
+    sender.flush();
+
+    expect(payloads.length).toBeGreaterThan(1);
+
+    const pages = payloads.map((frame) => frame.page);
+    const watermark = pages[0]?.watermark;
+
+    // One snapshot, one watermark: a page from the same snapshot is never
+    // mistaken for a newer one.
+    expect(pages.every((page) => page?.watermark === watermark)).toBe(true);
+    // One token per page: a duplicate page is droppable by name.
+    expect(new Set(pages.map((page) => page?.token)).size).toBe(pages.length);
+    // `more` is true until the last page, which closes the snapshot.
+    expect(pages.slice(0, -1).every((page) => page?.more === true)).toBe(true);
+    expect(pages.at(-1)?.more).toBe(false);
+
+    // The pages tile the snapshot: every document exactly once, in order.
+    const delivered = payloads.flatMap((frame) => (frame.body as LayoutSnapshotBody).items);
+
+    expect(delivered).toEqual(documents);
+    expect(payloads.every((frame) => frame.t === "layout.snapshot")).toBe(true);
   });
 });

@@ -111,6 +111,8 @@ interface WalkState {
   tabs: number;
   /** The first panel in document order; `activePanelId`'s repair target. */
   firstPanelId: string | null;
+  /** Fields a soft repair rewrote, so the caller can log that they changed. */
+  readonly repaired: string[];
 }
 
 /** Require a non-empty string, naming the field in the failure. */
@@ -247,6 +249,8 @@ function validatePanel(node: Record<string, unknown>, path: string, state: WalkS
       } else {
         panel.activeTabId = firstTab.tabId;
       }
+
+      state.repaired.push(`${path}.activeTabId`);
     }
   }
 }
@@ -302,6 +306,7 @@ function validateTab(tab: unknown, path: string, state: WalkState): void {
 export function validateLayoutDoc(
   value: unknown,
   knownPageIds: ReadonlySet<string>,
+  log?: (code: string, detail?: Record<string, unknown>) => void,
 ): LayoutValidation {
   try {
     if (!isRecord(value)) {
@@ -341,6 +346,7 @@ export function validateLayoutDoc(
       panels: 0,
       tabs: 0,
       firstPanelId: null,
+      repaired: [],
     };
 
     validateNode(doc.root, 1, "root", state);
@@ -352,6 +358,12 @@ export function validateLayoutDoc(
     // limit, not merely the candidate that came in.
     if (Buffer.byteLength(JSON.stringify(doc), "utf8") > LAYOUT_LIMITS.maxBytes) {
       tooLarge(`layout document exceeds ${String(LAYOUT_LIMITS.maxBytes)} bytes after soft repair`);
+    }
+
+    // A soft repair changes a selection the user can see, so it leaves a trace:
+    // a log entry, not a banner.
+    if (state.repaired.length > 0) {
+      log?.("LAYOUT_REPAIRED", { count: state.repaired.length, fields: state.repaired });
     }
 
     return { ok: true, doc, unknownPageIds: state.unknownPageIds };
@@ -407,4 +419,6 @@ function repairActivePanelId(doc: LayoutDoc, state: WalkState): void {
   } else {
     doc.activePanelId = state.firstPanelId;
   }
+
+  state.repaired.push("activePanelId");
 }

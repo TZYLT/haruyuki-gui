@@ -44,7 +44,7 @@
  *   the step -- never document text, never page props.
  */
 
-import { basename, dirname, join } from "node:path";
+import { basename, dirname } from "node:path";
 
 import type {
   LayoutDoc,
@@ -58,7 +58,7 @@ import { LAYOUT_DOC_VERSION } from "@haruyuki/protocol";
 import { atomicWrite, backupFile, pruneBackups } from "./layout-fs";
 import type { LayoutFs } from "./layout-fs";
 import { collectUnknownTabs, mergeUnknownTabs } from "./layout-merge";
-import { formatTimestamp } from "./layout-paths";
+import { backupPathFor, corruptionPrefix, formatTimestamp } from "./layout-paths";
 import { validateLayoutDoc } from "./layout-validate";
 import type { LayoutValidation } from "./layout-validate";
 
@@ -126,20 +126,19 @@ export function createLayoutStore(options: LayoutStoreOptions): LayoutStore {
   // The default is validated once, at construction. A bad default is an
   // assembly error, not a user scenario, so `load` reports it rather than
   // throwing from the constructor.
-  const defaultValidation = validateLayoutDoc(options.defaultDoc, known);
+  const defaultValidation = validateLayoutDoc(options.defaultDoc, known, log);
   const defaultDoc = defaultValidation.ok ? defaultValidation.doc : null;
 
   const directory = dirname(layoutPath);
-  const stem = basename(layoutPath, ".json");
-  const backupPrefix = `${stem}.corrupt-`;
+  const backupPrefix = corruptionPrefix(layoutPath);
 
   let doc: LayoutDoc | null = null;
   let revision = 0;
   let outcome: LayoutOutcome = "default";
   let writable = false;
   let foundVersion: number | null = null;
-  /** Why `save` must refuse when `writable` is false. */
-  let blocked: LayoutErrorCode = "LAYOUT_IO_ERROR";
+  /** Why `save` must refuse when `writable` is false; null while writable. */
+  let blocked: LayoutErrorCode | null = null;
 
   /**
    * The unknown `pageId`s of the current document, deduplicated in first-seen
@@ -187,18 +186,42 @@ export function createLayoutStore(options: LayoutStoreOptions): LayoutStore {
     };
   }
 
-  /** Copy the current file aside and prune to the newest three. Never throws. */
-  async function backUp(): Promise<void> {
-    const target = join(directory, `${backupPrefix}${formatTimestamp(clock())}.json`);
+  /**
+   * Copy the current file aside and prune to the newest three. Never throws.
+   *
+   * Returns whether the copy landed. Callers must not promise "backed up" when
+   * it did not: `writable: true` is conditional on the backup, because the next
+   * because the next save overwrites the only copy of the damaged file.
+   */
+  async function backUp(): Promise<boolean> {
+    const target = backupPathFor(layoutPath, formatTimestamp(clock()));
     const copied = await backupFile(fs, layoutPath, target);
 
     if (!copied) {
-      // Keep loading: the backup is for the user's benefit, not a precondition
-      // for reporting the truth about the document.
       log?.("LAYOUT_IO_ERROR", { file: basename(layoutPath), step: "backup" });
     }
 
     await pruneBackups(fs, directory, backupPrefix);
+
+    return copied;
+  }
+
+  /**
+   * A recovery branch whose writability depends on the backup having landed.
+   * Without a copy, the load result is read-only: `save` refuses with
+   * `LAYOUT_IO_ERROR` instead of destroying the only remaining bytes.
+   */
+  function recovered(
+    nextDoc: LayoutDoc,
+    nextOutcome: LayoutOutcome,
+    nextFoundVersion: number | null,
+    backedUp: boolean,
+  ): LayoutLoadResult {
+    if (backedUp) {
+      return settle(nextDoc, nextOutcome, true, nextFoundVersion);
+    }
+
+    return settle(nextDoc, nextOutcome, false, nextFoundVersion, "LAYOUT_IO_ERROR");
   }
 
   /** The unreadable-file branch: default document, read-only, IO error on save. */
@@ -252,15 +275,15 @@ export function createLayoutStore(options: LayoutStoreOptions): LayoutStore {
     try {
       parsed = JSON.parse(text);
     } catch {
-      await backUp();
+      const backedUp = await backUp();
       log?.("LAYOUT_CORRUPT", { file: basename(layoutPath), reason: "parse" });
-      return settle(defaultDoc, "corrupt", true, null);
+      return recovered(defaultDoc, "corrupt", null, backedUp);
     }
 
     if (!isRecord(parsed)) {
-      await backUp();
+      const backedUp = await backUp();
       log?.("LAYOUT_CORRUPT", { file: basename(layoutPath), reason: "top-level" });
-      return settle(defaultDoc, "corrupt", true, null);
+      return recovered(defaultDoc, "corrupt", null, backedUp);
     }
 
     const rawVersion = parsed["version"];
@@ -289,18 +312,18 @@ export function createLayoutStore(options: LayoutStoreOptions): LayoutStore {
 
       if (numericVersion < LAYOUT_DOC_VERSION) {
         // v1 has nothing to migrate from; zero or negative is not a version.
-        await backUp();
+        const backedUp = await backUp();
         log?.("LAYOUT_CORRUPT", { file: basename(layoutPath), reason: "version" });
-        return settle(defaultDoc, "corrupt", true, numericVersion);
+        return recovered(defaultDoc, "corrupt", numericVersion, backedUp);
       }
     } else {
       // A string, a fraction, null, an object: not a version this build wrote.
-      await backUp();
+      const backedUp = await backUp();
       log?.("LAYOUT_CORRUPT", { file: basename(layoutPath), reason: "version" });
-      return settle(defaultDoc, "corrupt", true, numericVersion);
+      return recovered(defaultDoc, "corrupt", numericVersion, backedUp);
     }
 
-    const validation = validateLayoutDoc(parsed, known);
+    const validation = validateLayoutDoc(parsed, known, log);
 
     if (validation.ok) {
       return settle(validation.doc, "ok", true, numericVersion);
@@ -309,7 +332,7 @@ export function createLayoutStore(options: LayoutStoreOptions): LayoutStore {
     // Parseable but unusable. Back it up first (I-2), then decide whether the
     // caller may save over it. Unsupported versions are read-only; every
     // other structural failure is recoverable, because the bytes are backed up.
-    await backUp();
+    const backedUp = await backUp();
 
     if (validation.code === "LAYOUT_UNSUPPORTED_VERSION") {
       log?.("LAYOUT_UNSUPPORTED_VERSION", { file: basename(layoutPath) });
@@ -324,18 +347,18 @@ export function createLayoutStore(options: LayoutStoreOptions): LayoutStore {
 
     if (validation.code === "LAYOUT_CORRUPT") {
       log?.("LAYOUT_CORRUPT", { file: basename(layoutPath), reason: "validate" });
-      return settle(defaultDoc, "corrupt", true, numericVersion);
+      return recovered(defaultDoc, "corrupt", numericVersion, backedUp);
     }
 
     log?.(validation.code, {
       file: basename(layoutPath),
       reason: "invalid",
     });
-    return settle(
-      recoverUnknownTabs(parsed, defaultDoc, known),
+    return recovered(
+      recoverUnknownTabs(parsed, defaultDoc, known, log),
       "fell-back-to-default",
-      true,
       numericVersion,
+      backedUp,
     );
   }
 
@@ -347,10 +370,10 @@ export function createLayoutStore(options: LayoutStoreOptions): LayoutStore {
     }
 
     if (!writable) {
-      return { ok: false, code: blocked };
+      return { ok: false, code: blocked ?? "LAYOUT_IO_ERROR" };
     }
 
-    const validation = validateLayoutDoc(next, known);
+    const validation = validateLayoutDoc(next, known, log);
 
     if (!validation.ok) {
       return validation.detail === undefined
@@ -363,6 +386,11 @@ export function createLayoutStore(options: LayoutStoreOptions): LayoutStore {
     // authoritative document is untouched if the write later fails.
     const merged = mergeUnknownTabs(doc, validation.doc, known);
 
+    // Defensive assertion, not a reachable branch: `mergeUnknownTabs` already
+    // re-inserts every unknown tab of `doc`, so this can only fire if the merge
+    // itself regresses. It is kept because the alternative -- writing a document
+    // that silently dropped a panel the user cannot see -- is exactly what
+    // unknown-tab preservation forbids; there is no test that can reach it.
     if (losesUnknownTabs(doc, merged, known)) {
       log?.("LAYOUT_UNKNOWN_PANELS_LOST", { file: basename(layoutPath) });
       return { ok: false, code: "LAYOUT_UNKNOWN_PANELS_LOST" };
@@ -370,7 +398,7 @@ export function createLayoutStore(options: LayoutStoreOptions): LayoutStore {
 
     // Validate what will actually be written: the merge can only add tabs, but
     // it is the merged document the next load has to accept.
-    const mergedValidation = validateLayoutDoc(merged, known);
+    const mergedValidation = validateLayoutDoc(merged, known, log);
 
     if (!mergedValidation.ok) {
       return mergedValidation.detail === undefined
@@ -378,7 +406,11 @@ export function createLayoutStore(options: LayoutStoreOptions): LayoutStore {
         : { ok: false, code: mergedValidation.code, detail: mergedValidation.detail };
     }
 
-    const text = `${JSON.stringify(mergedValidation.doc)}\n`;
+    // No trailing newline: the 256 KiB budget is measured on the
+    // bytes the validator saw, so the file on disk must be exactly those bytes
+    // (docs/36 4.3.1 "by the actual file bytes"). A newline here would write one
+    // byte more than any document that passed validation.
+    const text = JSON.stringify(mergedValidation.doc);
 
     try {
       await fs.mkdir(directory);
@@ -397,6 +429,14 @@ export function createLayoutStore(options: LayoutStoreOptions): LayoutStore {
     doc = mergedValidation.doc;
     revision += 1;
 
+    // The damaged document has been replaced by a good one, so the load-time
+    // verdict no longer describes what is on disk. Without this, a snapshot
+    // published after the save would still say "fell-back-to-default" and a
+    // reconnecting renderer would show the recovery notice a second time.
+    outcome = "ok";
+    writable = true;
+    blocked = null;
+
     return { ok: true, revision };
   }
 
@@ -404,7 +444,7 @@ export function createLayoutStore(options: LayoutStoreOptions): LayoutStore {
     load,
     save,
     validate(value) {
-      return validateLayoutDoc(value, known);
+      return validateLayoutDoc(value, known, log);
     },
     getDoc() {
       if (doc === null) {
@@ -456,6 +496,7 @@ function recoverUnknownTabs(
   corrupt: Record<string, unknown>,
   fallback: LayoutDoc,
   known: ReadonlySet<string>,
+  log?: (code: string, detail?: Record<string, unknown>) => void,
 ): LayoutDoc {
   const tabs = scanUnknownTabs(corrupt, known);
 
@@ -474,12 +515,24 @@ function recoverUnknownTabs(
     },
   };
   const merged = mergeUnknownTabs(source, fallback, known);
-  const validation = validateLayoutDoc(merged, known);
+  const validation = validateLayoutDoc(merged, known, log);
 
   // A recovery panel must not make an otherwise valid fallback invalid. If it
   // somehow does, the default document still loads; the backup keeps the
-  // original bytes either way.
-  return validation.ok ? validation.doc : cloneJson(fallback);
+  // original bytes either way. The drop is still reported: unknown panels must
+  // forbids clearing unknown panels silently, and a caller that sees an empty
+  // unknownPageIds must be able to tell "none found" from "dropped".
+  if (validation.ok) {
+    return validation.doc;
+  }
+
+  log?.("LAYOUT_INVALID", {
+    step: "recovery",
+    reason: validation.code,
+    dropped: tabs.length,
+  });
+
+  return cloneJson(fallback);
 }
 
 /** Depth-first, null-tolerant scan for unknown tabs in arbitrary parsed JSON. */

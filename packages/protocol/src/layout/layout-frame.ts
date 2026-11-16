@@ -14,7 +14,14 @@ import type { LayoutDoc } from "./layout-doc.js";
 /** The single frame type this item adds to `FRAME_TYPES`. */
 export const LAYOUT_SNAPSHOT_FRAME = "layout.snapshot" as const;
 
-/** How the last load ended, as the renderer needs to explain it. */
+/**
+ * How the last load ended, as the renderer needs to explain it.
+ *
+ * `migrated` is part of the v1 wire vocabulary but **no v1 build produces it**:
+ * the only older version is "no version field", which loads as v1 unchanged
+ * It stays in the union so a future migration does not need a
+ * protocol change; renderers must accept it and treat it like `ok`.
+ */
 export type LayoutOutcome =
   | "ok"
   | "default"

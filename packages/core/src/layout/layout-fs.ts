@@ -22,6 +22,7 @@
 
 import { randomUUID } from "node:crypto";
 import {
+  chmod,
   copyFile,
   mkdir,
   readFile,
@@ -32,6 +33,16 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { join } from "node:path";
+
+/**
+ * POSIX modes for what the layout layer writes.
+ *
+ * Draft files hold the user's text, so they must not be world-readable; the
+ * directory is owner-only for the same reason. Windows has no equivalent, and
+ * `harden` is a no-op there.
+ */
+export const LAYOUT_FILE_MODE = 0o600;
+export const LAYOUT_DIR_MODE = 0o700;
 
 /** The only filesystem surface the layout store and draft store may use. */
 export interface LayoutFs {
@@ -54,7 +65,32 @@ export interface LayoutFs {
 }
 
 /** `node:fs/promises`, adapted to the `LayoutFs` contract. */
-export function createNodeLayoutFs(): LayoutFs {
+export function createNodeLayoutFs(options?: {
+  /** Diagnostic sink; receives codes and steps, never file contents. */
+  log?: (code: string, detail?: Record<string, unknown>) => void;
+}): LayoutFs {
+  const log = options?.log ?? ((): void => undefined);
+
+  /**
+   * Best-effort hardening of what the layout layer writes.
+   *
+   * Layout documents hold no secrets, but drafts hold the user's text, and the
+   * default umask leaves both readable by every account on the machine. A
+   * failure is logged and swallowed: "saved with wider permissions" is worse
+   * than "not saved at all", which is what throwing would produce.
+   *
+   * Windows only models the write bit, so there is nothing to do there.
+   */
+  async function harden(target: string, mode: number, step: string): Promise<void> {
+    if (process.platform === "win32") return;
+
+    try {
+      await chmod(target, mode);
+    } catch {
+      log("LAYOUT_IO_ERROR", { step });
+    }
+  }
+
   return {
     async readFile(path) {
       try {
@@ -66,6 +102,9 @@ export function createNodeLayoutFs(): LayoutFs {
     },
     async writeFile(path, data) {
       await writeFile(path, data, "utf8");
+      // The temp file is written first and renamed into place, so harden here
+      // and the final document inherits the narrower mode.
+      await harden(path, LAYOUT_FILE_MODE, "chmod-write");
     },
     async rename(from, to) {
       await rename(from, to);
@@ -75,6 +114,7 @@ export function createNodeLayoutFs(): LayoutFs {
     },
     async mkdir(path) {
       await mkdir(path, { recursive: true });
+      await harden(path, LAYOUT_DIR_MODE, "chmod-mkdir");
     },
     async unlink(path) {
       await unlink(path);

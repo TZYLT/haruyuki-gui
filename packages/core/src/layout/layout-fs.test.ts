@@ -19,7 +19,14 @@ import { basename, dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { backupPath, layoutPath } from "./layout-paths";
-import { atomicWrite, backupFile, createNodeLayoutFs, pruneBackups } from "./layout-fs";
+import {
+  LAYOUT_DIR_MODE,
+  LAYOUT_FILE_MODE,
+  atomicWrite,
+  backupFile,
+  createNodeLayoutFs,
+  pruneBackups,
+} from "./layout-fs";
 import type { LayoutFs } from "./layout-fs";
 
 let root: string;
@@ -271,3 +278,32 @@ function createFakeFs(
   };
   return { fs, files };
 }
+
+describe("POSIX hardening (W3 R-07)", () => {
+  it("pins the modes it writes with", () => {
+    // Requirement values, not incidental numbers: a draft file
+    // holds the user's text, so widening these must fail here.
+    expect(LAYOUT_FILE_MODE).toBe(0o600);
+    expect(LAYOUT_DIR_MODE).toBe(0o700);
+  });
+
+  it("accepts a diagnostic sink without changing the fs surface", async () => {
+    const codes: string[] = [];
+    const fs = createNodeLayoutFs({
+      log: (code) => {
+        codes.push(code);
+      },
+    });
+
+    // On Windows `harden` is a no-op by design, so the only cross-platform
+    // promise is that wiring a logger does not change behaviour or throw.
+    const directory = join(root, "layout");
+    const file = join(directory, "desktop.json");
+
+    await fs.mkdir(directory);
+    await fs.writeFile(file, "{}");
+
+    expect(await fs.readFile(file)).toBe("{}");
+    expect(codes).toEqual([]);
+  });
+});

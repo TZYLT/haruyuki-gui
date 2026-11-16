@@ -50,13 +50,13 @@
  *   paths cannot alias each other (invariant I-4).
  */
 
-import { basename, dirname, join } from "node:path";
+import { dirname } from "node:path";
 
 import type { DraftAck, LayoutErrorCode } from "@haruyuki/protocol";
 
 import { atomicWrite, backupFile, pruneBackups } from "./layout-fs";
 import type { LayoutFs } from "./layout-fs";
-import { formatTimestamp } from "./layout-paths";
+import { backupPathFor, corruptionPrefix, formatTimestamp } from "./layout-paths";
 
 /** One conversation's draft: the text and the timestamp eviction orders by. */
 interface DraftEntry {
@@ -146,11 +146,6 @@ function toEntry(value: unknown): DraftEntry | null {
 }
 
 /** `drafts-desktop` from `.../layout/drafts-desktop.json`; the backup prefix stem. */
-function backupStem(draftsPath: string): string {
-  const name = basename(draftsPath);
-  return name.endsWith(".json") ? name.slice(0, -".json".length) : name;
-}
-
 /** Define an own enumerable key, so a JSON `__proto__` stays a field. */
 function defineKey(target: Record<string, unknown>, key: string, value: unknown): void {
   Object.defineProperty(target, key, {
@@ -176,7 +171,7 @@ export function createDraftStore(options: DraftStoreOptions): DraftStore {
   const log = options.log ?? ((): void => undefined);
 
   const backupDir = dirname(draftsPath);
-  const backupPrefix = `${backupStem(draftsPath)}.corrupt-`;
+  const backupPrefix = corruptionPrefix(draftsPath);
 
   /** The in-memory mirror of `drafts`. Replaced, never mutated by callers. */
   let drafts = new Map<string, DraftEntry>();
@@ -210,7 +205,7 @@ export function createDraftStore(options: DraftStoreOptions): DraftStore {
 
   /** Copy the current file aside and prune to the newest copies. Best effort. */
   async function preserve(): Promise<boolean> {
-    const target = join(backupDir, `${backupPrefix}${formatTimestamp(clock())}.json`);
+    const target = backupPathFor(draftsPath, formatTimestamp(clock()));
     const copied = await backupFile(fs, draftsPath, target);
     if (copied) await pruneBackups(fs, backupDir, backupPrefix, DRAFT_LIMITS.maxBackups);
     return copied;
@@ -224,7 +219,12 @@ export function createDraftStore(options: DraftStoreOptions): DraftStore {
     const backedUp = await preserve();
     drafts = new Map();
     preserved = Object.create(null) as Record<string, unknown>;
-    readOnly = null;
+
+    // Writable only if the unusable file was actually copied aside. Without a
+    // copy, the next keystroke would replace the only remaining bytes, so the
+    // store stays read-only for this file instead of pretending the backup
+    // succeeded.
+    readOnly = backedUp ? null : "io";
     log(code, { ...detail, backup: backedUp });
   }
 
@@ -279,7 +279,17 @@ export function createDraftStore(options: DraftStoreOptions): DraftStore {
       log("DRAFT_INVALID", { phase: "load", step: "version", version: raw.version });
       return;
     }
-    if (raw.version !== 1 || !isRecord(raw.drafts)) {
+
+    // A file written before the version field existed is v1, exactly as the
+    // layout store treats it. Two adjacent files in one
+    // directory must not disagree about what a missing version means.
+    const version = raw.version === undefined ? 1 : raw.version;
+
+    if (raw.version === undefined) {
+      log("DRAFT_VERSION_ASSUMED", { phase: "load", assumed: 1 });
+    }
+
+    if (version !== 1 || !isRecord(raw.drafts)) {
       await discardAsEmpty("DRAFT_INVALID", { phase: "load", step: "version" });
       return;
     }
@@ -358,9 +368,15 @@ export function createDraftStore(options: DraftStoreOptions): DraftStore {
     for (const [conversationId, entry] of drafts) {
       body[conversationId] = { text: entry.text, updatedAt: entry.updatedAt };
     }
+
+    // Typed as the declared on-disk shape: a `DraftFile` that stops matching
+    // what the loader accepts is a compile error here instead of a silent
+    // "every draft disappeared after an upgrade".
+    const draftFile: DraftFile = { version: 1, drafts: body };
     const out: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
-    out.version = 1;
-    out.drafts = body;
+    out["version"] = draftFile.version;
+    out["drafts"] = draftFile.drafts;
+
     for (const key of Object.keys(preserved)) defineKey(out, key, preserved[key]);
     return `${JSON.stringify(out)}\n`;
   }

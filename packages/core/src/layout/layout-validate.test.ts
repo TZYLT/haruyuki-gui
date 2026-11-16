@@ -355,21 +355,33 @@ describe("limits", () => {
     return doc(panel("main", tabs));
   }
 
+  /**
+   * The four numbers are requirements, not implementation choices. They are
+   * choices. They are pinned by literal so that lowering a constant fails here
+   * instead of quietly lowering the product's promise.
+   */
+  it("carries the four documented limits", () => {
+    expect(LAYOUT_LIMITS.maxBytes).toBe(262144);
+    expect(LAYOUT_LIMITS.maxPanels).toBe(256);
+    expect(LAYOUT_LIMITS.maxTabs).toBe(1024);
+    expect(LAYOUT_LIMITS.maxDepth).toBe(32);
+  });
+
   it("accepts 32 levels and rejects 33", () => {
-    const deepestAccepted = depthDoc(LAYOUT_LIMITS.maxDepth - 1);
+    const deepestAccepted = depthDoc(31);
 
     expect(validateLayoutDoc(deepestAccepted, KNOWN_PAGE_IDS).ok).toBe(true);
-    reject(depthDoc(LAYOUT_LIMITS.maxDepth), "LAYOUT_TOO_LARGE");
+    reject(depthDoc(32), "LAYOUT_TOO_LARGE");
   });
 
   it("accepts 256 panels and rejects 257", () => {
-    expect(validateLayoutDoc(panelsDoc(LAYOUT_LIMITS.maxPanels), KNOWN_PAGE_IDS).ok).toBe(true);
-    reject(panelsDoc(LAYOUT_LIMITS.maxPanels + 1), "LAYOUT_TOO_LARGE");
+    expect(validateLayoutDoc(panelsDoc(256), KNOWN_PAGE_IDS).ok).toBe(true);
+    reject(panelsDoc(257), "LAYOUT_TOO_LARGE");
   });
 
   it("accepts 1024 tabs and rejects 1025", () => {
-    expect(validateLayoutDoc(tabsDoc(LAYOUT_LIMITS.maxTabs), KNOWN_PAGE_IDS).ok).toBe(true);
-    reject(tabsDoc(LAYOUT_LIMITS.maxTabs + 1), "LAYOUT_TOO_LARGE");
+    expect(validateLayoutDoc(tabsDoc(1024), KNOWN_PAGE_IDS).ok).toBe(true);
+    reject(tabsDoc(1025), "LAYOUT_TOO_LARGE");
   });
 
   /** Pad a small valid document to an exact compact-JSON byte size. */
@@ -388,11 +400,11 @@ describe("limits", () => {
   }
 
   it("accepts exactly 256 KiB and rejects one byte more", () => {
-    const atLimit = paddedDoc(LAYOUT_LIMITS.maxBytes);
+    const atLimit = paddedDoc(262144);
 
-    expect(Buffer.byteLength(JSON.stringify(atLimit), "utf8")).toBe(LAYOUT_LIMITS.maxBytes);
+    expect(Buffer.byteLength(JSON.stringify(atLimit), "utf8")).toBe(262144);
     expect(validateLayoutDoc(atLimit, KNOWN_PAGE_IDS).ok).toBe(true);
-    reject(paddedDoc(LAYOUT_LIMITS.maxBytes + 1), "LAYOUT_TOO_LARGE");
+    reject(paddedDoc(262145), "LAYOUT_TOO_LARGE");
   });
 
   it("rejects a document that only exceeds the limit after active-id repair", () => {
@@ -405,9 +417,9 @@ describe("limits", () => {
     };
     const emptyBytes = Buffer.byteLength(JSON.stringify(value), "utf8");
 
-    asRecord(value.extras)["pad"] = "x".repeat(LAYOUT_LIMITS.maxBytes - emptyBytes);
+    asRecord(value.extras)["pad"] = "x".repeat(262144 - emptyBytes);
 
-    expect(Buffer.byteLength(JSON.stringify(value), "utf8")).toBe(LAYOUT_LIMITS.maxBytes);
+    expect(Buffer.byteLength(JSON.stringify(value), "utf8")).toBe(262144);
     // Repairing `dangling` to the 64-byte panel id grows the document past the
     // write limit, so the repaired document is refused rather than returned.
     reject(value, "LAYOUT_TOO_LARGE");
@@ -514,5 +526,36 @@ describe("active selection soft repair", () => {
     const { doc: validated } = accept(value, KNOWN_PAGE_IDS);
 
     expect(validated.activePanelId).toBe("left");
+  });
+});
+
+describe("soft repairs leave a trace (W3 R-12)", () => {
+  it("logs LAYOUT_REPAIRED when a dangling activePanelId is rewritten", () => {
+    const value = simpleDoc();
+
+    value.activePanelId = "missing";
+
+    const entries: Array<{ code: string; detail: Record<string, unknown> | undefined }> = [];
+
+    // A soft repair changes a selection the user can see, so it is logged
+    // see, so it is logged instead of happening silently.
+    validateLayoutDoc(value, KNOWN_PAGE_IDS, (code, detail) => {
+      entries.push({ code, detail });
+    });
+
+    const repaired = entries.find((entry) => entry.code === "LAYOUT_REPAIRED");
+
+    expect(repaired).toBeDefined();
+    expect(repaired?.detail?.["fields"]).toEqual(["activePanelId"]);
+  });
+
+  it("logs nothing when the document needs no repair", () => {
+    const entries: string[] = [];
+
+    validateLayoutDoc(simpleDoc(), KNOWN_PAGE_IDS, (code) => {
+      entries.push(code);
+    });
+
+    expect(entries).not.toContain("LAYOUT_REPAIRED");
   });
 });

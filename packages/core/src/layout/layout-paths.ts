@@ -14,7 +14,7 @@
  * directory.
  */
 
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 
 /** The shells C4 stores for. A closed union on purpose: an unknown shell must not invent a key. */
 export type LayoutShell = "desktop" | "vscode";
@@ -58,7 +58,35 @@ export function backupPrefix(shell: LayoutShell): string {
  * not turn a backup name into a path.
  */
 export function backupPath(userData: string, shell: LayoutShell, timestamp: string): string {
-  return join(layoutDir(userData), `${backupPrefix(shell)}${sanitiseStamp(timestamp)}.json`);
+  return backupPathFor(join(layoutDir(userData), `${shell}.json`), timestamp);
+}
+
+/** The file's own name without the `.json` suffix, e.g. `desktop` or `drafts-vscode`. */
+export function backupStem(target: string): string {
+  const name = basename(target);
+  return name.endsWith(".json") ? name.slice(0, -".json".length) : name;
+}
+
+/**
+ * The `pruneBackups` prefix for a data file, e.g. `desktop.corrupt-`.
+ *
+ * Derived from the file being backed up rather than from a shell name, so the
+ * two stores cannot drift: a `drafts-desktop.json` gets `drafts-desktop.corrupt-`
+ * and nothing else.
+ */
+export function corruptionPrefix(target: string): string {
+  return `${backupStem(target)}.corrupt-`;
+}
+
+/**
+ * `layout/desktop.corrupt-<timestamp>.json`, derived from the file it copies.
+ *
+ * This is the one implementation of the backup naming rule: the store and the
+ * draft store both call it, so the sanitiser below has a production path and a
+ * changed stem rule cannot be applied in one place only.
+ */
+export function backupPathFor(target: string, timestamp: string): string {
+  return join(dirname(target), `${corruptionPrefix(target)}${sanitiseStamp(timestamp)}.json`);
 }
 
 /**
