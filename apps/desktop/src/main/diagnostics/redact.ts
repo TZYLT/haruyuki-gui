@@ -64,6 +64,7 @@ const SECRET_WORDS = new Set([
   "passwords",
   "authorization",
   "apikey",
+  "key",
   "credential",
   "credentials",
 ]);
@@ -93,6 +94,12 @@ function isSecretKey(key: string): boolean {
   const words = keyWords(key);
 
   if (words.length === 0) return false;
+
+  // A rate metric is not a credential: `tokens_per_second` contains the word
+  // `tokens`, but blanking it would destroy the measurement the comment above
+  // promises to preserve. The `tokens` word alone still matches.
+  if (words.includes("per") && words.includes("second")) return false;
+
   if (SECRET_WORDS.has(words.join(""))) return true;
 
   return words.some((word) => SECRET_WORDS.has(word));

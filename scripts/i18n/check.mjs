@@ -18,6 +18,8 @@
  *                     catalogue, and every catalogue key is used by something.
  *                     A dangling reference renders as an error at runtime; an
  *                     unused key rots silently and the next translator copies it.
+ *                     "Component" includes the main process: the Help menu and the
+ *                     diagnostics wiring resolve catalogue keys with `t()` there.
  *
  * The catalogue sources are read, not imported. Importing would tie the gate to
  * the package compiling, so a tree with a type error could not be linted -- and a
@@ -52,6 +54,19 @@ const COMPONENT_DIRS = [
   // gate reported as clean. The I6 rule is only as good as its consumer list.
   "apps/desktop/src/renderer",
   "apps/desktop/src/shared",
+  // The main process resolves catalogue keys as well: the Help menu's labels and
+  // the diagnostics export's failure text. It started as a single-file exception
+  // (`menu.ts`); the whole tree is scanned now because a second file
+  // (`diagnostics/wiring.ts`) had begun calling `t()` and the narrow rule would
+  // have reported its keys as unused.
+  //
+  // The whole tree is safe only because the reference pattern below requires a
+  // word boundary before `t(`. Main-process code passes log event identifiers
+  // such as `failBoot("shell.boot.failed")` around, and a bare `t\(` reads that
+  // trailing `t(` as a translation call -- which is exactly the "any string that
+  // looks like a key" hole this rule exists to avoid. With the boundary, those
+  // identifiers are not references, and this directory adds only real ones.
+  "apps/desktop/src/main",
 ];
 
 /** The catalogues under comparison. English is the reference. */
@@ -63,21 +78,6 @@ const KEY_PATTERN = /^[a-z][a-zA-Z0-9]*\.[a-z][a-zA-Z0-9]*(\.[a-z][a-zA-Z0-9]*){
 
 /** Frozen namespace set. */
 const NAMESPACES = new Set(["common", "component", "page", "error", "a11y"]);
-
-/**
- * The one main-process file whose `t()` literals count as references.
- *
- * I6 scans the renderer and the shared layer. The Help menu's labels are the
- * first user-visible strings in the main process, and they are still `t()`
- * literals, so without this the menu's keys would all report as dead weight.
- *
- * Narrow on purpose: scanning `apps/desktop/src/main` whole would treat log
- * event identifiers and IPC channel strings as key references, which is exactly
- * the "any string that looks like a key" hole this rule avoids. One file is
- * enough -- the Help menu's labels and both cleanup dialogs' copy are resolved
- * in `menu.ts`, so that is where their keys appear.
- */
-const MENU_REFERENCES = "apps/desktop/src/main/menu.ts";
 
 /**
  * The shell's code-to-key table, which counts as a reference for I6.
@@ -413,13 +413,9 @@ function collectViolations(args) {
     }
   }
 
-  // The menu's labels are catalogue keys used from the main process; the
-  // comment on MENU_REFERENCES says why only that file is read.
-  const menuReferences = path.join(args.root, MENU_REFERENCES);
-
-  if (existsSync(menuReferences)) {
-    sources.push({ file: MENU_REFERENCES, text: read(menuReferences) });
-  }
+  // The menu's labels are catalogue keys used from the main process; the comment
+  // on `COMPONENT_DIRS` says why the whole main tree is read and what keeps it
+  // from producing false references.
 
   // An empty consumer set must not read as "nothing is unused".
   //
@@ -442,8 +438,13 @@ function collectViolations(args) {
       // `t("ns.key")` and `labelKey="ns.key"` are the two ways this package names
       // a key in source. Prop-drilled keys are typed, so a typo there would not
       // compile; these string literals are the untyped route.
+      //
+      // The lookbehind is load-bearing in the main process: `failBoot("shell.boot.failed")`
+      // ends in `t(`, and reading that as a translation call would report a log
+      // event identifier as an undeclared key. It is not a key rule -- the keys
+      // still have to match KEY_PATTERN -- only a check on what a `t(` is.
       for (const match of source.text.matchAll(
-        /(?:t\(|labelKey=|key:)\s*["']([a-z][a-zA-Z0-9]*(?:\.[a-z][a-zA-Z0-9]*){1,3})["']/g,
+        /(?:(?<![A-Za-z0-9_$])t\(|labelKey=|key:)\s*["']([a-z][a-zA-Z0-9]*(?:\.[a-z][a-zA-Z0-9]*){1,3})["']/g,
       )) {
         const key = match[1];
 

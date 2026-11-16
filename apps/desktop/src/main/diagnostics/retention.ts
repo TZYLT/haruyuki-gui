@@ -239,8 +239,9 @@ export async function cleanupLogs(
   files.sort((a, b) => a.at - b.at || a.name.localeCompare(b.name));
 
   // The current day is excluded once, here, so neither pass below can reach it.
-  // A day file from the future is excluded too: it is not this sweep's to delete.
-  let older = files.filter((file) => file.at !== today);
+  // A day file from the future is excluded too: it is not this sweep's to delete,
+  // even when the directory is over the size cap.
+  let older = files.filter((file) => file.at < today);
 
   for (const file of older) {
     // Sorted oldest first: the first file inside the window ends the age pass.
