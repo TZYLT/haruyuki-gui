@@ -69,6 +69,7 @@ import {
   normalizeTimeout,
   raceWithFault,
 } from "./start-internals";
+import { StderrTail } from "./stderr-tail";
 import { generateToken, removeTokenFile, writeTokenFile } from "./token";
 import type { TokenFile } from "./token";
 import type {
@@ -76,6 +77,7 @@ import type {
   EngineDegradation,
   EngineError,
   EngineErrorCode,
+  EngineExitInfo,
   EngineSpawnSpec,
   EngineState,
 } from "./types";
@@ -139,6 +141,17 @@ export class Engine {
 
   private lastFailureCode: EngineErrorCode | null = null;
 
+  /**
+   * Last child exit, recorded before any `isStopping()` decision.
+   *
+   * Read-only surface added for D4 (contract v1.1). It records, it
+   * does not classify: crash detection stays `state === "failed"`.
+   */
+  private lastExitInfo: EngineExitInfo | null = null;
+
+  /** Bounded stderr tail, fed by the single reader in `spawn.ts`. */
+  private readonly stderrHistory = new StderrTail();
+
   private degradationList: EngineDegradation[] = [];
 
   private watchdogWatch: MarkerWatch | null = null;
@@ -191,6 +204,43 @@ export class Engine {
    */
   get degradations(): readonly EngineDegradation[] {
     return [...this.degradationList];
+  }
+
+  /**
+   * PID of the current engine child, or `null` before it exists and after
+   * cleanup.
+   *
+   * Read-only surface added for D4 (contract v1.1). The runner
+   * writes it into the runtime marker so the next launch can decide whether a
+   * leftover process is this shell's engine; it is never used to signal a
+   * process directly.
+   */
+  get pid(): number | null {
+    return this.child?.pid ?? null;
+  }
+
+  /**
+   * How the most recent child exited, or `null` before any exit.
+   *
+   * Recorded for both a normal stop and a crash; a caller that needs "was this a
+   * crash" must still read `state` (`failed`), not this field.
+   */
+  get lastExit(): EngineExitInfo | null {
+    return this.lastExitInfo;
+  }
+
+  /**
+   * Last lines of the child's stderr, oldest first.
+   *
+   * The buffer is fed by a subscriber to the one reader in `spawn.ts`; it does
+   * not open a second reader . The tail survives cleanup so a crash
+   * can be diagnosed after the child is gone, and is cleared when a new attempt
+   * starts.
+   *
+   * @param limit maximum lines; defaults to 200
+   */
+  stderrTail(limit?: number): readonly string[] {
+    return this.stderrHistory.snapshot(limit);
   }
 
   /**
@@ -418,6 +468,8 @@ export class Engine {
     this.latestFrameAt = null;
     this.currentAppServerInfo = null;
     this.lastFailureCode = null;
+    this.lastExitInfo = null;
+    this.stderrHistory.clear();
     this.degradationList = [];
     this.watchdogWatch = null;
     this.tokenRemoval = null;
@@ -500,7 +552,18 @@ export class Engine {
     };
 
     try {
-      return startEngineProcess(childSpec);
+      const child = startEngineProcess(childSpec);
+
+      // Subscribe immediately after spawn, while the child is still starting.
+      // `onProcessStderr` adds a listener to the single reader in `spawn.ts`; it
+      // does not create a second reader .
+      this.childUnsubscribers.push(
+        onProcessStderr(child, (chunk) => {
+          this.stderrHistory.push(chunk);
+        }),
+      );
+
+      return child;
     } catch (error) {
       throw new EngineStartError(
         "SPAWN_FAILED",
@@ -528,6 +591,10 @@ export class Engine {
         );
       }),
       onProcessExit(child, (info) => {
+        // Record before any stopping decision: a normal stop and a crash both
+        // leave an exit fact, and D4 reads this after `failed` (`R-062`-3/6).
+        this.lastExitInfo = { code: info.code, signal: info.signal };
+
         if (this.isStopping()) {
           return;
         }
@@ -772,6 +839,7 @@ export class Engine {
 
     if (child !== null) {
       await stopChildGracefully(child, budgetMs);
+      this.recordChildExit(child);
     }
 
     await this.ensureTokenRemoved();
@@ -828,6 +896,23 @@ export class Engine {
 
     if (child !== null) {
       await stopChildGracefully(child);
+      this.recordChildExit(child);
+    }
+  }
+
+  /**
+   * Record the OS exit fact when the child object already carries one.
+   *
+   * The normal stop path and the failure cleanup both release the child's
+   * subscriptions before stopping it, so the `onProcessExit` listener cannot
+   * record those. Reading `exitCode` / `signalCode` after the stop is the same
+   * fact, and a budget expiry leaves both null (recorded as null, not guessed).
+   *
+   * @param child the child that has just been stopped
+   */
+  private recordChildExit(child: ChildProcess): void {
+    if (this.lastExitInfo === null && (child.exitCode !== null || child.signalCode !== null)) {
+      this.lastExitInfo = { code: child.exitCode, signal: child.signalCode };
     }
   }
 

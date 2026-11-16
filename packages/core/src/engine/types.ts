@@ -70,6 +70,23 @@ export type EngineError = {
 };
 
 /**
+ * How one engine child process exited.
+ *
+ * Added as part of B1's document-level contract `v1.1` (master `R-062`): D4
+ * needs the exit code and signal to write a `CrashRecord` and to show the user
+ * what happened. `detail` is a human sentence and must not be parsed; these two
+ * fields are the machine-readable facts.
+ *
+ * Both values are `null` when the platform did not report them. A normal stop on
+ * Windows usually yields `code: 0` or `1` with `signal: null`; a POSIX SIGKILL
+ * yields `code: null` with `signal: "SIGKILL"`.
+ */
+export type EngineExitInfo = {
+  readonly code: number | null;
+  readonly signal: NodeJS.Signals | null;
+};
+
+/**
  * What the engine reports about itself in the app_server_info handshake.
  *
  * `protocolVersion` is the wire protocol revision (0.6.0 answers 1).
