@@ -43,8 +43,6 @@ import {
 import { release as osRelease } from "node:os";
 import path from "node:path";
 
-import { FRAME_PROTOCOL_VERSION } from "@haruyuki/protocol";
-
 /**
  * This file's directory at runtime.
  *
@@ -93,10 +91,7 @@ import {
   rememberGeometry,
   saveSettings,
 } from "./settings-io.js";
-import { BRIDGE_VERSION } from "./bridge/channels.js";
-import { createBridgeHost } from "./bridge/host.js";
-import { registerBridgeIpc } from "./bridge/register.js";
-import type { BridgeSessionHost } from "./bridge/types.js";
+import { wireBridge, type BridgeWiring } from "./bridge/wire.js";
 import {
   DEFAULT_SETTINGS,
   isWindowVisible,
@@ -139,17 +134,8 @@ let lastEngineCrash: CrashRecord | null = null;
 /** Installed once, before the window; the host is attached after the async start. */
 let quitSupervisor: QuitSupervisor | null = null;
 
-/**
- * D3's app-wide bridge host.
- *
- * Created once after `app.whenReady`, because it owns the per-generation session
- * that survives window recreation. The producers hold this host, never a sender:
- * every reload replaces the sender behind it.
- */
-let bridgeHost: BridgeSessionHost | null = null;
-
-/** Removes D3's `ipcMain` handlers on shutdown; idempotent. */
-let bridgeIpcDispose: (() => void) | null = null;
+/** D3's app-wide host and its `ipcMain` handlers; created once after `whenReady`. */
+let bridge: BridgeWiring | null = null;
 
 /** Parsed settings, loaded once and kept in step with the window. */
 let settings: ShellSettings = DEFAULT_SETTINGS;
@@ -400,30 +386,7 @@ async function createWindow(allowedDevtools: boolean, locale: string): Promise<B
   if (usable && restored.maximized) window.maximize();
 
   window.once("ready-to-show", () => window.show());
-
-  // D3's session follows the renderer generation, not the window's lifetime. A
-  // reload tears the old session down before the new document exists; attaching
-  // on `did-finish-load` gives the fresh page a session it can handshake with.
-  // The initial attach happens before `loadURL` so the boot generation exists
-  // when the first `did-start-loading` arrives.
-  const host = bridgeHost;
-
-  if (host !== null) {
-    // `did-start-navigation` is the last moment before the new document's
-    // scripts can run, so it is the only safe place to swap the generation.
-    // `did-finish-load` would be too late: the renderer's `bridge.ready` can
-    // already be in flight, and `submit` would find no session.
-    window.webContents.on("did-start-navigation", (_event, _url, isInPlace, isMainFrame) => {
-      if (!isMainFrame || isInPlace) return;
-
-      host.detach("reload");
-      host.attach(window.webContents, "load");
-    });
-    window.webContents.on("render-process-gone", () => host.detach("crash"));
-    window.on("closed", () => host.detach("close"));
-
-    host.attach(window.webContents, "boot");
-  }
+  bridge?.attachWindow(window);
 
   window.on("close", () => {
     settings = rememberGeometry(settings, window);
@@ -532,12 +495,7 @@ async function createWindow(allowedDevtools: boolean, locale: string): Promise<B
     theme: settings.theme,
     contrast: settings.contrast,
     locale,
-    // The renderer cannot import `@haruyuki/protocol`'s runtime values (R7), so
-    // the version facts travel with the URL. A mismatch is then the renderer's
-    // `bridge.ready`, not a silent default.
-    appVersion: app.getVersion(),
-    bridgeVersion: BRIDGE_VERSION,
-    frameProtocolVersion: String(FRAME_PROTOCOL_VERSION),
+    ...(bridge?.bootParams() ?? {}),
   });
 
   const url = `${APP_SCHEME}://${APP_HOST}/index.html?${params.toString()}`;
@@ -888,17 +846,10 @@ async function main(): Promise<void> {
     onLog: logSupervision,
   });
 
-  // One host per app, not per window: a reload replaces the session behind it.
-  // `coreVersion` is the app version the accept frame reports; `bulkPages: 0`
-  // says "no multi-page snapshot yet" (C4 will fill it in when it lands).
-  bridgeHost = createBridgeHost({
-    expectedBridgeVersion: BRIDGE_VERSION,
+  bridge = wireBridge({
     coreVersion: app.getVersion(),
-    bulkPages: 0,
     log: (event, detail) => logger?.info(event, detail),
   });
-
-  bridgeIpcDispose = registerBridgeIpc({ ipc: ipcMain, host: bridgeHost });
 
   const locale = chooseLocale(settings.locale, app.getLocale());
 
@@ -993,13 +944,8 @@ app.on("window-all-closed", () => {
 // ended -- are the ones most likely to be missing. `will-quit` because it can be
 // cancelled, and an async drain needs to hold the quit open to be worth anything.
 app.on("will-quit", (event) => {
-  // Remove D3's ipcMain handlers and close the host before the logger's final
-  // flush; both are idempotent, and this handler re-enters itself below.
-  bridgeIpcDispose?.();
-  bridgeIpcDispose = null;
-  bridgeHost?.dispose();
-  bridgeHost = null;
-
+  bridge?.dispose();
+  bridge = null;
   // The port's cleanup runs first, and only once. It is not awaited here: the drain
   // below already holds the quit open, so awaiting two independent things in one
   // handler would need a join for no benefit -- the callbacks are synchronous by
