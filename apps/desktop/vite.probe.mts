@@ -49,13 +49,15 @@ export default defineConfig({
     target: "node24",
     lib: {
       entry: {
-        // Six probes, six entry points. All are test artifacts and none ships.
+        // Eight probes, eight entry points. All are test artifacts and none ships.
         "engine-probe": path.resolve(PACKAGE_DIR, "scripts/engine-probe.ts"),
         "coldstart-probe": path.resolve(PACKAGE_DIR, "scripts/coldstart-probe.ts"),
         "gui-host-probe": path.resolve(PACKAGE_DIR, "scripts/gui-host-probe.ts"),
         "bootstrap-probe": path.resolve(PACKAGE_DIR, "scripts/bootstrap-probe.ts"),
         "media-probe": path.resolve(PACKAGE_DIR, "scripts/media-probe.ts"),
         "host-port-probe": path.resolve(PACKAGE_DIR, "scripts/host-port-probe.ts"),
+        "pick-path-probe": path.resolve(PACKAGE_DIR, "scripts/pick-path-probe.ts"),
+        "cancel-probe": path.resolve(PACKAGE_DIR, "scripts/cancel-probe.ts"),
       },
       formats: ["cjs"],
       fileName: (_format, entryName) => `${entryName}.cjs`,
