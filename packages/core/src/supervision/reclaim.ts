@@ -205,6 +205,13 @@ async function killOnWindows(pid: number, deadline: number): Promise<KillResult>
   }
 
   if (!command.ok) {
+    // A failed taskkill can also win the race with a process that is already
+    // dying: the command reports an error, but the OS has removed the PID. Give
+    // the OS a short window before turning that into a user-visible failure.
+    if (await waitForExit(pid, Math.min(remainingMs(deadline), 500))) {
+      return { ok: true };
+    }
+
     return command;
   }
 
