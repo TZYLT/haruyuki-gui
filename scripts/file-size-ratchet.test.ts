@@ -137,6 +137,17 @@ describe("check-file-size: the 1000 line limit", () => {
     expect(run.output).toContain("PASS");
   });
 
+  it("skips the generated runtime tree under apps/desktop", () => {
+    const root = makeTree({
+      "apps/desktop/runtime/engine/huge.js": sourceLines(1001),
+      "apps/desktop/src/main/ok.ts": "export const ok = true;\n",
+    });
+    const run = runFileSizeGate(root);
+
+    expect(run.status, run.output).toBe(0);
+    expect(run.output).toContain("PASS");
+  });
+
   it("passes a baseline-pinned file that still matches its pin", () => {
     const root = makeTree({
       "packages/core/src/big.ts": sourceLines(1001),

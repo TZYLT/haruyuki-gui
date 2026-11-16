@@ -70,6 +70,13 @@ const EXCLUDED_DIRS = new Set([
   "docs",
 ]);
 
+/**
+ * Generated runtime/build trees below `apps/` that contain shipped JavaScript
+ * but are not hand-written source. They are skipped by path, not by directory
+ * name: `runtime` is also a real source directory under `packages/core/src`.
+ */
+const GENERATED_PATHS = new Set(["apps/desktop/runtime", "apps/desktop/release"]);
+
 /** File extensions that count as source. Kept identical to the other gates. */
 const SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".mts", ".cts", ".js", ".mjs", ".cjs", ".jsx"]);
 
@@ -260,7 +267,9 @@ function walk(directory, root, files) {
     }
 
     if (entry.isDirectory()) {
-      if (!EXCLUDED_DIRS.has(entry.name)) {
+      const relative = toPosix(path.posix.relative(root, absolute));
+
+      if (!EXCLUDED_DIRS.has(entry.name) && !GENERATED_PATHS.has(relative)) {
         walk(absolute, root, files);
       }
 
