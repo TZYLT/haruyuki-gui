@@ -17,7 +17,8 @@
     "build:probe": "vite build --config vite.probe.mts",
     "smoke:engine": "node scripts/smoke-engine.mjs",
     "verify:gui-host": "node scripts/verify-gui-host.mjs",
-    "verify:bootstrap-error": "node scripts/verify-bootstrap-error.mjs"
+    "verify:bootstrap-error": "node scripts/verify-bootstrap-error.mjs",
+    "verify:media": "node scripts/verify-media.mjs"
   },
   "dependencies": {
     "@haruyuki/core": "workspace:*",

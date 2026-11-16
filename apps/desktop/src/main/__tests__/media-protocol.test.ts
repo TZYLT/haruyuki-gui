@@ -263,6 +263,39 @@ describe("toWebStream", () => {
   });
 });
 
+describe("a file is never read into memory", () => {
+  it("streams every response body and never materialises the whole file", async () => {
+    // A 500 MB video must not become a 500 MB buffer in
+    // the main process. The behavioural half of that (no event-loop stall) is
+    // measured in a real Electron by `verify-media.mjs`; this is the structural
+    // half, and it is the one that can be checked mechanically.
+    //
+    // `readFile` anywhere in this module would break the claim regardless of how
+    // the streaming path looks, so the assertion is on its absence rather than on
+    // the presence of `createReadStream`: a future refactor could add a buffered
+    // branch next to the streaming one, and only the absence check notices.
+    const { readFile } = require("node:fs/promises") as typeof import("node:fs/promises");
+    const { join } = require("node:path") as typeof import("node:path");
+
+    const source = await readFile(join(import.meta.dirname, "..", "media-protocol.ts"), "utf8");
+
+    // The import list specifically, because a call would have to come through it.
+    expect(source).not.toMatch(/import[^;]*\breadFile\b/);
+    expect(source).not.toMatch(/\bwriteFile\b/);
+  });
+
+  it("uses the streaming read for both the whole-file and the ranged path", async () => {
+    const { readFile } = require("node:fs/promises") as typeof import("node:fs/promises");
+    const { join } = require("node:path") as typeof import("node:path");
+
+    const source = await readFile(join(import.meta.dirname, "..", "media-protocol.ts"), "utf8");
+
+    // Two call sites: one for 200, one for 206. One missing means one of the two
+    // paths buffers.
+    expect(source.match(/createReadStream\(/g)?.length).toBe(2);
+  });
+});
+
 describe("the containment predicate is shared, not copied", () => {
   it("re-exports resolveInside's answer instead of reimplementing it", () => {
     const root = process.platform === "win32" ? "C:\\work" : "/work";
