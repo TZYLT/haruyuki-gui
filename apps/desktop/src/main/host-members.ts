@@ -195,7 +195,14 @@ export function createDesktopMembers(
       // A cancellation is an empty array, not an error: "nobody picked anything" is a
       // normal outcome of opening a dialog, and making it an error would force every
       // caller to distinguish it from a failure.
-      return answer.cancelled ? [] : answer.paths;
+      if (answer.cancelled) return [];
+
+      // Truncated to one unless multiple was asked for. The real dialog already refuses
+      // to return several in single-select mode, so this is not about the real dialog --
+      // it is about the contract holding for *every* implementation. The injected
+      // doubles in the parity test, and any future host, can return several, and a caller
+      // that asked for one must not silently receive four.
+      return opts.multiple === true ? answer.paths : answer.paths.slice(0, 1);
     },
 
     async resolveLocalResource(absPath: string) {

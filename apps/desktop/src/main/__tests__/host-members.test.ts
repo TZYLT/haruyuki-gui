@@ -233,6 +233,38 @@ describe("pickPaths", () => {
     ]);
   });
 
+  it("truncates to one when multiple was not asked for", async () => {
+    // The contract says `multiple: true` returns several and otherwise one. The real
+    // dialog already behaves that way, so this case is about every *other* host: the
+    // parity doubles can return four, and a caller that asked for one must not receive
+    // four. Without the truncation the clause was simply unimplemented, and no test
+    // noticed because every existing case used `multiple: true` or a cancellation.
+    const deps = shell({
+      showOpenDialog: async () => ({ cancelled: false, paths: ["a", "b", "c"] }),
+    });
+    const { members } = createDesktopMembers(deps);
+
+    const single = await members.pickPaths({ kind: "file" });
+    const omitted = await members.pickPaths({ kind: "file", multiple: false });
+
+    expect(single).toEqual(["a"]);
+    expect(omitted).toEqual(["a"]);
+  });
+
+  it("keeps every path when multiple was asked for", async () => {
+    // The other half of the same clause: truncating here would break multi-select.
+    const deps = shell({
+      showOpenDialog: async () => ({ cancelled: false, paths: ["a", "b", "c"] }),
+    });
+    const { members } = createDesktopMembers(deps);
+
+    await expect(members.pickPaths({ kind: "file", multiple: true })).resolves.toEqual([
+      "a",
+      "b",
+      "c",
+    ]);
+  });
+
   it("forwards the kind, so a directory picker is a directory picker", async () => {
     const deps = shell();
     const { members } = createDesktopMembers(deps);

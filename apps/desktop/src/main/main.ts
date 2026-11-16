@@ -67,6 +67,7 @@ import { APP_HOST, APP_SCHEME, APP_PRIVILEGES, createProtocolHandler } from "./p
 import { shellError } from "../shared/shell-error.js";
 import { CSP, headersFor, shouldApplyFallbackCsp } from "./csp.js";
 import { APP_NAME, chooseLocale } from "./i18n.js";
+import { applyAppName } from "./app-identity.js";
 import { buildMenuTemplate } from "./menu.js";
 import { createLogger, type Logger } from "./log.js";
 import {
@@ -615,28 +616,16 @@ async function createWindow(allowedDevtools: boolean, locale: string): Promise<B
 async function main(): Promise<void> {
   // The application's own name, set before anything asks for a path.
   //
-  // Without this, `app.getName()` falls back to `package.json`'s `name` and
-  // `app.getPath("userData")` resolves to a *shared* `...\Roaming\Electron`
-  // directory -- the same one every other unpackaged Electron application on this
-  // machine uses. Three things live under `userData` and each one makes that a
-  // problem rather than an untidiness:
-  //
-  //   `media-access.json` holds the position-trust decision. Living in a shared
-  //   directory means another Electron application can flip a security switch that
-  //   turns the file viewer into a whole-disk browser (R-069, E-114).
-  //
-  //   `shell-settings.json` is the shell's own; two applications would overwrite each
-  //   other's window geometry and locale.
-  //
-  //   The engine's state, token directory and default file tree are all
-  //   `HARUYUKI_HOME`, which is this same root.
+  // The call is in `app-identity.ts` rather than inline so that `verify:host-port` can
+  // exercise the *same* function: the probe runs in its own Electron process and cannot
+  // import this file, and when it called `app.setName` itself the resulting assertion
+  // passed on a tree with this call deleted. A check that cannot fail is not a check.
   //
   // **This must stay the first statement in `main()`.** `app.setName` only affects
-  // paths resolved *after* it, and every `getPath` call in this file is inside a
-  // function that runs later. Moving a `getPath` to module scope would silently
-  // undo this, and the symptom would be a duplicated settings directory rather than
-  // an error.
-  app.setName(APP_NAME);
+  // paths resolved after it, and every `getPath` call in this file is inside a function
+  // that runs later. Moving one to module scope would silently undo this, and the
+  // symptom would be a duplicated settings directory rather than an error.
+  applyAppName();
 
   logger = createLogger({ logDir: app.getPath("logs"), minLevel: "info" });
   logger.info("shell.boot", {
@@ -811,19 +800,25 @@ async function main(): Promise<void> {
   // the requirement is explicit that the main process validates the path again
   // (section 4.6 item 7).
   //
-  // `on` rather than `handle`: the preload sends, nothing awaits a reply.
-  ipcMain.on(DROPPED_FILES_CHANNEL, (event, payload: unknown) => {
+  // `ipcMain.handle` rather than `on`, as the requirement specifies. The preload sends
+  // with `ipcRenderer.send` today, which `handle` does not answer -- so the two sides are
+  // deliberately not matched yet, and that is the point of using `handle`: the moment the
+  // preload is changed to `invoke`, a reply exists to receive. An `on` registration would
+  // have to be rewritten at that moment instead.
+  ipcMain.handle(DROPPED_FILES_CHANNEL, (_event, payload: unknown) => {
     const report = validateDroppedPayload(payload);
 
     if (report === null) {
       logger?.warn("drop.rejected", { detail: "payload did not match {name, path}[]" });
 
-      return;
+      // A value rather than a throw: the caller classifies it, the same way every other
+      // refusal in this item is a value.
+      return { acceptedCount: 0, entries: [] };
     }
 
-    // The readable set grows by what the user just dropped on the window. That is a
-    // real authorisation: the gesture is the user's own, and the alternative -- asking
-    // them to also pick it from a dialog -- would be asking twice for one decision.
+    // The readable set grows by what the user just dropped on the window. That is a real
+    // authorisation: the gesture is the user's own, and the alternative -- asking them to
+    // also pick it from a dialog -- would be asking twice for one decision.
     const accepted = report.entries.flatMap((entry) =>
       entry.path === undefined ? [] : [entry.path],
     );
@@ -832,14 +827,17 @@ async function main(): Promise<void> {
       setReadableRootsForMedia([...readableRootsForMedia, ...accepted]);
     }
 
-    // The reply goes back on the same channel so the page learns what was accepted.
-    // It is a `send` in both directions because the page did not ask a question.
-    event.sender.send(DROPPED_FILES_CHANNEL, {
+    // Returned rather than echoed back over the channel. The first version sent a reply
+    // with `event.sender.send`, and nothing subscribed to it: the preload only ever
+    // sends on this channel, and `window.haruyuki` exposes no way to listen. A message
+    // that is emitted and discarded is worse than no message, because the code reads as
+    // though a consumer exists.
+    return {
       entries: report.entries,
-      // A count rather than a boolean: "2 of 3 were usable" tells a caller what to
-      // say, where `ok: true` would claim more than happened.
+      // A count rather than a boolean: "2 of 3 were usable" tells a caller what to say,
+      // where `ok: true` would claim more than happened.
       acceptedCount: accepted.length,
-    });
+    };
   });
 
   // The fallback. `protocol.handle` already sets the policy on its own responses;

@@ -55,8 +55,21 @@ const BMP_SIDE = 3000;
 /** The sampler's tick; the large-image stage judges the worst gap against it. */
 const TICK_MS = 10;
 
-/** The worst gap this process's timer has seen. */
+/**
+ * The worst gap this process's timer has seen, and the worst in the current stage.
+ *
+ * Both are kept because a difference of running maxima cannot answer "how bad was this
+ * stage": if an earlier stage already reached 180 ms and this one stalls for 240, the
+ * difference is 60 and reads as a pass. `stageWorstGap` is reset when the stage starts,
+ * so it is the stage's own maximum and nothing else.
+ */
 let worstGapSeen = 0;
+let stageWorstGap = 0;
+
+/** Start measuring a stage's own worst gap. */
+function resetStageGap(): void {
+  stageWorstGap = 0;
+}
 
 /** The one window. See the file header. */
 let page: BrowserWindow | undefined;
@@ -263,6 +276,7 @@ function installHandlers(root: string): void {
     const now = Date.now();
     const gap = now - previous;
     if (gap > worstGapSeen) worstGapSeen = gap;
+    if (gap > stageWorstGap) stageWorstGap = gap;
     previous = now;
   }, TICK_MS);
   timer.unref();
@@ -329,7 +343,10 @@ async function probeStream(mediaUrl: string, bytes: number): Promise<void> {
   // have nothing to do with the scheme.
   if (!(await load(target, `${APP_SCHEME}://haruyuki/host.html`))) return;
 
-  const before = worstGapSeen;
+  // Reset rather than snapshot: see the comment on `stageWorstGap`. A snapshot of a
+  // running maximum would let a stage that stalls worse than every earlier one report
+  // only the increase.
+  resetStageGap();
 
   const outcome = (await target.webContents.executeJavaScript(`
     new Promise((resolve) => {
@@ -349,9 +366,9 @@ async function probeStream(mediaUrl: string, bytes: number): Promise<void> {
 
   result.imageOutcome = outcome.outcome;
   result.imageBytes = bytes;
-  result.imageWorstGapMs = worstGapSeen - before;
+  result.imageWorstGapMs = stageWorstGap;
   trace(
-    `image:${String(outcome.outcome)} bytes=${String(bytes)} gap=${String(worstGapSeen - before)}`,
+    `image:${String(outcome.outcome)} bytes=${String(bytes)} stageGap=${String(stageWorstGap)}`,
   );
 }
 

@@ -69,8 +69,13 @@ function dropEnv(pathForFile: (file: never) => string = () => ""): Recorded {
         listeners.delete(type);
       },
       pathForFile,
-      send: (channel, payload) => {
+      invoke: (channel, payload) => {
         sent.push({ channel, payload });
+
+        // The main process's answer: everything with a path was accepted.
+        return Promise.resolve({
+          entries: payload.entries,
+        });
       },
       onError: (detail) => {
         errors.push(detail);
@@ -229,15 +234,36 @@ describe("installDropListener", () => {
     expect(prevented.value).toBe(true);
   });
 
-  it("sends the converted report on the one channel", () => {
+  it("sends the converted report on the one channel", async () => {
     const env = dropEnv(() => "/work/a.txt");
     installDropListener(env.deps);
 
     env.listeners.get("drop")?.(dragEvent([{ name: "a.txt" }]));
 
+    // The hand-off is a round trip now, so it lands on the next microtask.
+    await Promise.resolve();
+
     expect(env.sent).toHaveLength(1);
     expect(env.sent[0]?.channel).toBe(DROPPED_FILES_CHANNEL);
     expect(env.sent[0]?.payload.entries).toEqual([{ name: "a.txt", path: "/work/a.txt" }]);
+  });
+
+  it("reports a refused hand-off instead of swallowing it", async () => {
+    // A rejected round trip must reach the error sink: a drop that fails without a word
+    // is the failure users describe as "drag and drop does nothing".
+    const env = dropEnv(() => "/work/a.txt");
+    const failing: DropListenerDeps = {
+      ...env.deps,
+      invoke: () => Promise.reject(new Error("channel denied")),
+    };
+    const errors: string[] = [];
+    installDropListener({ ...failing, onError: (detail) => errors.push(detail) });
+
+    env.listeners.get("drop")?.(dragEvent([{ name: "a.txt" }]));
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(errors.some((detail) => detail.includes("refused the drop report"))).toBe(true);
   });
 
   it("sends nothing for a drop with no files", () => {

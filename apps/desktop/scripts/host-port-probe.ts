@@ -41,7 +41,7 @@ import {
   ensurePaths,
 } from "../src/main/host-port.js";
 import { createDesktopMembers } from "../src/main/host-members.js";
-import { APP_NAME } from "../src/main/i18n.js";
+import { applyAppName } from "../src/main/app-identity.js";
 import { mediaAccessPath } from "../src/main/media-access.js";
 
 /** Everything the probe reports. */
@@ -107,11 +107,11 @@ function finish(code: number): void {
 
 /** Run every stage, keeping whatever completed. */
 async function main(): Promise<void> {
-  // The real startup does this, and it has to happen before `whenReady` for the paths
-  // to resolve under it. The probe repeats it rather than importing `main.ts` (which
-  // starts the whole shell) so that the assertion below is about the name, not about
-  // whether the probe happened to run the same code.
-  app.setName(APP_NAME);
+  // The same function `main()` calls. Not a copy of the call: an earlier version of this
+  // probe called `app.setName` itself, so the assertion that follows measured the probe
+  // rather than the shell and passed on a tree where the shell's own call had been
+  // deleted. The shared function is what makes the assertion mean something.
+  applyAppName();
 
   await app.whenReady();
 

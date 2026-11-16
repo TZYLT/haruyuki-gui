@@ -33,6 +33,7 @@ import {
   type HaruyukiBridge,
 } from "../shared/bridge.js";
 import { installDropListener } from "./drop.js";
+import type { DroppedFileReport } from "../shared/bridge.js";
 
 /**
  * Electron's preload surface.
@@ -101,10 +102,11 @@ installDropListener({
       return "";
     }
   },
-  send: (channel, payload) => {
-    // `send` rather than `invoke`: a drop arrives unprompted, so there is no caller
-    // waiting for a reply and no promise to resolve.
-    ipcRenderer.send(channel, payload);
+  invoke: (channel, payload) => {
+    // `invoke` rather than `send`: the main process decides which dropped paths are
+    // usable, so the answer is the part worth having. A one-way send would report the
+    // page's guess instead of the outcome.
+    return ipcRenderer.invoke(channel, payload) as Promise<DroppedFileReport>;
   },
   onError: (detail) => {
     // A trace rather than silence. There is no logger in the preload, and a drop that

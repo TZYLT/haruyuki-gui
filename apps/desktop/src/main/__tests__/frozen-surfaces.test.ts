@@ -49,6 +49,22 @@ function read(relative: string): string {
 }
 
 /**
+ * Report that a check could not run, without reporting it as a pass.
+ *
+ * `vitest`'s runtime skip is reachable through the context object only, so the honest
+ * alternatives are a throw (which fails a check that merely could not run) or a silent
+ * return (which reports it as a pass and therefore lies about the reading -- doc 31
+ * section 5.5). This throws with a recognisable message and the caller filters it, which
+ * at least cannot be mistaken for a green result.
+ */
+class CheckCouldNotRun extends Error {
+  constructor(reason: string) {
+    super(`CHECK DID NOT RUN: ${reason}`);
+    this.name = "CheckCouldNotRun";
+  }
+}
+
+/**
  * Ask git for the names of files changed on this branch.
  *
  * @returns the paths, or `null` when git cannot answer
@@ -120,11 +136,12 @@ describe("the frozen contract is untouched", () => {
   it("was not modified by this branch", () => {
     const changed = changedFiles();
 
+    // A git that cannot answer means the check did not run. Reporting that as a pass
+    // would lie about the reading (doc 31 section 5.5); reporting it as a failure would
+    // be wrong about the code. The suite records it as skippable by throwing a named
+    // error, which `vitest` prints rather than sampling as green.
     if (changed === null) {
-      // Recorded rather than silently passing: the check did not run.
-      expect(true).toBe(true);
-
-      return;
+      throw new CheckCouldNotRun("git diff did not answer");
     }
 
     expect(changed).not.toContain("packages/core/src/port/host-port.ts");
@@ -153,10 +170,9 @@ describe("app:// behaviour and the CSP are additive only", () => {
   it("was not modified by this branch", () => {
     const changed = changedFiles();
 
+    // Unrun, not passing -- see the note above.
     if (changed === null) {
-      expect(true).toBe(true);
-
-      return;
+      throw new CheckCouldNotRun("git diff did not answer");
     }
 
     // The file `app://` lives in. Adding a scheme elsewhere is the whole point of this
@@ -202,6 +218,95 @@ describe("app:// behaviour and the CSP are additive only", () => {
     // without this a local video could not play at all.
     expect(CSP_DIRECTIVES).toHaveLength(11);
     expect(CSP_DIRECTIVES.some((line) => line.startsWith("media-src "))).toBe(true);
+  });
+});
+
+describe("rendered content never reaches innerHTML", () => {
+  it("has zero innerHTML / dangerouslySetInnerHTML / v-html in either package", () => {
+    // This was recorded in the work log as verified when nothing verified it -- a grep
+    // was run by hand and the result written down, which protects nothing on the next
+    // commit. `html-does-not-execute` asks for an assertion precisely so the state cannot regress
+    // silently.
+    //
+    // The prohibition is the render half of the media channel's whole design: files are
+    // served as `text/plain` so the browser will not interpret them, and that is worth
+    // nothing if the viewer then assigns the text to `innerHTML`.
+    //
+    // Comments are stripped before the search, because the two files that document the
+    // rule mention the word by name, and a plain grep would fail on the explanation.
+    const { readdirSync, readFileSync, statSync } = require("node:fs") as typeof import("node:fs");
+    const { join } = require("node:path") as typeof import("node:path");
+
+    /** Every `.ts`/`.tsx` under a directory, recursively. */
+    function walk(dir: string): string[] {
+      return readdirSync(dir).flatMap((entry) => {
+        const full = join(dir, entry);
+        if (statSync(full).isDirectory()) return walk(full);
+        return /\.tsx?$/.test(full) ? [full] : [];
+      });
+    }
+
+    /** Remove block and line comments, so prose about the rule does not trip it. */
+    function withoutComments(source: string): string {
+      return source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+    }
+
+    const violations: string[] = [];
+
+    for (const root of ["packages/ui/src", "apps/desktop/src"]) {
+      for (const file of walk(path.join(REPO_ROOT, root))) {
+        // Tests are excluded: a test may legitimately name the property it forbids.
+        if (file.includes("__tests__") || file.endsWith(".test.ts") || file.endsWith(".test.tsx")) {
+          continue;
+        }
+
+        const code = withoutComments(readFileSync(file, "utf8"));
+
+        for (const forbidden of ["innerHTML", "dangerouslySetInnerHTML", "v-html"]) {
+          if (code.includes(forbidden)) violations.push(`${file}: ${forbidden}`);
+        }
+      }
+    }
+
+    expect(violations).toEqual([]);
+  });
+});
+
+describe("the app name is set by the shell, before any getPath", () => {
+  it("calls applyAppName as the first statement of main()", () => {
+    // The runtime half of this is `verify:host-port`, which now calls the same
+    // `applyAppName` the shell calls. This is the half that catches the specific
+    // mistake a probe cannot: a `getPath` moved above the call, or the call deleted
+    // while the probe still passes because it sets the name itself.
+    const source = read("apps/desktop/src/main/main.ts");
+
+    const mainStart = source.indexOf("async function main(): Promise<void> {");
+    expect(mainStart).toBeGreaterThan(-1);
+
+    const body = source.slice(mainStart);
+    const callOffset = body.indexOf("applyAppName()");
+    expect(callOffset).toBeGreaterThan(-1);
+
+    // Every `app.getPath` in the file must come after the call, or `setName` has no
+    // effect on the paths it resolves.
+    const firstGetPath = body.indexOf("app.getPath(");
+    if (firstGetPath !== -1) {
+      expect(callOffset).toBeLessThan(firstGetPath);
+    }
+  });
+
+  it("has exactly one definition of the name-setting call", () => {
+    // Two places calling `app.setName` is how the probe came to measure itself. One
+    // function, called from both sides.
+    const proofSource = read("apps/desktop/src/main/app-identity.ts");
+
+    expect(proofSource).toContain("export function applyAppName");
+    expect(proofSource).toContain("app.setName(APP_NAME)");
+
+    const mainSource = read("apps/desktop/src/main/main.ts");
+
+    // `main.ts` must not call `app.setName` directly any more.
+    expect(mainSource).not.toContain("app.setName(");
   });
 });
 

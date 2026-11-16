@@ -43,8 +43,15 @@ export interface DropListenerDeps {
    * browser constructed -- measured, and a normal return value rather than an error.
    */
   pathForFile(file: never): string;
-  /** Send the converted report to the main process. */
-  send(channel: string, payload: DroppedFileReport): void;
+  /**
+   * Hand the converted report to the main process and take back what it accepted.
+   *
+   * An `invoke` round trip rather than a fire-and-forget send, because the main process
+   * is the side that decides which paths are usable: a page that showed "3 files added"
+   * before the answer came back would be guessing. The reason is specific to this
+   * channel -- most IPC here is one-way.
+   */
+  invoke(channel: string, payload: DroppedFileReport): Promise<DroppedFileReport>;
   /** Report a conversion failure so it reaches the log rather than vanishing. */
   readonly onError?: (detail: string) => void;
 }
@@ -150,7 +157,13 @@ export function installDropListener(deps: DropListenerDeps): () => void {
     // process log a no-op action.
     if (payload.entries.length === 0) return;
 
-    deps.send(DROPPED_FILES_CHANNEL, payload);
+    // The answer is not consumed here: this listener's job is to get the report across,
+    // and the consumer that wants to render "2 of 3 were accepted" lives in the page,
+    // which reads it through a channel that belongs to a later item. Awaiting it anyway
+    // means a failure surfaces as a rejected promise here rather than silently.
+    void deps.invoke(DROPPED_FILES_CHANNEL, payload).catch((error: unknown) => {
+      deps.onError?.(`the main process refused the drop report: ${String(error).slice(0, 80)}`);
+    });
   };
 
   deps.addEventListener("dragover", onDragOver);
