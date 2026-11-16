@@ -47,8 +47,13 @@ module.exports = {
   },
   extraResources: [
     {
-      from: path.join(PACKAGE_DIR, "runtime", "engine"),
-      to: "engine",
+      // `from: runtime/engine` loses `node_modules` because electron-builder's
+      // filter drops `node_modules` at the root of every `from` directory. Copy
+      // the parent (`runtime/`) and select `engine/**`, so the engine's
+      // `node_modules` is a child path and survives.
+      from: path.join(PACKAGE_DIR, "runtime"),
+      to: ".",
+      filter: ["engine/**/*"],
     },
     {
       from: path.join(PACKAGE_DIR, "runtime", "watchdog.cjs"),
