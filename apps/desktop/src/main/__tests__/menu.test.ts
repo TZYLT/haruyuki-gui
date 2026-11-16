@@ -1,19 +1,22 @@
 import { describe, expect, it } from "vitest";
+import type { MenuItemConstructorOptions } from "electron";
 
-import { buildMenuTemplate, type MenuContext } from "../menu.js";
+import { buildMenuTemplate, menuLabels, type MenuContext } from "../menu.js";
 
-/** The context a packaged production build has. */
+/** The context a packaged production build has, in English. */
 const PRODUCTION: MenuContext = {
   isDevelopment: false,
   devtoolsAllowed: false,
   appName: "Haruyuki",
+  locale: "en",
+  staleCount: 0,
 };
 
 /** The context an unpackaged development run has. */
 const DEVELOPMENT: MenuContext = { ...PRODUCTION, isDevelopment: true };
 
 /** Find the View submenu's items. */
-function viewSubmenu(context: MenuContext) {
+function viewSubmenu(context: MenuContext): MenuItemConstructorOptions[] {
   const template = buildMenuTemplate(context);
   const view = template.find((item) => item.label === "View");
 
@@ -24,16 +27,37 @@ function viewSubmenu(context: MenuContext) {
   return view.submenu;
 }
 
+/** Find the Help submenu's items. */
+function helpSubmenu(context: MenuContext): MenuItemConstructorOptions[] {
+  const template = buildMenuTemplate(context);
+  const help = template.find((item) => item.label === menuLabels(context.locale).helpTitle);
+
+  if (help === undefined || !Array.isArray(help.submenu)) {
+    throw new Error("the template has no Help submenu");
+  }
+
+  return help.submenu;
+}
+
 /** Whether the inspector item is present. */
 function hasInspectorItem(context: MenuContext): boolean {
   return viewSubmenu(context).some((item) => item.role === "toggleDevTools");
 }
 
+/** Invoke an item's click handler the way Electron would. */
+function clickItem(item: MenuItemConstructorOptions): void {
+  if (typeof item.click !== "function") {
+    throw new Error(`menu item ${String(item.label)} has no click handler`);
+  }
+
+  (item.click as unknown as () => void)();
+}
+
 describe("buildMenuTemplate", () => {
-  it("has the four top-level menus", () => {
+  it("has the five top-level menus", () => {
     const labels = buildMenuTemplate(PRODUCTION).map((item) => item.label);
 
-    expect(labels).toEqual(["Haruyuki", "Edit", "View", "Window"]);
+    expect(labels).toEqual(["Haruyuki", "Edit", "View", "Window", "Help"]);
   });
 
   it("uses the supplied application name", () => {
@@ -79,6 +103,107 @@ describe("the devtools gate", () => {
   });
 });
 
+describe("the Help menu", () => {
+  it("comes last and offers the four actions in order", () => {
+    const labels = helpSubmenu(PRODUCTION)
+      .filter((item) => item.type !== "separator")
+      .map((item) => item.label);
+
+    expect(labels).toEqual([
+      "Export Diagnostics…",
+      "Open Logs Folder",
+      "Restart Application",
+      "Clean Up Leftover Engines…",
+    ]);
+  });
+
+  it("puts the cleanup action behind a separator", () => {
+    // The first three answer "something is wrong"; cleanup is the rarer,
+    // destructive one. A separator is the only cue the menu has.
+    const items = helpSubmenu(PRODUCTION);
+    const separator = items.findIndex((item) => item.type === "separator");
+
+    expect(separator).toBe(3);
+    expect(items).toHaveLength(5);
+  });
+
+  it("disables every action whose callback is absent", () => {
+    const actions = helpSubmenu(PRODUCTION).filter((item) => item.type !== "separator");
+
+    expect(actions).toHaveLength(4);
+    expect(actions.every((item) => item.enabled === false)).toBe(true);
+  });
+
+  it("enables the actions whose callbacks are present", () => {
+    const actions = helpSubmenu({
+      ...PRODUCTION,
+      staleCount: 1,
+      onExportDiagnostics: () => undefined,
+      onOpenLogs: () => undefined,
+      onRestart: () => undefined,
+      onCleanupStale: () => undefined,
+    }).filter((item) => item.type !== "separator");
+
+    expect(actions.every((item) => item.enabled === true)).toBe(true);
+  });
+
+  it("runs the callback each action names", () => {
+    const calls: string[] = [];
+    const items = helpSubmenu({
+      ...PRODUCTION,
+      staleCount: 1,
+      onExportDiagnostics: () => calls.push("export"),
+      onOpenLogs: () => calls.push("logs"),
+      onRestart: () => calls.push("restart"),
+      onCleanupStale: () => calls.push("cleanup"),
+    });
+
+    for (const item of items) {
+      if (item.type === "separator") continue;
+      clickItem(item);
+    }
+
+    expect(calls).toEqual(["export", "logs", "restart", "cleanup"]);
+  });
+
+  it("disables cleanup when there are no candidates", () => {
+    const items = helpSubmenu({ ...PRODUCTION, onCleanupStale: () => undefined });
+    const cleanup = items.at(-1);
+
+    expect(cleanup?.label).toBe("Clean Up Leftover Engines…");
+    expect(cleanup?.enabled).toBe(false);
+  });
+
+  it("shows the candidate count in the cleanup label", () => {
+    const cleanup = helpSubmenu({
+      ...PRODUCTION,
+      staleCount: 3,
+      onCleanupStale: () => undefined,
+    }).at(-1);
+
+    expect(cleanup?.label).toBe("Clean Up Leftover Engines (3)…");
+    expect(cleanup?.enabled).toBe(true);
+  });
+
+  it("keeps cleanup disabled at a count with no listener", () => {
+    // The count alone is not consent: without the dialog callback there is no
+    // safe path from a click to a kill, so the item must stay greyed.
+    const cleanup = helpSubmenu({ ...PRODUCTION, staleCount: 2 }).at(-1);
+
+    expect(cleanup?.enabled).toBe(false);
+  });
+
+  it("labels the menu and its actions in the requested locale", () => {
+    const chinese = helpSubmenu({ ...PRODUCTION, locale: "zh-CN" });
+    const titles = buildMenuTemplate({ ...PRODUCTION, locale: "zh-CN" }).map((item) => item.label);
+
+    expect(titles).toContain("帮助");
+    expect(chinese[0]?.label).toBe("导出诊断…");
+    expect(chinese[1]?.label).toBe("打开日志目录");
+    expect(chinese[2]?.label).toBe("重启应用");
+  });
+});
+
 describe("the menu's contents", () => {
   it("offers quit, so the app can be closed without a mouse", () => {
     const appMenu = buildMenuTemplate(PRODUCTION)[0]?.submenu;
@@ -111,18 +236,15 @@ describe("the menu's contents", () => {
     expect(roles).toEqual(expect.arrayContaining(["minimize", "close"]));
   });
 
-  it("adds no application-specific item the shell cannot open", () => {
-    // There is no settings window and no document yet. A menu item that opens nothing
-    // is worse than a missing item.
+  it("adds no application-specific item outside Help", () => {
+    // Help is the one menu that names app actions, and every one of them has an
+    // implementation behind it. The other menus stay pure role menus (RD-10).
     const template = buildMenuTemplate(DEVELOPMENT);
-    const labels = template.flatMap((item) =>
-      Array.isArray(item.submenu)
-        ? (item.submenu as { label?: string }[]).map((sub) => sub.label ?? "")
-        : [],
-    );
+    const nonRole = template
+      .filter((item) => item.label !== menuLabels("en").helpTitle)
+      .flatMap((item) => (Array.isArray(item.submenu) ? item.submenu : []))
+      .filter((item) => item.role === undefined && item.type !== "separator");
 
-    for (const invented of ["Settings", "Preferences", "Export", "New", "Open"]) {
-      expect(labels).not.toContain(invented);
-    }
+    expect(nonRole).toEqual([]);
   });
 });

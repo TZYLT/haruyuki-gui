@@ -73,6 +73,26 @@ export const en = {
   "common.diagnostics.bridgeUnavailable":
     "The diagnostics bridge is unavailable, so the bundle cannot be exported",
 
+  // ------------------------------------------------------------------ menu
+  // The Help menu is the shell's one application-specific menu. Its labels are
+  // keys like any renderer string: the menu and the two dialogs it opens must
+  // not disagree about a word, and the cleanup count belongs in the label a
+  // user reads rather than only in the dialog.
+  "common.menu.title": "Help",
+  "common.menu.exportDiagnostics": "Export Diagnostics…",
+  "common.menu.openLogs": "Open Logs Folder",
+  "common.menu.restart": "Restart Application",
+  "common.menu.cleanupStale": "Clean Up Leftover Engines…",
+  "common.menu.cleanupStaleCount": "Clean Up Leftover Engines ({count})…",
+  "common.menu.cleanupTitle": "Leftover engine processes",
+  "common.menu.cleanupMessage":
+    "{count} engine process(es) from an earlier run could not be identified with confidence. Check each one before ending it:\n\n{details}",
+  "common.menu.cleanupConfirm": "End Processes",
+  "common.menu.cleanupCancel": "Cancel",
+  "common.menu.cleanupDone": "Ended {count} leftover engine process(es).",
+  "common.menu.cleanupFailed": "Some leftover processes could not be ended.",
+  "common.menu.openLogsFailed": "The logs folder could not be opened.",
+
   // ------------------------------------------------------------- component
   "component.input.placeholder": "Enter a value",
   "component.select.placeholder": "Select an option",

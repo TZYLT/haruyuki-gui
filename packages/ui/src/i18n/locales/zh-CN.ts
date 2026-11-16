@@ -59,6 +59,22 @@ export const zhCN = {
   "common.diagnostics.retry": "重试",
   "common.diagnostics.bridgeUnavailable": "诊断桥不可用，无法导出诊断包",
 
+  // ------------------------------------------------------------------ menu
+  "common.menu.title": "帮助",
+  "common.menu.exportDiagnostics": "导出诊断…",
+  "common.menu.openLogs": "打开日志目录",
+  "common.menu.restart": "重启应用",
+  "common.menu.cleanupStale": "清理遗留引擎…",
+  "common.menu.cleanupStaleCount": "清理遗留引擎（{count}）…",
+  "common.menu.cleanupTitle": "遗留的引擎进程",
+  "common.menu.cleanupMessage":
+    "上次运行留下了 {count} 个无法确认身份的引擎进程。请逐个核对后再结束：\n\n{details}",
+  "common.menu.cleanupConfirm": "结束进程",
+  "common.menu.cleanupCancel": "取消",
+  "common.menu.cleanupDone": "已结束 {count} 个遗留引擎进程。",
+  "common.menu.cleanupFailed": "部分遗留进程无法结束。",
+  "common.menu.openLogsFailed": "无法打开日志目录。",
+
   // ------------------------------------------------------------- component
   "component.input.placeholder": "请输入",
   "component.select.placeholder": "请选择",

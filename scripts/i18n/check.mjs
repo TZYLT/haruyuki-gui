@@ -65,6 +65,21 @@ const KEY_PATTERN = /^[a-z][a-zA-Z0-9]*\.[a-z][a-zA-Z0-9]*(\.[a-z][a-zA-Z0-9]*){
 const NAMESPACES = new Set(["common", "component", "page", "error", "a11y"]);
 
 /**
+ * The one main-process file whose `t()` literals count as references.
+ *
+ * I6 scans the renderer and the shared layer. The Help menu's labels are the
+ * first user-visible strings in the main process, and they are still `t()`
+ * literals, so without this the menu's keys would all report as dead weight.
+ *
+ * Narrow on purpose: scanning `apps/desktop/src/main` whole would treat log
+ * event identifiers and IPC channel strings as key references, which is exactly
+ * the "any string that looks like a key" hole this rule avoids. One file is
+ * enough -- the Help menu's labels and both cleanup dialogs' copy are resolved
+ * in `menu.ts`, so that is where their keys appear.
+ */
+const MENU_REFERENCES = "apps/desktop/src/main/menu.ts";
+
+/**
  * The shell's code-to-key table, which counts as a reference for I6.
  *
  * Named here rather than discovered, so moving the table breaks this gate loudly
@@ -396,6 +411,14 @@ function collectViolations(args) {
       // would push those keys into an allowlist for no reason.
       sources.push({ file: relative, text: read(path.join(args.root, relative)) });
     }
+  }
+
+  // The menu's labels are catalogue keys used from the main process; the
+  // comment on MENU_REFERENCES says why only that file is read.
+  const menuReferences = path.join(args.root, MENU_REFERENCES);
+
+  if (existsSync(menuReferences)) {
+    sources.push({ file: MENU_REFERENCES, text: read(menuReferences) });
   }
 
   // An empty consumer set must not read as "nothing is unused".

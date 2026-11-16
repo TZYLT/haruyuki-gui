@@ -34,7 +34,6 @@ import {
   crashReporter,
   dialog,
   ipcMain,
-  Menu,
   protocol,
   session,
   shell,
@@ -60,8 +59,8 @@ import { APP_HOST, APP_SCHEME, APP_PRIVILEGES, createProtocolHandler } from "./p
 import { shellError } from "../shared/shell-error.js";
 import { CSP, headersFor, shouldApplyFallbackCsp } from "./csp.js";
 import { APP_NAME, chooseLocale } from "./i18n.js";
-import { buildMenuTemplate } from "./menu.js";
 import { createLogger, type Logger } from "./log.js";
+import { installApplicationMenu } from "./menu-wiring.js";
 import { handleRendererGone, installMainCrashHandlers } from "./crash/capture.js";
 import { engineCrashQuery, rendererCrashQuery } from "./crash/page.js";
 import { showCrashPage, crashVersions } from "./crash/wiring.js";
@@ -786,15 +785,20 @@ async function main(): Promise<void> {
 
   const locale = chooseLocale(settings.locale, app.getLocale());
 
-  Menu.setApplicationMenu(
-    Menu.buildFromTemplate(
-      buildMenuTemplate({
-        isDevelopment: !app.isPackaged,
-        devtoolsAllowed: devtoolsAllowed(),
-        appName: APP_NAME,
-      }),
-    ),
-  );
+  installApplicationMenu({
+    app,
+    shell,
+    dialog,
+    locale,
+    devtoolsAllowed,
+    getWindow: () => mainWindow,
+    getStaleCandidates: () => staleCandidates,
+    setStaleCandidates: (next) => {
+      staleCandidates = next;
+    },
+    sessionAvailable: () => getSessionDiagnosticsSource() !== null,
+    logger,
+  });
 
   mainWindow = await createWindow(!app.isPackaged || devtoolsAllowed(), locale);
 
