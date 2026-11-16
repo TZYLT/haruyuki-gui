@@ -71,6 +71,12 @@ export const FRAME_TYPES = {
     since: "C5",
     summary: "terminal bytes, fixed 8 KB slices",
   },
+  "layout.snapshot": {
+    ch: "bulk",
+    coalescible: "never",
+    since: "C4",
+    summary: "authoritative layout snapshot",
+  },
 } as const satisfies Record<string, FrameTypeSpec>;
 
 /**

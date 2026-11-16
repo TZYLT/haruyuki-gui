@@ -47,6 +47,7 @@ describe("FRAME_TYPES", () => {
       "bridge.reject": true,
       "bulk.page": true,
       "term.output": true,
+      "layout.snapshot": true,
     };
 
     // Runtime: the two sets must agree, which catches a table edited through a
@@ -114,6 +115,16 @@ describe("FRAME_TYPES", () => {
     expect(FRAME_TYPES["bridge.reject"].ch).toBe("control");
     expect(FRAME_TYPES["bulk.page"].ch).toBe("bulk");
     expect(FRAME_TYPES["term.output"].ch).toBe("stream");
+
+    // The layout snapshot is a bulk frame owned by the layout layer. Pinned by
+    // not by pattern: a changed channel or a moved `since` is a contract break,
+    // break, not a rename.
+    expect(FRAME_TYPES["layout.snapshot"]).toMatchObject({
+      ch: "bulk",
+      coalescible: "never",
+      since: "C4",
+    });
+    expect(FRAME_TYPES["layout.snapshot"].summary).not.toBe("");
 
     for (const spec of Object.values(FRAME_TYPES)) {
       expect(spec.coalescible).toBe("never");
