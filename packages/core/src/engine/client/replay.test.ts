@@ -63,6 +63,7 @@ import {
   diffEventSequence,
   duplicateInjection,
   formatDiff,
+  isEscapingOnlyDifference,
   openSessionCount,
   readCorpus,
   readTurn,
@@ -148,6 +149,40 @@ describe("the corpus this suite replays", () => {
     }
   });
 
+  it("reports a frame whose text lost information, rather than calling it equivalent", async () => {
+    // Red when: the "no frame lost information" rule becomes a constant. The
+    // committed corpus contains no such frame - every difference is the recorder's
+    // non-ASCII escaping - so a corpus-only assertion cannot tell the computation
+    // apart from `return true`. This case supplies the frame the corpus lacks.
+    const genuine = corpusTotals([
+      {
+        clientLines: 0,
+        fixture: { header: { kind: "wire", schemaVersion: 1 }, lines: [] },
+        frames: [
+          {
+            at: 0,
+            byteIdentical: false,
+            canonical: '{"type":"a","text":"x"}',
+            eventType: "a",
+            json: {},
+            line: 2,
+            // The stored text says something the emitted text does not: a real
+            // rewrite, which must be reported.
+            recorded: '{"type":"a","text":"y"}',
+          },
+        ],
+        name: "synthetic",
+        span: 0,
+        typeCounts: new Map([["a", 1]]),
+        types: ["a"],
+      },
+    ]);
+
+    expect(genuine.lostInRewriting).toEqual(["synthetic:2"]);
+    expect(genuine.rewritten).toBe(1);
+    expect(genuine.frames).toBe(1);
+  });
+
   it("keeps stored and emitted text equivalent, and names the difference precisely", async () => {
     // Red when: a corpus line is rewritten beyond the escaping the recorder
     // applied. The claim this case exists for is narrow on purpose - "byte
@@ -158,11 +193,15 @@ describe("the corpus this suite replays", () => {
     expect(totals.lostInRewriting).toEqual([]);
     expect(totals.rewritten).toBe(19);
 
-    // Every rewritten frame must actually differ; otherwise the escaping rule is
-    // reading a difference that is not there and the check above is vacuous.
-    for (const turn of (await corpus()).flatMap((entry) => entry.frames)) {
-      expect(turn.escapingOnlyDifference || turn.byteIdentical).toBe(true);
-    }
+    // The equivalence rule must be a computation, not a constant: fed a genuine
+    // rewrite it has to say no, or "no frame lost information" would be green for
+    // every possible corpus. The pair below is the one the recorder produced
+    // (`\u7248` for the character) and the one it did not (`\u0041` is ASCII and
+    // JSON.stringify leaves it literal).
+    expect(isEscapingOnlyDifference('{"a":"\\u7248"}', '{"a":"版"}')).toBe(true);
+    expect(isEscapingOnlyDifference('{"a":"版"}', '{"a":"版"}')).toBe(true);
+    expect(isEscapingOnlyDifference('{"a":"\\u0041"}', '{"a":"A"}')).toBe(false);
+    expect(isEscapingOnlyDifference('{"a":"版"}', '{"a":"版别"}')).toBe(false);
   });
 
   it("selects the in-depth recording by shape, not by name", async () => {
@@ -238,6 +277,79 @@ describe("the rebuilt sequence matches the recording", () => {
     expect(result.expectedFrames).toBe(turn.frames.length);
   });
 
+  it("passes the engine's envelope through verbatim, and omits it when absent", async () => {
+    // Red when: the envelope is dropped from the delivered frame, a field is lost,
+    // or an empty envelope is invented for a frame that carried none. Most of the
+    // recorded frames carry these fields (265 of 295), so this
+    // is the majority of the corpus, not a corner.
+    const absent = await readTurn("terminal");
+    const session = await startReplaySession({ turn: absent });
+
+    await session.settle();
+
+    // A recording whose frames carry none of the four keys: the contract says "no
+    // `envelope` key at all", which is a different answer from `{}`.
+    expect(session.events).toHaveLength(absent.frames.length);
+    expect(session.events.every((frame) => frame.envelope === undefined)).toBe(true);
+
+    // ...and a recording where they are present, compared against the corpus value
+    // by value rather than against a literal.
+    const rich = await readTurn("memory");
+    const richer = await startReplaySession({ turn: rich });
+
+    await richer.settle();
+
+    let compared = 0;
+
+    for (const [index, frame] of rich.frames.entries()) {
+      const recorded = frame.json;
+      const delivered = richer.events[index];
+
+      expect(delivered).toBeDefined();
+
+      const present = ["runtime", "event_seq", "emitted_at", "idempotency_key"].filter(
+        (key) => recorded[key] !== undefined,
+      );
+
+      if (present.length === 0) {
+        expect(
+          delivered?.envelope,
+          `frame ${String(index)} should carry no envelope`,
+        ).toBeUndefined();
+        continue;
+      }
+
+      expect(delivered?.envelope, `frame ${String(index)} should carry an envelope`).toBeDefined();
+
+      // Exactly the present keys, each with the recorded value: no field added and
+      // none dropped.
+      expect(Object.keys(delivered?.envelope ?? {}).sort()).toEqual([...present].sort());
+
+      for (const key of present) {
+        expect((delivered?.envelope as Record<string, unknown> | undefined)?.[key]).toEqual(
+          recorded[key],
+        );
+        compared += 1;
+      }
+    }
+
+    expect(compared).toBeGreaterThan(0);
+  });
+
+  it("keeps the raw message on every frame for consumers that need the payload", async () => {
+    // Red when: `raw` is dropped or replaced by a re-serialised copy. A consumer
+    // reads engine fields this package does not model from `raw`, so losing it is
+    // invisible to every assertion above.
+    const turn = richestTurn(await corpus());
+    const session = await startReplaySession({ turn });
+
+    await session.settle();
+
+    for (const [index, frame] of turn.frames.entries()) {
+      expect(session.events[index]?.raw).toEqual(frame.json);
+    }
+  });
+
   it("keeps the type counts identical, type by type", async () => {
     // Red when: a type is swapped for another (a mis-routed subscription, a
     // dropped kind). Count equality alone cannot see order - the case below covers
@@ -308,10 +420,49 @@ describe("the rebuilt sequence matches the recording", () => {
     expect(session.events.map((frame) => frame.type)).toEqual(turn.types);
 
     // `at` is our receive time from the injected channel clock, never the
-    // engine's `emitted_at`; it must be a finite number on every frame.
+    // engine's `emitted_at` and never the wall clock. The fake clock does not
+    // advance during this session, so the value is exactly its `now()`; a
+    // silently substituted `Date.now()` would be a different order of magnitude
+    // and fail here.
     for (const frame of session.events) {
-      expect(Number.isFinite(frame.at)).toBe(true);
+      expect(frame.at).toBe(session.eventNow());
     }
+
+    // The engine's own timestamp is carried, not converted: `emitted_at` is a
+    // string on the recording, so a numeric `at` cannot be a copy of it.
+    expect(turn.frames.some((frame) => typeof frame.json["emitted_at"] === "string")).toBe(true);
+  });
+
+  it("fans out to every subscriber, and gives each the same frames in the same order", async () => {
+    // Red when: the channel delivers to only the first (or only the last)
+    // subscriber, or a second subscriber's registration changes the first one's
+    // view. One connection, several subscribers: that distinction is the point,
+    // since the replayer cannot serve a second socket but a channel can fan out
+    // 27) but a channel can fan out freely.
+    const turn = richestTurn(await corpus());
+    const session = await startReplaySession({ connect: false, turn });
+    const second: string[] = [];
+    const third: string[] = [];
+
+    session.subscribe((frame) => {
+      second.push(frame.type);
+    });
+    const detach = session.subscribe((frame) => {
+      third.push(frame.type);
+    });
+
+    await session.connect();
+    await session.settle();
+
+    const primary = session.events.map((frame) => frame.type);
+
+    expect(second).toEqual(primary);
+    expect(third).toEqual(primary);
+    expect(primary).toEqual(turn.types);
+
+    // Unsubscribing one listener must not disturb the others.
+    detach();
+    expect(second).toHaveLength(turn.frames.length);
   });
 
   it("raises no malformed or unknown-event diagnostic on recorded frames", async () => {
@@ -324,6 +475,18 @@ describe("the rebuilt sequence matches the recording", () => {
     await session.settle();
 
     expect(session.diagnostics).toEqual([]);
+
+    // "No diagnostics" alone stays green when the diagnostic port is wired to
+    // nothing at all, so the port is shown to be live on the same channel: a
+    // frame that is not JSON must be reported. Without this, deleting the
+    // `onDiagnostic` fan-out would be undetectable from this suite.
+    session.injectRaw("{ not json");
+    expect(session.diagnostics.length).toBe(1);
+    expect(session.diagnostics[0]?.kind).toBe("malformed");
+
+    // ...and the injected garbage did not become an event, nor disturb the
+    // sequence already asserted above.
+    expect(session.events).toHaveLength(turn.frames.length);
   });
 });
 
@@ -393,6 +556,48 @@ describe("pacing comes from the recording and costs no wall clock", () => {
     expect(result.types).toHaveLength(longest.frames.length);
     expect(longest.span).toBeGreaterThan(CASE_BUDGET_MS);
     expect(result.wallMs).toBeLessThan(CASE_BUDGET_MS);
+  });
+
+  it("scales the recorded offsets by the plan's speed", async () => {
+    // Red when: the driver ignores `plan.speed` and always uses the recorded
+    // offsets. This case exists because every other case here runs at `speed: 1`,
+    // where "multiply by speed" and "do not multiply" are the same arithmetic -
+    // an equivalent mutant. Only a non-unit speed can tell them apart, and speed
+    // scaling is the mechanism this case exercises.
+    const turn = richestTurn(await corpus());
+
+    expect(turn.span).toBeGreaterThan(1_000);
+
+    const single = await replayRecording({ turn, plan: { speed: 1 } });
+    const double = await replayRecording({ turn, plan: { speed: 2 } });
+    const half = await replayRecording({ turn, plan: { speed: 0.5 } });
+    const frameCount = turn.frames.length;
+
+    // At `speed: 1` the deltas telescope back to the recorded span with no
+    // rounding at all, so this one is exact.
+    expect(single.clock.total()).toBe(turn.span);
+
+    // At any other speed each of the N delays is rounded independently, so the
+    // total can only be asserted to within the rounding it must perform: N/2 ms of
+    // slack. The assertion is a *bound*, not a re-implementation of the driver's
+    // own arithmetic - recomputing `sum(round(delta * speed))` here would pass even
+    // if the driver ignored `speed` in some other way.
+    const slack = Math.ceil(frameCount / 2) + 1;
+
+    expect(Math.abs(double.clock.total() - turn.span * 2)).toBeLessThanOrEqual(slack);
+    expect(Math.abs(half.clock.total() - turn.span * 0.5)).toBeLessThanOrEqual(slack);
+
+    // Scaling really happened, rather than being within slack of the same number:
+    // doubling must be roughly twice the single-speed total, and halving roughly
+    // half. Without this the bound above would also hold for a driver that always
+    // used the recorded offsets when the span happened to be small.
+    expect(double.clock.total()).toBeGreaterThan(single.clock.total() * 1.9);
+    expect(half.clock.total()).toBeLessThan(single.clock.total() * 0.6);
+
+    // Order and type are independent of pacing: all three runs agree.
+    expect(double.types).toEqual(turn.types);
+    expect(half.types).toEqual(turn.types);
+    expect(single.types).toEqual(turn.types);
   });
 });
 
@@ -481,6 +686,16 @@ describe("the assertions above can fail (planted order changes)", () => {
     ]);
     expect(diff.sameMultiset).toBe(true);
 
+    // The multiset verdict must count occurrences, not distinct kinds: `alpha`
+    // appears twice in the recording, so a sequence that swaps one of them for a
+    // third kind has the same *set* of types and a different multiset.
+    expect(diffEventSequence(recorded, ["alpha", "beta", "gamma", "gamma"]).sameMultiset).toBe(
+      false,
+    );
+    expect(diffEventSequence(recorded, ["alpha", "beta", "gamma", "delta"]).sameMultiset).toBe(
+      false,
+    );
+
     // Truncation and extension are both visible, and neither looks like a swap.
     expect(diffEventSequence(recorded, recorded.slice(0, 3))).toMatchObject({
       lengthDelta: -1,
@@ -496,22 +711,49 @@ describe("the assertions above can fail (planted order changes)", () => {
   it("refuses a reorder that would swap two frames of the same type", () => {
     // The equivalent-mutant trap: a planted change that cannot alter the asserted
     // alter the asserted sequence proves nothing. Two adjacent frames of one type
-    // are indistinguishable in the type sequence, so the helper must refuse a plan
-    // that only swaps such a pair rather than silently returning one.
-    const uniform: RecordedTurn = {
+    // are indistinguishable in the type sequence, so the helper must *skip* such a
+    // pair and pick a differing one - and must refuse outright when no differing
+    // pair exists.
+    const line = { at: 0, dir: "s2c" as const, msg: {} };
+    const frame = (lineNumber: number, eventType: string) => ({
+      at: lineNumber,
+      byteIdentical: true,
+      canonical: "{}",
+      eventType,
+      json: {},
+      line: lineNumber,
+      recorded: "{}",
+    });
+
+    /** A turn whose type sequence is exactly `types`, one frame each. */
+    const turnOf = (types: readonly string[]): RecordedTurn => ({
       clientLines: 0,
-      fixture: { header: { kind: "wire", schemaVersion: 1 }, lines: [] },
-      frames: [],
+      fixture: { header: { kind: "wire", schemaVersion: 1 }, lines: [line] },
+      frames: types.map((type, index) => frame(index + 1, type)),
       name: "synthetic",
       span: 0,
-      typeCounts: new Map(),
-      types: [],
-    };
+      typeCounts: countTypes(types),
+      types: [...types],
+    });
 
-    // An empty recording has no adjacent pair at all, so it is refused for the
-    // strongest reason; the message must name the reason, not throw an opaque
-    // index error.
-    expect(() => reorderInjection(uniform)).toThrow(/no adjacent pair of differing event types/);
+    // A uniform run has no differing pair anywhere: refused, with the reason
+    // stated rather than an opaque index error.
+    expect(() => reorderInjection(turnOf(["a", "a", "a"]))).toThrow(
+      /no adjacent pair of differing event types/,
+    );
+    expect(() => reorderInjection(turnOf([]))).toThrow(/no adjacent pair of differing event types/);
+
+    // A run that starts uniform still finds the first *differing* pair, so the
+    // planted swap is one the assertion can actually see.
+    const picked = reorderInjection(turnOf(["a", "a", "b", "c"]));
+    expect(picked.index).toBe(1);
+    expect(picked.injection).toEqual({ kind: "reorder", lines: [2, 3] });
+
+    // And the guard is not "always refuse": a differing pair is accepted.
+    expect(reorderInjection(turnOf(["a", "b"]))).toEqual({
+      index: 0,
+      injection: { kind: "reorder", lines: [1, 2] },
+    });
   });
 });
 
@@ -520,6 +762,31 @@ describe("the assertions above can fail (planted order changes)", () => {
 /* ------------------------------------------------------------------------- */
 
 describe("sessions leave nothing behind", () => {
+  it("keeps delivering to the other subscribers when one of them throws", async () => {
+    // Red when: a consumer's exception propagates out of the channel's fan-out, so
+    // one broken subscriber costs every later subscriber its frame. On a recorded
+    // replay that is frame loss with no diagnostic - the worst shape of failure,
+    // because the sequence assertion in the *primary* subscriber still passes.
+    const turn = richestTurn(await corpus());
+    const session = await startReplaySession({ connect: false, turn });
+    const healthy: string[] = [];
+
+    // Registered first, so a propagating exception would cut the healthy one off.
+    session.subscribe(() => {
+      throw new Error("a renderer bug");
+    });
+    session.subscribe((frame) => {
+      healthy.push(frame.type);
+    });
+
+    await session.connect();
+    await session.settle();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(healthy).toEqual(turn.types);
+    expect(session.events.map((frame) => frame.type)).toEqual(turn.types);
+  });
+
   it("closes idempotently and releases the session registry", async () => {
     // Red when: `close` stops clearing the registry (the next case inherits a
     // closed server and fails somewhere unrelated) or stops being idempotent (a
@@ -531,7 +798,22 @@ describe("sessions leave nothing behind", () => {
     expect(session.isConnected()).toBe(true);
     expect(session.isClosed()).toBe(false);
 
+    // `connect` is idempotent too: calling it twice must not open a second socket.
+    // The replayer serves one live connection, so a second socket would receive
+    // second socket would receive nothing - the frames would silently stop. The
+    // attempt counter is what makes the guard observable; `isConnected` alone stays
+    // true even when a second socket was opened behind it.
+    await session.connect();
     await session.settle();
+
+    const afterFirst = session.frameTexts.length;
+    await session.connect();
+    await session.settle();
+
+    expect(session.connectAttempts()).toBe(1);
+    expect(session.frameTexts.length).toBe(afterFirst);
+    expect(session.frameTexts.length).toBe(turn.frames.length);
+
     await session.close();
     await session.close();
 
@@ -561,6 +843,58 @@ describe("sessions leave nothing behind", () => {
     // lost between the two would be a transport fault, not a plan fault, and the
     // two being equal is what makes the sequence assertion above meaningful.
     expect([...session.frameTexts]).toEqual([...session.emitted()]);
+  });
+
+  it("does not hand the captured frames to a second subscriber a second time", async () => {
+    // Red when: `openTransport` copies its capture queue instead of emptying it,
+    // so every subscriber attached later receives the frames the first one already
+    // took. This is the path the instant clock exercises and no ordinary test can:
+    // because the clock never waits, part of the recording is pushed during the
+    // upgrade and is waiting when `openTransport` resolves . The pool itself 2.5
+    // fact 23).
+    //
+    // The rule is `splice`, deliberately the single mechanism - see
+    // `openTransport`'s own comment and docs/28 `E-130`/`R-084`: two guards over one
+    // mistake hide each other.
+    const turn = richestTurn(await corpus());
+    const session = await startReplaySession({ turn });
+    const late: string[] = [];
+
+    // Attached *after* the session's own listener drained the capture queue. Any
+    // frame it now receives is a live one; under the copy mutant it would also
+    // receive the captured ones again.
+    session.onRawFrame((raw) => {
+      late.push(raw);
+    });
+
+    await session.settle();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    // The captured prefix is real: the first frames were waiting before the
+    // session's own subscriber existed, so they cannot be re-offered.
+    expect(session.frameTexts).toHaveLength(turn.frames.length);
+    expect(late).not.toContain(session.frameTexts[0]);
+
+    // The port is nonetheless live, not dead: frames still in flight when the
+    // late listener attached do reach it. A listener attached to nothing would
+    // satisfy "did not receive the first frame" vacuously.
+    expect(late.length).toBeGreaterThan(0);
+    expect(late.length).toBeLessThan(turn.frames.length);
+
+    // Nothing was delivered twice: the late listener's frames are a suffix of the
+    // session's, never an overlapping replay of them.
+    expect(session.frameTexts.slice(session.frameTexts.length - late.length)).toEqual(late);
+  });
+
+  it("refuses to hand out the raw-frame port before the session connects", async () => {
+    // Red when: `onRawFrame` is silently accepted before there is a transport,
+    // which would make the case above pass by subscribing to nothing. A clear
+    // error is the difference between "no frames were lost" and "nothing was
+    // listening".
+    const turn = richestTurn(await corpus());
+    const session = await startReplaySession({ connect: false, turn });
+
+    expect(() => session.onRawFrame(() => undefined)).toThrow(/before the session connected/);
   });
 
   it("fails fast, with a self-describing error, when the plan outruns the corpus", async () => {

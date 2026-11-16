@@ -8,60 +8,46 @@
  * ## What this module is for
  *
  * The equivalence suite asks one question: **does the real client stack rebuild
- * event sequence - order, type, count - when it is fed the recorded frames?**
- * Answering it needs four things that do not belong in a single test case, and
- * that four other suites would eventually copy:
+ * event sequence - order, type, count - when fed the recorded frames?** Answering
+ * it needs four things that would otherwise be copied by every suite that replays
+ * a recording:
  *
- * 1. **The corpus, read rather than transcribed.** Every expectation here is
- *    derived from `fixtures/engine/recordings/*.jsonl` at run time. That is what
- *    keeps the whole `client/` directory free of wire vocabulary : a type
- *    name reaches a test as data (`frame.eventType`), never as a literal, so
- *    "the type sequence is unchanged" is checked against the recording instead
- *    of against a copy of it that could drift.
- * 2. **A plan built from the recording.** The replayer is not a recorder: it
- *    emits the `s2c` lines of a fixture in fixture order, paced by the fixture's
- *    own `at` deltas . A plan therefore needs
- *    nothing but `speed` - and `speed` **must be a number**, because the default
- *    `"instant"` is what makes `plan.inject` unobservable (fact 24). One shared
- *    number keeps every case in this suite off the wall clock.
- * 3. **A clock that is asked, not obeyed.** {@link createRecordingClock} keeps
- *    the recorded pacing as *requested* delays and returns immediately, so a
- *    recording whose last frame sits at 6.6 s still costs the gate a millisecond
- *    or two. The requests are kept because they are an assertion input: their sum
- *    must equal the recording's own span, which is how the suite proves the
- *    replayer was driven by the recorded offsets rather than by its own timer.
- * 4. **A sequence diff, not a length.** `toHaveLength` cannot see a swap; a diff
- *    that reports each differing index can, and {@link diffEventSequence} also
- *    answers the question that decides whether the *order* assertion is carrying
- *    its own weight: is the multiset unchanged? A reordered run has an unchanged
- *    multiset, so a count-only assertion stays green - that is exactly what the
- *    planted-reorder case demonstrates.
+ * 1. **The corpus, read rather than transcribed.** Every expectation is derived
+ *    from `fixtures/engine/recordings/*.jsonl` at run time, which is also what keeps
+ *    the `client/` directory free of wire vocabulary: a type reaches a test
+ *    as data (`frame.eventType`), never as a literal, so "the type sequence is
+ *    unchanged" is checked against the recording instead of a copy that could drift.
+ * 2. **A plan built from the recording.** The replayer emits `s2c` lines in fixture
+ *    order, paced by the fixture's own `at` deltas.
+ *    A plan therefore needs only `speed` - which **must be a number**, because the
+ *    default `"instant"` makes `plan.inject` unobservable (fact 24).
+ * 3. **A clock that is asked, not obeyed.** {@link createRecordingClock} keeps the
+ *    recorded pacing as *requested* delays and returns at once, so a recording whose
+ *    last frame sits at 30 s costs no wall clock. The requests are kept because they
+ *    are an assertion input: their sum must equal the recording's span, which is how
+ *    the suite proves the replayer honoured the recorded offsets.
+ * 4. **A sequence diff, not a length.** `toHaveLength` cannot see a swap;
+ *    {@link diffEventSequence} reports each differing index and also answers whether
+ *    the multiset is unchanged - a reordered run keeps its multiset, so a count-only
+ *    assertion stays green. The planted-reorder case depends on exactly that.
  *
  * ## What it deliberately does not do
  *
- * - **No second socket.** The replayer serves one live connection at a time
- *   ; a second client receives nothing, and a suite
- *   that opened one would be testing that limitation instead of the client.
- *   {@link startReplaySession} opens exactly one transport and the tests run
- *   server-per-case, sequentially.
- * - **No `c2s` writes.** Replay never answers a command (fact 19), so sending one
- *   could only produce a frame nobody recorded. The `write` port is a no-op and
- *   the assertions are about what arrives.
+ * - **No second socket.** The replayer serves one live connection (fact 27); a
+ *   second client receives nothing. {@link startReplaySession} opens one transport.
+ * - **No `c2s` writes.** Replay never answers a command (fact 19), so a write could
+ *   only produce a frame nobody recorded; the `write` port is a no-op.
  * - **No hand-written frames.** A synthetic frame could not disagree with the
- *   implementation; these can, which is the whole reason the corpus is read from
- *   disk.
+ *   implementation; these can, which is why the corpus is read from disk.
  *
- * ## Leak discipline (the part that is not optional)
+ * ## Leak discipline
  *
- * A replay server that nobody closes keeps the process alive; a channel left open
- * hands timers to the next case. Every session therefore registers itself in
- * {@link liveSessions}, {@link closeSessions} closes whatever a case forgot, and
- * the channel half is handled by `channel-test-support`'s own tracking
- * (`trackChannel` / `trackClock`), so `assertNoLeakedTimers` still works here
- * without this module re-implementing it.
+ * An unclosed replay server keeps the process alive; an open channel hands timers to
+ * the next case. Every session registers in {@link liveSessions} and
+ * {@link closeSessions} closes whatever a case forgot, while the channel half uses
+ * `channel-test-support`'s own tracking so `assertNoLeakedTimers` still applies.
  *
- * This file intentionally does not end in `.test.ts`: vitest collects by that
- * suffix, so nothing here is ever mistaken for a suite.
+ * The file does not end in `.test.ts`, so vitest never collects it as a suite.
  */
 
 import { readdirSync, readFileSync } from "node:fs";
@@ -119,24 +105,16 @@ export type RecordedFrame = {
   /** The stored `msg` segment, byte for byte. */
   readonly recorded: string;
   /**
-   * Whether stored bytes and emitted bytes agree.
+   * Whether the stored bytes and the emitted bytes agree exactly.
    *
-   * They disagree on a minority of lines: the recorder wrote non-ASCII code
-   * points as `\uXXXX` escapes, while the replay engine serialises the parsed
-   * message and JSON.stringify writes those characters literally. The two texts
-   * are the same JSON, and the difference is exactly that escaping - which is
-   * what {@link escapingOnlyDifference} proves rather than assumes. Conflating
-   * "byte-identical" with "equivalent" would either hide a real loss or fail on a
-   * difference that carries no information.
+   * They differ on a minority of lines: the recorder wrote non-ASCII code points
+   * as `\uXXXX`, while replay emits `JSON.stringify(msg)`, which writes them
+   * literally. Whether such a difference is *only* escaping is decided by
+   * {@link isEscapingOnlyDifference} at the point of use - both texts are kept and
+   * the verdict is derived, never cached as a second record of one fact (`docs/28`
+   * `R-084`).
    */
   readonly byteIdentical: boolean;
-  /**
-   * `true` when the stored bytes differ from {@link canonical} only by non-ASCII
-   * escaping.
-   *
-   * Always `true` for a byte-identical frame: there is nothing to differ.
-   */
-  readonly escapingOnlyDifference: boolean;
 };
 
 /** One recorded session: the fixture, its `s2c` frames and the derived facts. */
@@ -211,6 +189,23 @@ function unescapeNonAscii(text: string): string {
   });
 }
 
+/**
+ * Whether a stored frame is the emitted frame with only its non-ASCII escapes
+ * spelled differently.
+ *
+ * Exported so the rule can be shown to be a *computation* rather than an
+ * assumption. A suite that only ever sees frames for which it returns `true`
+ * could not tell it apart from `return true`, so the case exercising it feeds a
+ * frame it must reject.
+ *
+ * @param stored the text as the recording stores it
+ * @param canonical `JSON.stringify` of the parsed message
+ * @returns `true` when unescaping non-ASCII code points yields `canonical`
+ */
+export function isEscapingOnlyDifference(stored: string, canonical: string): boolean {
+  return stored === canonical || unescapeNonAscii(stored) === canonical;
+}
+
 /** Build the derived view of one recorded fixture line. */
 function toFrame(
   line: WireFixtureLine,
@@ -236,7 +231,6 @@ function toFrame(
     at: line.at,
     byteIdentical: canonical === stored,
     canonical,
-    escapingOnlyDifference: unescapeNonAscii(stored) === canonical,
     eventType: type,
     json: line.msg,
     line: lineNumber,
@@ -340,7 +334,7 @@ export function corpusTotals(turns: readonly RecordedTurn[]): CorpusTotals {
       rewritten += frame.byteIdentical ? 0 : 1;
       typeCounts.set(frame.eventType, (typeCounts.get(frame.eventType) ?? 0) + 1);
 
-      if (!frame.byteIdentical && !frame.escapingOnlyDifference) {
+      if (!frame.byteIdentical && !isEscapingOnlyDifference(frame.recorded, frame.canonical)) {
         lostInRewriting.push(`${turn.name}:${String(frame.line)}`);
       }
     }
@@ -414,11 +408,9 @@ export type SequenceDiff = {
    * Whether the two sequences carry the same types the same number of times,
    * ignoring order.
    *
-   * This is the field that makes the suite's honesty checkable. On a reordered
-   * run it is `true` and {@link gaps} is non-empty, which is precisely the state a
-   * count-only assertion cannot distinguish from a correct run: the order
-   * assertion is the only thing doing the work, and the planted-reorder case
-   * proves it.
+   * This is what makes the order assertion's value checkable: a reordered run has
+   * `true` here with a non-empty {@link gaps}, which is precisely the state a
+   * count-only assertion cannot tell from a correct run.
    */
   readonly sameMultiset: boolean;
 };
@@ -426,9 +418,8 @@ export type SequenceDiff = {
 /**
  * Compare two event sequences position by position.
  *
- * Order-sensitive **and** count-sensitive, and the two answers are reported
- * separately so a failure says which property broke (a swap keeps the multiset, a
- * loss does not).
+ * Order-sensitive **and** count-sensitive, reported separately so a failure says
+ * which property broke (a swap keeps the multiset, a loss does not).
  *
  * @param expected the recorded sequence
  * @param actual what the client delivered
@@ -540,10 +531,10 @@ export type RecordingClock = {
 /**
  * A clock that records what it was asked to wait for and waits for none of it.
  *
- * Why not the frozen `createInstantClock`: its `sleep` is `() => Promise.resolve()`
- * and it keeps no record, so a case could not tell "the driver honoured the
- * recorded offsets" from "the driver emitted everything at once". Keeping the
- * request is the assertion; resolving the promise immediately is the budget.
+ * Not the frozen `createInstantClock`: that one keeps no record, so a case could
+ * not tell "the driver honoured the recorded offsets" from "the driver emitted
+ * everything at once". Keeping the request is the assertion; resolving at once is
+ * the budget.
  *
  * @returns the clock and its request log
  */
@@ -634,6 +625,41 @@ export type ReplaySession = {
   readonly frameTexts: readonly string[];
   /** Frames the channel delivered to its event subscriber, in arrival order. */
   readonly events: readonly EngineEventFrame[];
+  /**
+   * Attach one more event subscriber to the session's channel.
+   *
+   * A second *subscriber* is not a second connection: the replayer serves one live
+   * socket, so a second channel cannot be given
+   * frames, but the same channel can fan out to as many subscribers as it likes.
+   * Exposed so a case can prove the fan-out rather than assume it.
+   *
+   * @param listener receives every event the channel delivers
+   * @returns unsubscribe
+   */
+  subscribe(listener: (frame: EngineEventFrame) => void): () => void;
+  /**
+   * Feed one raw text frame straight into the session's channel.
+   *
+   * Not part of the replay path: it exists so a case can prove the diagnostic port
+   * is *live* (a malformed frame must be reported) instead of only asserting that
+   * a good recording produced no diagnostics - an assertion that stays green when
+   * the port is disconnected entirely.
+   *
+   * @param raw frame text
+   */
+  injectRaw(raw: string): void;
+  /**
+   * Attach another listener to the transport's inbound frames, as raw text.
+   *
+   * One layer below {@link ReplaySession.subscribe}: this makes the "captured
+   * frames go to the first subscriber only" rule observable, since a later listener
+   * receiving the captured prefix again would mean the queue was copied instead of
+   * emptied.
+   *
+   * @param listener receives the raw text of every frame delivered from now on
+   * @returns unsubscribe
+   */
+  onRawFrame(listener: (raw: string) => void): () => void;
   /** Diagnostics the channel produced, in arrival order. */
   readonly diagnostics: readonly { readonly kind: string; readonly subject: string }[];
   /** The server, for `emitted` and an idempotent close. */
@@ -642,8 +668,26 @@ export type ReplaySession = {
   emitted(): readonly string[];
   /** Whether the connection has been opened. */
   isConnected(): boolean;
+  /**
+   * How many times a transport was actually opened.
+   *
+   * Distinct from {@link ReplaySession.isConnected}, which stays true even when a
+   * second socket was opened behind it. The replayer serves one live connection
+   * so the count is the observable the guard keeps
+   * at one.
+   */
+  connectAttempts(): number;
   /** Whether {@link ReplaySession.close} has run. */
   isClosed(): boolean;
+  /**
+   * The injected event clock's current time.
+   *
+   * Exposed so a case can assert that `EngineEventFrame.at` came from **this**
+   * clock rather than from the wall clock: the fake clock never advances here, so
+   * an exact equality is a strong assertion, and a silently substituted
+   * `Date.now()` cannot satisfy it.
+   */
+  eventNow(): number;
   /** Start the one allowed client connection. Idempotent. */
   connect(): Promise<void>;
   /** Wait until every planned frame has arrived, or fail naming the shortfall. */
@@ -654,17 +698,6 @@ export type ReplaySession = {
 
 /** Sessions built during the current test, so teardown can close them. */
 const liveSessions: ReplaySession[] = [];
-
-/**
- * Register a session for teardown.
- *
- * @param session the session to close if its case forgets
- * @returns the same session
- */
-export function trackSession<T extends ReplaySession>(session: T): T {
-  liveSessions.push(session);
-  return session;
-}
 
 /** How many sessions have not been closed yet. */
 export function openSessionCount(): number {
@@ -735,6 +768,7 @@ export async function startReplaySession(options: StartReplayOptions): Promise<R
   );
   let transport: EngineTransport | undefined;
   let closed = false;
+  let attempts = 0;
 
   channel.onEvent((frame) => {
     events.push(frame);
@@ -750,6 +784,8 @@ export async function startReplaySession(options: StartReplayOptions): Promise<R
         return;
       }
 
+      attempts += 1;
+
       const opened = await openTransport(server.url, REPLAY_TOKEN, {
         timeoutMs: CONNECT_BUDGET_MS,
       });
@@ -764,6 +800,22 @@ export async function startReplaySession(options: StartReplayOptions): Promise<R
     events,
     expectedFrames: plannedDelays.length,
     frameTexts,
+    injectRaw: (raw: string) => {
+      channel.ingest(raw);
+    },
+    onRawFrame: (listener: (raw: string) => void) => {
+      if (transport === undefined) {
+        throw new Error(
+          "onRawFrame was called before the session connected; the transport's frame port " +
+            "only exists once `connect()` has resolved",
+        );
+      }
+
+      return transport.onFrame((frame) => {
+        listener(frame.raw);
+      });
+    },
+    subscribe: (listener: (frame: EngineEventFrame) => void) => channel.onEvent(listener),
 
     close: async () => {
       if (closed) {
@@ -786,6 +838,8 @@ export async function startReplaySession(options: StartReplayOptions): Promise<R
     },
     diagnostics,
     emitted: () => server.emitted,
+    eventNow: () => fake.clock.now(),
+    connectAttempts: () => attempts,
     isClosed: () => closed,
     isConnected: () => transport !== undefined,
     plannedDelays,
@@ -805,15 +859,6 @@ export async function startReplaySession(options: StartReplayOptions): Promise<R
             `${String(budgetMs)} ms. The plan and the recording disagree, or the driver ` +
             "stalled on a socket - in replay mode a frame waits for a connection " +
             "so this is a wiring failure, not a slow machine.",
-        );
-      }
-
-      // Delivery is synchronous inside `onFrame` (`channel.ingest`), so the two
-      // counters agreeing is a property worth asserting rather than assuming.
-      if (events.length !== frameTexts.length) {
-        throw new Error(
-          `replay delivered ${String(frameTexts.length)} frame(s) but the channel emitted ` +
-            `${String(events.length)} event(s); a frame was swallowed on the way in`,
         );
       }
     },
