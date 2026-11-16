@@ -32,6 +32,8 @@ export interface RuntimeFacts {
   readonly here: string;
   /** `app.getPath("userData")`. */
   readonly userData: string;
+  /** `app.getPath("logs")`; the one log root, also shown by the runtime error page. */
+  readonly logsDir: string;
 }
 
 /** Every path the runtime layer needs, with the mode that produced it. */
@@ -48,6 +50,7 @@ export interface RuntimeLayout {
   /** Packaged: inside `app.asar`. Dev: generated next to the package. */
   readonly lockPath: string;
   readonly statePath: string;
+  readonly logsDir: string;
 }
 
 /** Fixed file names; exported so callers do not repeat literal strings. */
@@ -74,6 +77,7 @@ export function computeRuntimeLayout(facts: RuntimeFacts): RuntimeLayout {
   requirePath(facts.resourcesPath, "resourcesPath");
   requirePath(facts.here, "here");
   requirePath(facts.userData, "userData");
+  requirePath(facts.logsDir, "logsDir");
 
   if (facts.isPackaged) {
     const resourcesRoot = path.resolve(facts.resourcesPath);
@@ -89,6 +93,7 @@ export function computeRuntimeLayout(facts: RuntimeFacts): RuntimeLayout {
       watchdogPath: path.join(resourcesRoot, RUNTIME_WATCHDOG_RELATIVE),
       lockPath: path.join(appRoot, RUNTIME_LOCK_FILE),
       statePath: path.join(path.resolve(facts.userData), RUNTIME_STATE_FILE),
+      logsDir: path.resolve(facts.logsDir),
     });
   }
 
@@ -104,6 +109,7 @@ export function computeRuntimeLayout(facts: RuntimeFacts): RuntimeLayout {
     watchdogPath: path.join(repoRoot, "packages", "core", "src", "runtime", "watchdog.cjs"),
     lockPath: path.join(appRoot, RUNTIME_LOCK_FILE),
     statePath: path.join(path.resolve(facts.userData), RUNTIME_STATE_FILE),
+    logsDir: path.resolve(facts.logsDir),
   });
 }
 

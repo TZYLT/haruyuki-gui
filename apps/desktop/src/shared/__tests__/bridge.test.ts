@@ -202,6 +202,7 @@ describe("allowlist", () => {
       "bridge:control.runtime.pick",
       "bridge:control.runtime.reset",
       "bridge:control.runtime.failed",
+      "bridge:control.runtime.log",
     ]);
     expect(new Set(CHANNEL_ALLOWLIST).size).toBe(CHANNEL_ALLOWLIST.length);
   });

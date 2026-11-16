@@ -84,7 +84,7 @@ import { runShellCleanup } from "./diagnostics/cleanup.js";
 import { registerMainDiagnosticsIpc } from "./diagnostics/main-ipc.js";
 import { getSessionDiagnosticsSource } from "./diagnostics/session.js";
 import { runBootSupervision, type StaleCandidate } from "./supervision/boot.js";
-import { startShellEngine } from "./supervision/engine-lifecycle.js";
+import { startRuntimeShell } from "./runtime/shell.js";
 import { type EngineHost } from "./supervision/engine-host.js";
 import { installQuitSupervisor, type QuitSupervisor } from "./supervision/quit.js";
 import {
@@ -842,25 +842,22 @@ async function main(): Promise<void> {
     },
   });
 
-  // The window never waits for the engine (docs/33 section 5.5 item 9). A
-  // missing bundle resolves as a skip and leaves the window exactly as it was.
-  void startShellEngine({
+  // Window first; the runtime layer verifies the lock and hands D4 the bundle.
+  void startRuntimeShell({
+    window: mainWindow as BrowserWindow,
+    ipcMain,
     userData,
     appVersion: app.getVersion(),
     appPath: app.getAppPath(),
+    here: HERE,
+    logsDir: app.getPath("logs"),
     onLog: logSupervision,
     onCrash: handleEngineCrash,
     quitSupervisor,
     onHost: (host) => {
       engineHost = host;
     },
-  }).catch((error: unknown) => {
-    logger?.warn("supervision.engine.start", {
-      state: "failed",
-      reason: "unexpected",
-      detail: error instanceof Error ? error.message : String(error),
-    });
-  });
+  }).catch((error: unknown) => logger?.warn("runtime.startup", { detail: String(error) }));
 
   app.on("activate", () => {
     // macOS: clicking the dock icon with no window open reopens one. Reusing the

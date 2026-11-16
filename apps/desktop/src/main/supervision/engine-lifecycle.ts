@@ -15,6 +15,10 @@ export interface ShellEngineDeps {
   readonly userData: string;
   readonly appVersion: string;
   readonly appPath: string;
+  /** G1's packaged bundle; D4 still owns the process lifetime. */
+  readonly bundlePath?: string;
+  /** G1's real watchdog path; absent keeps D4's dev resolution. */
+  readonly watchdogPath?: string;
   readonly onLog: SupervisionLog;
   readonly onCrash: (record: CrashRecord) => void;
   readonly quitSupervisor: QuitSupervisor | null;
@@ -32,11 +36,15 @@ export interface ShellEngineDeps {
  *
  * @param deps the composition root's facts and callbacks
  */
-export async function startShellEngine(deps: ShellEngineDeps): Promise<void> {
+export async function startShellEngine(deps: ShellEngineDeps): Promise<EngineHost | null> {
   const result = await startEngineHost({
     userData: deps.userData,
     appVersion: deps.appVersion,
     appPath: deps.appPath,
+    ...(deps.bundlePath === undefined ? {} : { bundlePath: deps.bundlePath }),
+    ...(deps.watchdogPath === undefined
+      ? {}
+      : { resolveWatchdog: () => deps.watchdogPath ?? null }),
     onLog: deps.onLog,
     onCrash: deps.onCrash,
   });
@@ -48,7 +56,7 @@ export async function startShellEngine(deps: ShellEngineDeps): Promise<void> {
       ...(result.detail === undefined ? {} : { detail: result.detail }),
     });
 
-    return;
+    return null;
   }
 
   const accepted = deps.quitSupervisor?.setHost(result.host) ?? true;
@@ -62,8 +70,10 @@ export async function startShellEngine(deps: ShellEngineDeps): Promise<void> {
       ...(stopped.reason === undefined ? {} : { reason: stopped.reason }),
     });
 
-    return;
+    return null;
   }
 
   deps.onHost(result.host);
+
+  return result.host;
 }

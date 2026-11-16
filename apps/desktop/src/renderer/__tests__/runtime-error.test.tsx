@@ -66,7 +66,7 @@ describe("RuntimeErrorPage", () => {
     const onPick = vi.fn();
     const onRetry = vi.fn();
     const onUseBundled = vi.fn();
-    const onOpenLog = vi.fn();
+    const onOpenLog = vi.fn(async () => ({ ok: true }) as const);
 
     render(
       withProvider(
@@ -107,5 +107,22 @@ describe("RuntimeErrorPage", () => {
       screen.getByText(/The external engine is unavailable; using the bundled engine/),
     ).toBeTruthy();
     expect(screen.getByText(/directory missing/)).toBeTruthy();
+  });
+
+  it("shows the open-log failure beside the button instead of a silent success", async () => {
+    const user = userEvent.setup();
+
+    render(
+      withProvider(
+        <RuntimeErrorPage
+          failure={MISSING}
+          onOpenLog={async () => ({ ok: false, detail: "no default handler" })}
+        />,
+      ),
+    );
+
+    await user.click(screen.getByRole("button", { name: "Open logs" }));
+
+    expect(screen.getByRole("status").textContent).toContain("no default handler");
   });
 });

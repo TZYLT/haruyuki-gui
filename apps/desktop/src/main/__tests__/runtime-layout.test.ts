@@ -24,6 +24,7 @@ const PACKAGED: RuntimeFacts = {
   resourcesPath: "C:\\Program Files\\Haruyuki 应用\\resources",
   here: "C:\\Program Files\\Haruyuki 应用\\resources\\app.asar\\dist\\main",
   userData: "C:\\Users\\测试 用户\\AppData\\Roaming\\Haruyuki",
+  logsDir: "C:\\Users\\测试 用户\\AppData\\Roaming\\Haruyuki\\logs",
 };
 
 /** A checkout at the canonical J: drive, with dist/main as __dirname. */
@@ -33,6 +34,7 @@ const DEV: RuntimeFacts = {
   resourcesPath: "J:\\Projects\\Haruyuki-desktop\\apps\\desktop",
   here: "J:\\Projects\\Haruyuki-desktop\\apps\\desktop\\dist\\main",
   userData: "J:\\Users\\tester\\AppData\\Roaming\\Haruyuki",
+  logsDir: "J:\\Users\\tester\\AppData\\Roaming\\Haruyuki\\logs",
 };
 
 describe("computeRuntimeLayout", () => {
@@ -55,6 +57,7 @@ describe("computeRuntimeLayout", () => {
     expect(layout.lockPath).toBe(path.join(PACKAGED.appPath, "runtime-lock.json"));
     expect(layout.lockPath).toContain("app.asar");
     expect(layout.statePath).toBe(path.join(PACKAGED.userData, "runtime-state.json"));
+    expect(layout.logsDir).toBe(PACKAGED.logsDir);
   });
 
   it("preserves spaces and non-ASCII in every derived path", () => {
@@ -109,6 +112,7 @@ describe("computeRuntimeLayout", () => {
     ["resourcesPath", { ...PACKAGED, resourcesPath: "  " }],
     ["here", { ...PACKAGED, here: "" }],
     ["userData", { ...PACKAGED, userData: "" }],
+    ["logsDir", { ...PACKAGED, logsDir: "" }],
   ])("rejects an empty %s instead of resolving it to cwd", (name, facts) => {
     expect(() => computeRuntimeLayout(facts)).toThrowError(
       new RegExp(`${name} must be a non-empty path`),

@@ -51,3 +51,12 @@ export type RuntimeStatus =
 export interface RuntimeChoice {
   readonly engineDir: string;
 }
+
+/**
+ * Result of asking the main process to open the log directory.
+ *
+ * `shell.openPath` can fail (directory missing, no default handler), and a
+ * hard-coded `{ok:true}` would make the page claim success while nothing opened.
+ */
+export type RuntimeLogResult =
+  { readonly ok: true } | { readonly ok: false; readonly detail?: string };

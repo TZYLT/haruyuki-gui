@@ -26,6 +26,17 @@ import { DiagnosticsPanel } from "./diagnostics-panel.js";
 import { BRIDGE_CHANNEL_NAMES } from "../shared/bridge.js";
 import { createRendererBridge, type BridgeBoot } from "./bridge.js";
 import { ErrorBoundary, RendererErrorPage } from "./error-page.js";
+import { RuntimeErrorPage } from "./runtime-error.js";
+import {
+  RUNTIME_FAILED_CHANNEL,
+  RUNTIME_LOG_CHANNEL,
+  RUNTIME_PICK_CHANNEL,
+  RUNTIME_RESET_CHANNEL,
+  RUNTIME_STATUS_CHANNEL,
+  type RuntimePickResult,
+  type RuntimeResetResult,
+} from "../shared/runtime-channels.js";
+import type { RuntimeFailure, RuntimeLogResult, RuntimeStatus } from "../shared/runtime.js";
 
 /**
  * What the preload exposes.
@@ -136,6 +147,152 @@ if (shellBridge !== undefined) {
 }
 
 /**
+ * Show the runtime error page when the engine could not start, without
+ * unmounting the providers above it.
+ *
+ * The failed push can arrive before this component mounts; the status request on
+ * mount covers that race. The reverse (a failure arriving twice) is harmless:
+ * setting the same failure again renders the same page.
+ *
+ * @param props the routed children
+ * @returns the error page, or the children
+ */
+function RuntimeGate({ children }: { children: ReactElement }): ReactElement {
+  const [failure, setFailure] = useState<RuntimeFailure | null>(null);
+
+  useEffect(() => {
+    const bridge = window.haruyuki;
+
+    if (bridge === undefined) return;
+
+    const off = bridge.on(RUNTIME_FAILED_CHANNEL, (payload) => {
+      const next = asRuntimeFailure(payload);
+
+      if (next !== null) setFailure(next);
+    });
+
+    void bridge
+      .invoke(RUNTIME_STATUS_CHANNEL)
+      .then((value) => {
+        const status = value as RuntimeStatus | undefined;
+
+        if (status?.phase === "failed") setFailure(status.failure);
+      })
+      .catch(() => undefined);
+
+    return off;
+  }, []);
+
+  if (failure === null) return children;
+
+  return (
+    <RuntimeErrorPage
+      failure={failure}
+      onPick={() => {
+        void pickRuntimeEngine(setFailure);
+      }}
+      onUseBundled={() => {
+        void resetRuntimeEngine(setFailure);
+      }}
+      onOpenLog={async () => {
+        const bridge = window.haruyuki;
+
+        if (bridge === undefined) return { ok: false, detail: "The bridge is unavailable." };
+
+        const result = await bridge.invoke(RUNTIME_LOG_CHANNEL);
+
+        return isRuntimeLogResult(result)
+          ? result
+          : { ok: false, detail: "The log channel returned an unexpected response." };
+      }}
+    />
+  );
+}
+
+/** Pick a directory and clear the page only when the engine actually restarted. */
+async function pickRuntimeEngine(
+  setFailure: (failure: RuntimeFailure | null) => void,
+): Promise<void> {
+  const bridge = window.haruyuki;
+
+  if (bridge === undefined) return;
+
+  const result = (await bridge.invoke(RUNTIME_PICK_CHANNEL)) as RuntimePickResult | undefined;
+
+  if (result?.ok === true) {
+    setFailure(null);
+    return;
+  }
+
+  if (result !== undefined && result.ok === false) {
+    setFailure({
+      kind: result.failureKind,
+      detail: result.detail ?? "The selected engine could not be used.",
+    });
+  }
+}
+
+/** Clear the external pick and return to the bundled engine. */
+async function resetRuntimeEngine(
+  setFailure: (failure: RuntimeFailure | null) => void,
+): Promise<void> {
+  const bridge = window.haruyuki;
+
+  if (bridge === undefined) return;
+
+  const result = (await bridge.invoke(RUNTIME_RESET_CHANNEL)) as RuntimeResetResult | undefined;
+
+  if (result?.ok === true) {
+    setFailure(null);
+    return;
+  }
+
+  setFailure({
+    kind: "spawn",
+    detail: result?.detail ?? "The bundled engine could not be started.",
+  });
+}
+
+/** Validate a pushed failure instead of trusting a channel payload. */
+function asRuntimeFailure(value: unknown): RuntimeFailure | null {
+  if (typeof value !== "object" || value === null) return null;
+
+  const candidate = value as Record<string, unknown>;
+  const kind = candidate["kind"];
+  const detail = candidate["detail"];
+
+  if (
+    (kind !== "missing" && kind !== "mismatch" && kind !== "spawn") ||
+    typeof detail !== "string"
+  ) {
+    return null;
+  }
+
+  return {
+    kind,
+    detail,
+    ...(typeof candidate["enginePath"] === "string" ? { enginePath: candidate["enginePath"] } : {}),
+    ...(typeof candidate["expected"] === "string" ? { expected: candidate["expected"] } : {}),
+    ...(typeof candidate["actual"] === "string" ? { actual: candidate["actual"] } : {}),
+    ...(typeof candidate["logPath"] === "string" ? { logPath: candidate["logPath"] } : {}),
+  };
+}
+
+/** Validate the log result's two possible shapes. */
+function isRuntimeLogResult(value: unknown): value is RuntimeLogResult {
+  if (typeof value !== "object" || value === null) return false;
+
+  const candidate = value as Record<string, unknown>;
+
+  if (candidate["ok"] === true) return true;
+  if (candidate["ok"] === false) {
+    return candidate["detail"] === undefined || typeof candidate["detail"] === "string";
+  }
+
+  return false;
+}
+
+/**
  * The mounted shell.
  *
  * Three routes: the sample page proves the component library renders inside the
@@ -163,24 +320,26 @@ function Shell(): ReactElement {
       <ErrorBoundary
         fallback={(error, reset) => <RendererErrorPage error={error} onRetry={reset} />}
       >
-        {boot.crash !== null ? (
-          <>
-            <CrashPage />
-            <DiagnosticsPanel initialOpen={false} />
-          </>
-        ) : boot.panel === "diagnostics" ? (
-          <DiagnosticsPanel initialOpen />
-        ) : (
-          <>
-            <SamplePage locale={locale} />
-            {/*
-             * Mounted hidden on the default route so the menu's `open` message has a
-             * listener without reloading the page. The panel renders nothing until
-             * that message arrives (`initialOpen` is false).
-             */}
-            <DiagnosticsPanel initialOpen={false} />
-          </>
-        )}
+        <RuntimeGate>
+          {boot.crash !== null ? (
+            <>
+              <CrashPage />
+              <DiagnosticsPanel initialOpen={false} />
+            </>
+          ) : boot.panel === "diagnostics" ? (
+            <DiagnosticsPanel initialOpen />
+          ) : (
+            <>
+              <SamplePage locale={locale} />
+              {/*
+               * Mounted hidden on the default route so the menu's `open` message has a
+               * listener without reloading the page. The panel renders nothing until
+               * that message arrives (`initialOpen` is false).
+               */}
+              <DiagnosticsPanel initialOpen={false} />
+            </>
+          )}
+        </RuntimeGate>
       </ErrorBoundary>
     </LocaleProvider>
   );

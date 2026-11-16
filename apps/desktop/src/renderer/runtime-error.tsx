@@ -14,11 +14,11 @@
  * and reading the log.
  */
 
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
 import { Button, ErrorState, useT, type MessageKey } from "@haruyuki/ui";
 
-import type { RuntimeFailure } from "../shared/runtime.js";
+import type { RuntimeFailure, RuntimeLogResult } from "../shared/runtime.js";
 
 /** Props of {@link RuntimeErrorPage}. */
 export interface RuntimeErrorPageProps {
@@ -30,7 +30,7 @@ export interface RuntimeErrorPageProps {
   /** Clear the external pick and use the bundled engine. */
   readonly onUseBundled?: () => void;
   /** Ask the main process to open the log directory. */
-  readonly onOpenLog?: () => void;
+  readonly onOpenLog?: () => Promise<RuntimeLogResult>;
 }
 
 /**
@@ -48,6 +48,23 @@ export function RuntimeErrorPage({
 }: RuntimeErrorPageProps): ReactNode {
   const t = useT();
   const detail = detailOf(failure, t);
+  const [logError, setLogError] = useState<string | null>(null);
+
+  const openLog = async (): Promise<void> => {
+    if (onOpenLog === undefined) return;
+
+    setLogError(null);
+
+    try {
+      const result = await onOpenLog();
+
+      if (!result.ok) {
+        setLogError(result.detail ?? t("error.runtimeLogPath"));
+      }
+    } catch (error) {
+      setLogError(error instanceof Error ? error.message : t("error.runtimeLogPath"));
+    }
+  };
 
   return (
     <div
@@ -77,11 +94,17 @@ export function RuntimeErrorPage({
           </Button>
         )}
         {onOpenLog === undefined ? null : (
-          <Button variant="ghost" onClick={onOpenLog} iconLeft="file">
+          <Button variant="ghost" onClick={() => void openLog()} iconLeft="file">
             {t("error.runtimeOpenLog")}
           </Button>
         )}
       </div>
+
+      {logError === null ? null : (
+        <p className="ui-state__description" role="status" style={{ margin: 0 }}>
+          {logError}
+        </p>
+      )}
     </div>
   );
 }
