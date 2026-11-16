@@ -5,31 +5,61 @@
     "orientation": "horizontal",
     "children": [
       {
-        "type": "panel",
-        "id": "left",
-        "tabs": [
-          { "tabId": "conversation", "pageId": "sample.conversation" },
-          { "tabId": "future", "pageId": "vendor.future", "props": { "seed": 7 }, "x-tab": "keep" }
+        "type": "split",
+        "orientation": "vertical",
+        "children": [
+          {
+            "type": "split",
+            "orientation": "horizontal",
+            "children": [
+              {
+                "type": "panel",
+                "id": "top-left",
+                "tabs": [
+                  { "tabId": "conversation", "pageId": "sample.conversation" },
+                  { "tabId": "future", "pageId": "vendor.future", "props": { "seed": 7 }, "x-tab": "keep" },
+                  { "tabId": "settings", "pageId": "sample.settings" }
+                ],
+                "activeTabId": "future",
+                "extras": { "widthHint": 0.62 },
+                "x-panel": "keep"
+              },
+              {
+                "type": "panel",
+                "id": "top-right",
+                "tabs": []
+              }
+            ],
+            "sizes": [0.5, 0.5],
+            "x-split": "keep"
+          },
+          {
+            "type": "panel",
+            "id": "bottom",
+            "tabs": [
+              { "tabId": "settings", "pageId": "sample.settings" }
+            ],
+            "activeTabId": "settings"
+          }
         ],
-        "activeTabId": "future",
-        "extras": { "widthHint": 0.62 },
-        "x-panel": "keep"
+        "sizes": [0.55, 0.45],
+        "x-split": "keep"
       },
       {
         "type": "panel",
         "id": "right",
         "tabs": [
-          { "tabId": "settings", "pageId": "sample.settings" },
-          { "tabId": "closed-future", "pageId": "vendor.closed", "hidden": true }
+          { "tabId": "closed-future", "pageId": "vendor.closed", "hidden": true },
+          { "tabId": "settings-right", "pageId": "sample.settings" }
         ],
-        "activeTabId": "settings"
+        "activeTabId": "settings-right"
       }
     ],
     "sizes": [0.62, 0.38],
     "extras": { "locked": false },
     "x-split": "keep"
   },
-  "activePanelId": "left",
+  "activePanelId": "bottom",
   "extras": { "schemaNote": "C4 sample" },
   "x-doc": "keep"
 }
