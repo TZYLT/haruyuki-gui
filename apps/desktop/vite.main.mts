@@ -43,9 +43,6 @@ import { defineConfig } from "vite";
 /** This package directory. */
 const PACKAGE_DIR = import.meta.dirname;
 
-/** The repository root, used only to resolve the one core module `main` needs (below). */
-const REPO_ROOT = path.resolve(PACKAGE_DIR, "..", "..");
-
 /** Node built-ins plus the Electron module, all provided by the runtime. */
 const EXTERNAL = ["electron", ...builtinModules, ...builtinModules.map((name) => `node:${name}`)];
 
@@ -71,6 +68,13 @@ const WHICH: keyof typeof ENTRIES =
  * The absolute path is a development-tree fact. G2's packaged build must copy
  * `ws` next to the bundle or externalise it with a packaged anchor; that is
  * recorded as a packaging debt rather than guessed at here.
+ *
+ * This is E-132's temporary convergence for the main build. D3 carried a narrower
+ * `resolve.alias` for a while ("main only needs core's bridge module"), but D4's
+ * supervision code imports core's reclaim/evidence primitives from the package root,
+ * so the root import is now correct and the alias is gone. The durable fix is a
+ * `"./bridge"` subpath on `@haruyuki/core` for the sender's half, plus a packaged
+ * anchor for this define (G2's packaging debt); until then this is the one anchor.
  */
 const CORE_PACKAGE_JSON = path.resolve(import.meta.dirname, "../../packages/core/package.json");
 
@@ -110,30 +114,5 @@ export default defineConfig({
   },
   // Neither entry has an `index.html`; without this Vite looks for one.
   appType: "custom",
-  resolve: {
-    alias: [
-      {
-        // `main` needs one surface of `@haruyuki/core`: the frame sender and handshake
-        // from its bridge layer (`bridge/session.ts`). Resolving the package root as well
-        // drags in `engine/connection.ts`, whose module-scope `loadWsConstructor()` calls
-        // `createRequire(import.meta.url)`. In this CommonJS output `import.meta` is `{}`,
-        // so that becomes `createRequire(undefined)` and the whole process dies with
-        // `ERR_INVALID_ARG_VALUE` at load -- before the logger, before the window, with no
-        // `shell.boot.failed`.
-        //
-        // The probe config handles the same call with a `define` anchored at
-        // `packages/core/package.json`. That is right for a test artifact that never
-        // ships; for `main.cjs` it would bake a source path into the shipped file, and the
-        // engine would still be loaded on a path that never uses it.
-        //
-        // So the main pass resolves the bridge module directly: main's dependency on core
-        // is the sender, and the alias states exactly that. The durable fix is a `./bridge`
-        // subpath export on `@haruyuki/core` (or a lazy `ws` load in `connection.ts`);
-        // both live in core, which D3 does not own.
-        find: /^@haruyuki\/core$/,
-        replacement: path.resolve(REPO_ROOT, "packages", "core", "src", "bridge", "index.ts"),
-      },
-    ],
-  },
   logLevel: "info",
 });

@@ -71,6 +71,8 @@ import { CSP, headersFor, shouldApplyFallbackCsp } from "./csp.js";
 import { APP_NAME, chooseLocale } from "./i18n.js";
 import { applyAppName } from "./app-identity.js";
 import { createLogger, type Logger } from "./log.js";
+import { devtoolsAllowed } from "./devtools.js";
+import { createSupervisionLog } from "./supervision/log.js";
 import { installApplicationMenu } from "./menu-wiring.js";
 import { handleRendererGone, installMainCrashHandlers } from "./crash/capture.js";
 import { engineCrashQuery } from "./crash/page.js";
@@ -100,15 +102,6 @@ import {
   type ShellSettings,
 } from "./settings.js";
 
-/** The escape hatch that lets a packaged build open the inspector. */
-const DEVTOOLS_ENV = "HARUYUKI_DEVTOOLS";
-
-/**
- * How long a boot failure waits for its log line before exiting anyway.
- *
- * Long enough for a local append; short enough that a wedged disk does not turn a
- * crash into a hang. The message is already on stderr by then.
- */
 /** The initial window size on a first launch, in DIP. */
 const DEFAULT_WIDTH = 1280;
 const DEFAULT_HEIGHT = 800;
@@ -262,54 +255,8 @@ export function setReadableRootsForMedia(roots: readonly string[]): void {
   readableRootsForMedia = [...roots];
 }
 
-/**
- * Put the bootstrap failure page in front of the user.
- *
- * The requirement names two error surfaces and this is the first one
- * (`D1-Q37`): when `app://` itself cannot serve, there is no React, no
- * catalogue and no token layer, so the page is an HTML string built by
- * `bootstrap-error.ts`.
- *
- * It is loaded from a temporary file rather than a `data:` URL. That is not a
- * preference: on this development machine a window pointed at `data:` dies with
- * `0xC0000003` before painting (`E-61`), and a failure page that crashes is
- * worse than the blank window it replaces. A file has no such interaction.
- *
- * Returns whether the page was actually shown, so the caller can decide between
- * "leave it up" and "exit with a code"; a failure page that can be seen is a
- * better outcome than a fast exit.
- *
- * @param failure what to report
- * @param target an existing window to reuse, or `undefined` to make one
- */
-/** Whether the inspector may be opened in this run. */
-function devtoolsAllowed(): boolean {
-  return process.env[DEVTOOLS_ENV] === "1";
-}
-
-/**
- * Load the settings file.
- *
- * A missing file is a first launch, not an error. A file that cannot be *read* is
- * also not fatal: the defaults are correct, and refusing to start because a settings
- * file is locked by another process would be a worse failure than forgetting the
- * window position.
- *
- * A file written by a newer build is read but never written back, so
- * `settingsWritable` is captured here rather than decided at save time. The
- * decision belongs where the version was seen: once the values are in memory the
- * evidence is gone.
- */
-/**
- * Versions attached to every crash record.
- *
- * Read at crash time rather than cached at boot: `app.getVersion()` is cheap and
- * a record should describe the build that actually crashed.
- */
 /** Forward a supervision event into the shell log; never let logging throw. */
-function logSupervision(event: string, detail?: Record<string, unknown>): void {
-  logger?.info(event, detail);
-}
+const logSupervision = createSupervisionLog(() => logger);
 
 const handleEngineCrash = createEngineCrashHandler({
   setLastCrash: (record) => {

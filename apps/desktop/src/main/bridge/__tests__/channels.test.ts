@@ -4,6 +4,7 @@ import {
   CHANNEL_ALLOWLIST,
   BRIDGE_CHANNEL_NAMES,
   BRIDGE_VERSION as SHARED_VERSION,
+  DIAGNOSTICS_CHANNELS,
   DROPPED_FILES_CHANNEL,
   validateChannelName,
 } from "../../../shared/bridge.js";
@@ -45,11 +46,19 @@ describe("D3 channel names", () => {
     }
   });
 
-  it("keeps the allowlist at exactly this item's eight channels plus D2's one", () => {
-    // D2's dropped-file report is the only channel in the list this item does not own.
-    // The comparison stays exact rather than "contains": an unnoticed tenth entry is
-    // the failure this assertion exists to catch.
-    expect([...CHANNEL_ALLOWLIST].sort()).toEqual([...D3_CHANNELS, DROPPED_FILES_CHANNEL].sort());
+  it("keeps the allowlist at exactly this item's eight plus D2's one and D4's three", () => {
+    // The channels in the list this item does not own: D2's dropped-file report and D4's
+    // three diagnostics commands. The comparison stays exact rather than "contains": an
+    // unnoticed extra entry is the failure this assertion exists to catch.
+    expect([...CHANNEL_ALLOWLIST].sort()).toEqual(
+      [
+        ...D3_CHANNELS,
+        DROPPED_FILES_CHANNEL,
+        DIAGNOSTICS_CHANNELS.export,
+        DIAGNOSTICS_CHANNELS.relaunch,
+        DIAGNOSTICS_CHANNELS.quit,
+      ].sort(),
+    );
   });
 
   // This assertion is the ONLY reason the two copies exist; deleting either

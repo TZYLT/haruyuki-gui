@@ -72,9 +72,11 @@ export function wireBridge(options: { coreVersion: string; log: BridgeLog }): Br
       window.webContents.on("render-process-gone", () => host.detach("crash"));
       window.on("closed", () => host.detach("close"));
 
-      // Before `loadURL`, so the generation the first `bridge.ready` arrives in already
-      // exists. Attaching after the call would race the renderer.
-      host.attach(window.webContents, "boot");
+      // The first main-frame navigation is the initial load itself, so the handler above
+      // already attaches the generation the first `bridge.ready` will arrive in. An extra
+      // boot attach before `loadURL` would only be detached when that navigation starts,
+      // making the first accepted generation "2" for no reason -- and a reload counter
+      // that begins at 2 is a counter nobody can read.
     },
     bootParams() {
       return {

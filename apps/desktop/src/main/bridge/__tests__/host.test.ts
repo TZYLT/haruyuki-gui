@@ -145,6 +145,34 @@ describe("createBridgeHost", () => {
     ).toHaveLength(1);
   });
 
+  it("logs each accept with its own generation, so a reload is observable", () => {
+    // The log line exists because a reload shows the same window and nothing else
+    // distinguishes "new generation handshook" from "nothing happened". `generation`
+    // is the host's monotonic attach counter, so a stale session cannot produce it.
+    const events: Array<{ event: string; detail?: Record<string, unknown> }> = [];
+    const host = createBridgeHost({
+      expectedBridgeVersion: "1",
+      coreVersion: "0.1.0",
+      bulkPages: 0,
+      log: (event, detail) => {
+        events.push(detail === undefined ? { event } : { event, detail });
+      },
+    });
+    const first = fakeTarget();
+    const second = fakeTarget();
+
+    host.attach(first.target, "boot");
+    host.submit(READY);
+    host.detach("reload");
+    host.attach(second.target, "load");
+    host.submit(READY);
+
+    expect(events).toEqual([
+      { event: "bridge.accept", detail: { generation: 1, coreVersion: "0.1.0" } },
+      { event: "bridge.accept", detail: { generation: 2, coreVersion: "0.1.0" } },
+    ]);
+  });
+
   it("throws BRIDGE_NO_SESSION when the producer sends before attach", () => {
     const host = createHost();
 

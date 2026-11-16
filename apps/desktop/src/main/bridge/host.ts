@@ -101,6 +101,11 @@ export function createBridgeHost(options: BridgeHostOptions): BridgeSessionHost 
     if (t === "bridge.accept") {
       current?.markAccepted();
       ingress.attach(sendToRenderer);
+      // The one observable proof that the renderer's handshake was accepted by *this*
+      // generation. A reload that failed to swap would keep the old generation and
+      // print nothing; `generation` is the host's own monotonic counter (one per
+      // attach), so the line cannot be forged by a stale session.
+      options.log?.("bridge.accept", { generation, coreVersion: options.coreVersion });
     } else if (t === "bridge.reject") {
       current?.markRejected();
     }
