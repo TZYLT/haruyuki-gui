@@ -1,6 +1,15 @@
 /**
  * Minimal typings for `ws`, limited to what this package's tests use.
  *
+ * ## 只声明本包审查过的三个成员
+ *
+ * **新增用法请在此处补声明，不要改成 `any`。**
+ *
+ * `any` 不是"暂时宽松"，是"永久放弃检查"：将来有人用 `ws` 的第四个成员时，
+ * `any` 会让他编译通过，而没人会记得回来补声明。这里的范围窄是故意的——
+ * 我只审查过 `WebSocketServer` 构造、`connection` 事件、`clients`/`terminate`，
+ * 所以只声明这三个。超出这个表面的用法，要么补声明，要么先审查再声明。
+ *
  * ## Why this file exists
  *
  * `packages/core` depends on `ws` (its runtime transport needs it), but the
