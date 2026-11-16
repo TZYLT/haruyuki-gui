@@ -303,8 +303,11 @@ describe("the app name is set by the shell, before any getPath", () => {
     // the error page, and nothing in the test suite noticed, because no unit test starts
     // the shell.
     //
-    // The rule is stricter than "before whenReady": it must precede the first `await`,
-    // because an `await` is what reorders the rest of the function.
+    // Asserts the executable equivalent of "before ready": registration precedes the
+    // first `await` in `main()`. **This is a proxy, not the rule** -- see the comment in
+    // `main.ts`. It holds only while `main()` is the file's sole async entry point; if a
+    // module-scope `await` is ever introduced, this assertion must be replaced rather than
+    // trusted, because it would then pass on a registration that runs after ready.
     const source = read("apps/desktop/src/main/main.ts");
 
     const body = source.slice(source.indexOf("async function main(): Promise<void> {"));
@@ -322,6 +325,9 @@ describe("the app name is set by the shell, before any getPath", () => {
   it("sets the name before the registration, which is before the first await", () => {
     // `setName` also has an ordering requirement, and the two are adjacent. Asserted
     // together because a future edit inside this window can break either.
+    //
+    // Same proxy caveat as the case above: "before the first `await`" stands in for
+    // "before `app.ready`" only while `main()` is the sole async entry point.
     const source = read("apps/desktop/src/main/main.ts");
 
     const body = source.slice(source.indexOf("async function main(): Promise<void> {"));

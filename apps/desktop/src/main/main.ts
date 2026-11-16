@@ -628,17 +628,20 @@ async function main(): Promise<void> {
   // symptom would be a duplicated settings directory rather than an error.
   applyAppName();
 
-  // Before ready, and before *any* `await`. Both schemes go in one call:
-  // `registerSchemesAsPrivileged` may only be called once before ready, and a second call
-  // would silently not take effect.
+  // Both schemes go in one call: `registerSchemesAsPrivileged` may only be called once
+  // before ready, and a second call would silently not take effect.
   //
-  // **This has to precede the first `await` in this function, not merely the ready
-  // event.** An earlier version created the application directories first, with an
-  // `await`; that suspended `main()` at a point before this call, so the registration ran
-  // after the ready event and Electron threw
+  // **This has to precede `app.ready`, which in this file means it must precede the first
+  // `await` in `main()`.** The `await` form is the *executable equivalent*, not the rule:
+  // it holds only while `main()` is the file's sole async entry point. A module-scope
+  // `await` above this call would make that assertion give the wrong answer -- and it
+  // would err toward "legal", which is worse than no answer.
+  //
+  // The failure this prevents, from a real launch: an earlier version created the
+  // application directories first, with an `await`; that suspended `main()` at a point
+  // before this call, so the registration ran after the ready event and Electron threw
   // `protocol.registerSchemesAsPrivileged should be called before app is ready` -- a
-  // startup failure with nothing on screen but the error page. Any future `await` added
-  // above this line reintroduces it.
+  // startup failure with nothing on screen but the error page.
   protocol.registerSchemesAsPrivileged([
     { scheme: APP_SCHEME, privileges: { ...APP_PRIVILEGES } },
     { scheme: MEDIA_SCHEME, privileges: { ...MEDIA_PRIVILEGES } },
