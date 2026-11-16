@@ -220,12 +220,14 @@ export type DiagnosticKind = (typeof DIAGNOSTIC_KINDS)[number];
  * One diagnostic record: a failure the caller can *see* but must not treat as a
  * failed command.
  *
- * The three-way split is deliberate. `kind` is the stable value a consumer
- * branches on; `subject` names what the record is about (the capability name,
- * the event type, the request id - whatever makes the record findable); and
- * `engineText` / `engineVersion` carry the engine's own words and build so a
- * field report can be matched against engine output without re-running the
- * failing scenario.
+ * The field split is deliberate. `at` stamps *when we saw it*; `kind` is the
+ * stable value a consumer branches on; `subject` names what the record is about
+ * (the capability name, the event type, the request id - whatever makes the
+ * record findable); and `engineText` / `engineVersion` carry the engine's own
+ * words and build so a field report can be matched against engine output without
+ * re-running the failing scenario. Those five together are what the diagnostic
+ * surface shows a user . The seam for "which 4.2): a code, the operation, a time and
+ * the engine version.
  *
  * `engineText` is untrusted engine output. It is never rendered as UI text and
  * never parsed for control flow: it is quoted in logs. Nothing in this module
@@ -233,6 +235,23 @@ export type DiagnosticKind = (typeof DIAGNOSTIC_KINDS)[number];
  * (see `./errors`).
  */
 export type DiagnosticRecord = {
+  /**
+   * Millisecond epoch on **this process's clock**, taken when the record was
+   * produced.
+   *
+   * This is our time, not the engine's. It is deliberately NOT
+   * `envelope.emitted_at`: that one is the engine's own clock, its timezone is
+   * not stated anywhere, and the two are therefore **not comparable**. Do not
+   * subtract one from the other to derive a latency, a skew or an age - the
+   * difference is dominated by clock offset between two machines and means
+   * nothing. `at` answers "when did we see this", which is the only question a
+   * diagnostic needs to answer; ordering engine events is `event_seq`'s job.
+   *
+   * It exists so the diagnostic shown to a user can carry a timestamp at all
+   * . The seam for "whichs 4.2 and 6.5): "it broke a moment ago" is unusable
+   * against a record with no time on it.
+   */
+  readonly at: number;
   /** The stable branch key. */
   readonly kind: DiagnosticKind;
   /** What the record is about, as one searchable English token or name. */

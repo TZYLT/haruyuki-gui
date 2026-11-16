@@ -111,6 +111,33 @@ type AllRequired<T, K extends keyof T> = true extends { [P in K]: IsOptional<T, 
   ? false
   : true;
 
+/** True when `X` and `Y` are the same type (`readonly` is erased by this check). */
+type IfEquals<X, Y, A, B> =
+  (<T>() => T extends X ? 1 : 2) extends <T>() => T extends Y ? 1 : 2 ? A : B;
+
+/**
+ * True when `K` is a `readonly` key of `T`.
+ *
+ * The trick: mapping `{ [P in K]: T[P] }` keeps the modifier while
+ * `{ -readonly [P in K]: T[P] }` strips it, and the two are identical exactly
+ * when there was no `readonly` to strip.
+ *
+ * Why it is needed at all: neither `keyof T` nor `Pick` can see `readonly`, so a
+ * `Record<keyof T, true>` mirror - and even `ExactKeys` - accepts a field being
+ * made mutable. That gap was real: `at` could be made writable with every other
+ * assertion still green, and a restamped diagnostic is a diagnostic whose time
+ * nobody measured.
+ */
+type IsReadonly<T, K extends keyof T> = IfEquals<
+  { [P in K]: T[P] },
+  { -readonly [P in K]: T[P] },
+  false,
+  true
+>;
+
+/** True only when **every** key of `T` is readonly. */
+type AllReadonly<T> = false extends { [K in keyof T]-?: IsReadonly<T, K> }[keyof T] ? false : true;
+
 describe("EngineClientErrorCode", () => {
   it("has exactly the seven documented codes, in documentation order", () => {
     expect([...ENGINE_CLIENT_ERROR_CODES]).toEqual([
@@ -376,29 +403,108 @@ describe("DiagnosticRecord", () => {
   });
 
   it("requires a kind and a subject, and keeps engine text optional", () => {
-    const bare = { kind: "unknown-event", subject: "topic_report" } satisfies DiagnosticRecord;
+    const bare = {
+      at: 1_700_000_000_000,
+      kind: "unknown-event",
+      subject: "topic_report",
+    } satisfies DiagnosticRecord;
     const explained = {
+      at: 1_700_000_000_001,
       kind: "rejected",
       subject: "conversation.sync",
       engineText: "prepare_expired",
       engineVersion: "0.6.0",
     } satisfies DiagnosticRecord;
 
-    expect(Object.keys(bare).sort()).toEqual(["kind", "subject"]);
+    expect(Object.keys(bare).sort()).toEqual(["at", "kind", "subject"]);
     expect(Object.hasOwn(bare, "engineText")).toBe(false);
     expect(explained.engineText).toBe("prepare_expired");
     expect(explained.engineVersion).toBe("0.6.0");
   });
 
-  it("keeps kind and subject required while the two engine fields stay optional", () => {
-    // `subject` is what makes a record findable; making it optional would let a
-    // diagnostic arrive with no way to say what it is about.
-    const required: AllRequired<DiagnosticRecord, "kind" | "subject"> = true;
+  it("carries a timestamp, because a diagnostic with no time cannot be matched to 'it broke just now'", () => {
+    // The diagnostic surface asks for a code, the operation, a TIME and the
+    // a TIME and the engine version. The other four fields are asserted
+    // elsewhere; this one is the field that had nowhere to live.
+    const record = {
+      at: 1_700_000_000_000,
+      kind: "timeout",
+      subject: "conversation.sync",
+    } satisfies DiagnosticRecord;
+
+    expect(typeof record.at).toBe("number");
+    expect(Number.isInteger(record.at)).toBe(true);
+    // Our clock, in epoch milliseconds: the same unit as `EngineEventFrame.at`,
+    // and not a monotonic counter, so it is comparable with `Date.now()`.
+    expect(record.at).toBeGreaterThan(1_600_000_000_000);
+    expect(record.at).toBeLessThanOrEqual(Date.now());
+  });
+
+  it("makes at required, so a record cannot be built without a time", () => {
+    // @ts-expect-error - `at` is required. Dropping it is exactly the defect this test exists to prevent: the diagnostic surface would have no time to show, and the record would compile anyway.
+    const noTimestamp: DiagnosticRecord = { kind: "malformed", subject: "sync_response" };
+
+    // Run time does not enforce the shape; the directive above is the guard.
+    expect(Object.hasOwn(noTimestamp, "at")).toBe(false);
+  });
+
+  it("types at as our epoch millis, not as the engine's emitted_at string", () => {
+    const record: DiagnosticRecord = { at: Date.now(), kind: "rejected", subject: "message.send" };
+
+    // @ts-expect-error - `at` is a number. A string would invite passing the engine's `emitted_at` (unknown timezone, unknown clock) straight through, which is the comparison the two fields must never allow.
+    record.at = "2024-03-01T10:30:00.000Z";
+
+    // Compile-time only: the write lands at run time (see the `code` case in the
+    // EngineClientError block), so the assertion records the type guard.
+    expect(record.at).toBe("2024-03-01T10:30:00.000Z");
+  });
+
+  it("makes at readonly, so a record cannot be restamped after the fact", () => {
+    const record: DiagnosticRecord = { at: 1_700_000_000_000, kind: "timeout", subject: "sync" };
+
+    // @ts-expect-error - `at` is readonly. A record's whole value is that it says when the failure happened; letting a later holder overwrite it would make the diagnostic surface show a time nobody measured.
+    record.at = 1_700_000_000_001;
+
+    // Compile-time only: the write lands at run time, so the assertion records
+    // that the guard is the type (same pattern as `EngineClientError.code`).
+    expect(record.at).toBe(1_700_000_000_001);
+  });
+
+  it("keeps at, kind and subject required while the two engine fields stay optional", () => {
+    // `subject` is what makes a record findable; `at` is what makes it placeable
+    // in time. Making either optional would let a diagnostic arrive with no way
+    // to say what it is about or when it happened.
+    const required: AllRequired<DiagnosticRecord, "at" | "kind" | "subject"> = true;
     const optional: undefined extends DiagnosticRecord["engineText"] ? true : false = true;
-    const keys: ExactKeys<DiagnosticRecord, "kind" | "subject" | "engineText" | "engineVersion"> =
-      true;
+    const keys: ExactKeys<
+      DiagnosticRecord,
+      "at" | "kind" | "subject" | "engineText" | "engineVersion"
+    > = true;
 
     expect([required, optional, keys]).toEqual([true, true, true]);
+  });
+
+  it("does not let the optional engine fields become required", () => {
+    // The complementary direction to the check above: `AllRequired` proves the
+    // three required keys really are required, and this proves the two optional
+    // ones did not silently turn required (which would break every caller that
+    // has no engine text to attach).
+    const engineTextOptional: AllRequired<DiagnosticRecord, "engineText"> = false;
+    const engineVersionOptional: AllRequired<DiagnosticRecord, "engineVersion"> = false;
+
+    expect([engineTextOptional, engineVersionOptional]).toEqual([false, false]);
+  });
+
+  it("keeps every field readonly, at included", () => {
+    // `readonly` is invisible to the key-set checks above, so it gets its own
+    // assertion: a record whose `at` can be rewritten is a record whose time is
+    // whatever the last holder decided it was.
+    const allReadonly: AllReadonly<DiagnosticRecord> = true;
+    const atReadonly: IsReadonly<DiagnosticRecord, "at"> = true;
+    const allRequiredReadonly: AllReadonly<Pick<DiagnosticRecord, "at" | "kind" | "subject">> =
+      true;
+
+    expect([allReadonly, atReadonly, allRequiredReadonly]).toEqual([true, true, true]);
   });
 });
 
@@ -582,6 +688,15 @@ describe("EngineEventFrame", () => {
     const atIsNumber: AllRequired<EngineEventFrame, "at"> = true;
 
     expect([required, envelopeOptional, frameKeys, atIsNumber]).toEqual([true, true, true, true]);
+  });
+
+  it("keeps the frame's own fields readonly, at included", () => {
+    // Same gap as the diagnostic record: `at` is the frame's receive time, and a
+    // mutable one lets a consumer fake an ordering by restamping.
+    const allReadonly: AllReadonly<EngineEventFrame> = true;
+    const atReadonly: IsReadonly<EngineEventFrame, "at"> = true;
+
+    expect([allReadonly, atReadonly]).toEqual([true, true]);
   });
 });
 
