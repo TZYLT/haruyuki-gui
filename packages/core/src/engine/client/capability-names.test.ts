@@ -25,7 +25,9 @@
  * Nothing here writes to disk, touches the network or starts the engine.
  */
 
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { CAPABILITY_META, CAPABILITY_TO_WIRE } from "@haruyuki/protocol";
 import type { CapabilityName as ProtocolCapabilityName } from "@haruyuki/protocol";
@@ -64,6 +66,7 @@ const CAPABILITIES_URL = new URL(
 );
 const SNAPSHOT_URL = new URL("../../../../protocol/src/contract/snapshot.json", import.meta.url);
 const SOURCE_URL = new URL("./capability-names.ts", import.meta.url);
+const CLIENT_DIR = fileURLToPath(new URL(".", import.meta.url));
 
 /** Contract counts; a change here is a contract event. */
 const EXPECTED_TOTAL = 68;
@@ -879,5 +882,61 @@ describe("wire vocabulary containment, this module", () => {
         true,
       );
     }
+  });
+});
+
+describe("wire vocabulary containment, whole directory", () => {
+  // Wire vocabulary is a property of the *module*, not of one file: the scan runs on
+  // `client/`, and a per-file guard leaves every sibling unguarded. One test file
+  // four wire literals into its own test before noticing, because at that point
+  // nothing scanned its file - the guard it had only covered this one.
+  //
+  // Two exemptions, both narrow and both for the same reason: a guard has to be
+  // able to show it can fail. A test that plants a wire id to prove the scan
+  // works *must* contain that literal, so it is exempt from the scan it proves.
+  // Every other file - production and test alike - is scanned.
+
+  const allowed = new Set([
+    "capability-names.ts",
+    // Plants literals to show the scanner fires, and names prose-colliding ids
+    // in the comment that explains why they are exempt.
+    "capability-names.test.ts",
+    // Plants wire ids to show the capability field rejects them at compile
+    // time, and carries the sample list its own scan uses.
+    "types.test.ts",
+  ]);
+
+  it("finds no wire id literal in any other source file under client/", () => {
+    const offenders: string[] = [];
+
+    for (const file of readdirSync(CLIENT_DIR, { withFileTypes: true })) {
+      if (!file.isFile() || !file.name.endsWith(".ts") || allowed.has(file.name)) {
+        continue;
+      }
+      const source = readFileSync(join(CLIENT_DIR, file.name), "utf8");
+      const leaked = findWireLeaks(source);
+      if (leaked.length > 0) {
+        offenders.push(`${file.name}: ${leaked.join(", ")}`);
+      }
+    }
+
+    expect(offenders).toEqual([]);
+  });
+
+  it("scans a file set that is not empty, so the check above cannot pass vacuously", () => {
+    // If the directory walk silently matched nothing (wrong extension, renamed
+    // folder), the test above would pass while checking zero files.
+    const scanned = readdirSync(CLIENT_DIR, { withFileTypes: true }).filter(
+      (file) => file.isFile() && file.name.endsWith(".ts") && !allowed.has(file.name),
+    );
+
+    expect(scanned.length).toBeGreaterThan(5);
+  });
+
+  it("keeps the exemption list from growing silently", () => {
+    // Each name here is a deliberate, explained hole. A third entry means someone
+    // widened the scan's blind spot rather than fixing a leak, so it has to be
+    // argued for in review instead of added in passing.
+    expect([...allowed]).toHaveLength(3);
   });
 });
