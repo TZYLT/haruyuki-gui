@@ -46,10 +46,11 @@ describe("D3 channel names", () => {
     }
   });
 
-  it("keeps the allowlist at exactly this item's eight plus D2's one and D4's three", () => {
-    // The channels in the list this item does not own: D2's dropped-file report and D4's
-    // three diagnostics commands. The comparison stays exact rather than "contains": an
-    // unnoticed extra entry is the failure this assertion exists to catch.
+  it("keeps the allowlist at exactly D3's eight, D2's one, D4's three and G1's five", () => {
+    // The channels in the list this item does not own: D2's dropped-file report, D4's
+    // three diagnostics commands and G1's five runtime channels. The comparison stays
+    // exact rather than "contains": an unnoticed extra entry is the failure this
+    // assertion exists to catch.
     expect([...CHANNEL_ALLOWLIST].sort()).toEqual(
       [
         ...D3_CHANNELS,
@@ -57,6 +58,11 @@ describe("D3 channel names", () => {
         DIAGNOSTICS_CHANNELS.export,
         DIAGNOSTICS_CHANNELS.relaunch,
         DIAGNOSTICS_CHANNELS.quit,
+        "bridge:control.runtime.failed",
+        "bridge:control.runtime.log",
+        "bridge:control.runtime.pick",
+        "bridge:control.runtime.reset",
+        "bridge:control.runtime.status",
       ].sort(),
     );
   });

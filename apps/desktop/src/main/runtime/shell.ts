@@ -57,14 +57,25 @@ class RuntimeController implements RuntimeChannelHost {
   private readonly layout: RuntimeLayout;
   private readonly deps: RuntimeShellDeps;
 
-  constructor(plan: RuntimePlan, layout: RuntimeLayout, deps: RuntimeShellDeps) {
-    this.source = plan.ok ? plan.source : "bundled";
-    if (plan.ok && plan.engineVersion !== undefined) {
-      this.engineVersion = plan.engineVersion;
-    }
+  constructor(layout: RuntimeLayout, deps: RuntimeShellDeps) {
+    this.source = "bundled";
     this.layout = layout;
     this.deps = deps;
     this.statusValue = { phase: "starting", appVersion: deps.appVersion };
+  }
+
+  /**
+   * Adopt a completed plan without changing the starting status.
+   *
+   * The channels are registered before the plan exists, so the renderer can
+   * ask `status` while the full tree check is still running and get
+   * `{phase:"starting"}` instead of a missing-handler error. The source and
+   * version only become visible when the engine actually becomes ready.
+   */
+  applyPlan(plan: RuntimePlan): void {
+    if (!plan.ok) return;
+    this.source = plan.source;
+    if (plan.engineVersion !== undefined) this.engineVersion = plan.engineVersion;
   }
 
   /** @returns the current status */
@@ -367,15 +378,17 @@ export async function startRuntimeShell(deps: RuntimeShellDeps): Promise<void> {
     userData: deps.userData,
     logsDir: deps.logsDir,
   });
-  const plan = await prepareRuntime({ layout, appVersion: deps.appVersion });
-  const controller = new RuntimeController(plan, layout, deps);
-
+  const controller = new RuntimeController(layout, deps);
   registerRuntimeChannels(deps.ipcMain, controller);
+
+  const plan = await prepareRuntime({ layout, appVersion: deps.appVersion });
 
   if (!plan.ok) {
     controller.fail(plan.failure);
     return;
   }
+
+  controller.applyPlan(plan);
 
   const host = await startShellEngine({
     userData: deps.userData,

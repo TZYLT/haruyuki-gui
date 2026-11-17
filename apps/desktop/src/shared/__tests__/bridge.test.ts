@@ -183,7 +183,7 @@ describe("allowlist", () => {
     // appearing, and a list that quietly grew is how that happens unnoticed.
     //
     // D2 appends the dropped-file report, D4 the three diagnostics commands, D3
-    // its seven, and G1 the four runtime channels. `channel-name v1` freezes the bridge's
+    // its seven, and G1 the five runtime channels. `channel-name v1` freezes the bridge's
     // *members*, not its channel list.
     expect(CHANNEL_ALLOWLIST).toEqual([
       PING,
@@ -205,7 +205,6 @@ describe("allowlist", () => {
       "bridge:control.runtime.log",
     ]);
     expect(new Set(CHANNEL_ALLOWLIST).size).toBe(CHANNEL_ALLOWLIST.length);
-  });
   });
 
   it("contains only names the validator accepts", () => {
