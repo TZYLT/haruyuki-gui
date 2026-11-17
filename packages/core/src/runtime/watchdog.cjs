@@ -46,6 +46,17 @@ const TERM_GRACE_MS = 2000;
 /** Parent pid captured at preload time; `process.ppid` is stable afterwards. */
 const parentPid = process.ppid;
 
+/**
+ * True when this child is an Electron binary running as Node.
+ *
+ * Electron 45 on Windows delivers stdin EOF to a spawned child almost
+ * immediately, even while the parent is alive and holding the pipe. Treating
+ * that EOF as parent death killed the engine at preload, before it could print
+ * its port. The parent-liveness probe is the reliable signal in that mode; a
+ * plain Node child keeps the stdin contract and its tests unchanged.
+ */
+const electronChild = typeof process.versions.electron === "string";
+
 /** Set once stdin reports EOF; from then on only byte heartbeats can save us. */
 let stdinEnded = false;
 
@@ -78,6 +89,8 @@ function parentAlive() {
  * @returns {boolean} true when stdin shows recent parent activity.
  */
 function heartbeatFresh() {
+  // See `electronChild`: stdin EOF is not a death signal there.
+  if (electronChild) return true;
   return !stdinEnded || Date.now() - lastHeartbeatAt <= HEARTBEAT_WINDOW_MS;
 }
 
