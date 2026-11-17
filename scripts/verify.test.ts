@@ -39,6 +39,7 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { afterAll, describe, expect, it } from "vitest";
@@ -441,6 +442,9 @@ describe("verify aggregator: segment assembly", () => {
 });
 
 describe("verify aggregator: test discovery", () => {
+  /** The generated config the aggregator writes for one run. */
+  const VITEST_CONFIG_FILE = "vitest.verify.generated.mts";
+
   /**
    * Collect the test files the aggregator passed to vitest, in order.
    *
@@ -451,14 +455,20 @@ describe("verify aggregator: test discovery", () => {
   function collectedTests(tree: StubTree, run: VerifyRun): string[] {
     expect(existsSync(tree.logFile), run.output).toBe(true);
 
-    // Split on `\r?\n`: the Windows `.cmd` shim echoes its line ending as CRLF,
-    // which would otherwise leave a trailing `\r` on the last token of every
-    // line and silently drop exactly that one file from the assertion.
-    return readFileSync(tree.logFile, "utf8")
-      .split(/\r?\n/)
-      .filter((line) => line.startsWith("pnpm exec vitest run "))
-      .flatMap((line) => line.slice("pnpm exec vitest run ".length).trim().split(" "))
-      .filter((token) => token.endsWith(".test.ts") || token.endsWith(".test.tsx"));
+    // The selection is written to a config file rather than passed on the command
+    // line, because a full suite is longer than cmd.exe accepts. The discovery
+    // runs set the keep flag so the file is still there to read: what this asserts
+    // is precisely that the file holds every test the aggregator found.
+    const configPath = join(tree.root, VITEST_CONFIG_FILE);
+
+    expect(existsSync(configPath), `no generated config at ${configPath}\n${run.output}`).toBe(
+      true,
+    );
+
+    const include = /include:\s*(\[[^\]]*\])/.exec(readFileSync(configPath, "utf8"));
+    expect(include, "generated config carries no include list").not.toBeNull();
+
+    return JSON.parse(include?.[1] ?? "[]") as string[];
   }
 
   it("collects package tests as well as script tests (G2)", () => {
@@ -476,7 +486,7 @@ describe("verify aggregator: test discovery", () => {
         "scripts/contract-diff.test.ts",
       ],
     });
-    const run = runVerify(tree);
+    const run = runVerify(tree, [], { HARUYUKI_KEEP_VITEST_CONFIG: "1" });
     const collected = collectedTests(tree, run);
 
     expect(run.status, run.output).toBe(0);
@@ -513,7 +523,9 @@ describe("verify aggregator: test discovery", () => {
     // run by nobody, which is the silent version of a test that never fails.
     const tree = makeStubTree({ extraFiles: ["apps/desktop/src/shell.test.tsx"] });
 
-    expect(collectedTests(tree, runVerify(tree))).toContain("apps/desktop/src/shell.test.tsx");
+    expect(
+      collectedTests(tree, runVerify(tree, [], { HARUYUKI_KEEP_VITEST_CONFIG: "1" })),
+    ).toContain("apps/desktop/src/shell.test.tsx");
   });
 
   it("does not collect an app shell test that is outside src", () => {

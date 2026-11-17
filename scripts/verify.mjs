@@ -47,7 +47,7 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
@@ -68,6 +68,11 @@ const SEGMENT_REFERENCE_PATTERN = /\{segment:([a-z][a-z -]*)\}/g;
 
 /** A gate can print a lot (tsc, eslint); capture all of it, never truncate. */
 const MAX_BUFFER_BYTES = 32 * 1024 * 1024;
+
+/** One-run vitest config; fixed name so a crashed run leaves a findable file. */
+const VITEST_CONFIG_NAME = "vitest.verify.generated.mts";
+/** Set when the config has been written, so cleanup can be conditional. */
+let VITEST_CONFIG_PATH = null;
 
 /** CSI escape sequences: colors, cursor moves, line clears. */
 const ANSI_PATTERN = /\u001B\[[0-9;?]*[A-Za-z]/g;
@@ -576,25 +581,30 @@ function gate(relative, verbose) {
 /**
  * Build the vitest invocation for a set of test files.
  *
- * The runner is reached through `process.execPath` rather than `pnpm exec`.
- * On Windows `pnpm` resolves to `pnpm.cmd`, a batch file, and `cmd.exe` gives a
- * single command line roughly 8 KiB. This segment passes one path per test file,
- * so the argv grows with the suite: 144 files fits at about 6.5 K characters,
- * and 167 does not. The failure is especially unhelpful -- `cmd.exe` writes
- * "The command line is too long." to stderr and the reporter shows only a
- * status code -- so the message looks like a wall of unreadable output rather
- * than a length limit. Calling the runner directly skips the batch layer and
- * the limit with it.
+ * The file list goes in a generated config, not on the command line: `cmd.exe`
+ * caps one command at 8191 characters (7996 passes, 8196 is refused), 191 test
+ * files spell 8752, and every segment is spawned through a shell -- so calling
+ * the runner directly does not dodge it and the selection moves out of argv.
  *
  * @param {string[]} files repo-relative test paths
  * @param {string[]} [extraArgs] additional vitest flags
  * @returns {{ command: string, args: string[] }}
  */
 function vitest(files, extraArgs = []) {
-  // `options.root` is `process.cwd()` and this helper is called while building
+  // `options.root` is `process.cwd()` here: this helper runs while building
   // segments, before any segment runs, so the cwd is still the repository root.
-  const runner = path.join(process.cwd(), "node_modules", "vitest", "vitest.mjs");
-  return { command: process.execPath, args: [runner, "run", ...files, ...extraArgs] };
+  const root = process.cwd();
+  const runner = path.join(root, "node_modules", "vitest", "vitest.mjs");
+  const config = path.join(root, VITEST_CONFIG_NAME);
+  // Spread it: a config that only lists `include` also drops `setupFiles`.
+  const base = path.join(root, "vitest.config.mts").replaceAll("\\", "/");
+  writeFileSync(
+    config,
+    `import base from ${JSON.stringify(base)};\n` +
+      `export default { ...base, test: { ...base.test, include: ${JSON.stringify(files)} } };\n`,
+  );
+  VITEST_CONFIG_PATH = config;
+  return { command: process.execPath, args: [runner, "run", "--config", config, ...extraArgs] };
 }
 
 /**
@@ -707,11 +717,12 @@ function runSegment(segment, index, total, options) {
   const passed = segment.evaluate === undefined ? run.status === 0 : segment.evaluate(run);
 
   // A segment that never started is not a red test, and the two need different
-  // repairs: one is a broken gate, the other is broken code. Before this split
-  // they were indistinguishable -- the failure of a 0.02 s run that executed
-  // nothing looked exactly like a suite of failing tests.
+  // repairs: one is a broken gate, the other is broken code.
   const couldNotRun =
     !passed && run.timedOut !== true && (run.spawnFailed === true || run.output.trim() === "");
+
+  // The generated config is removed on success and kept on failure.
+  if (segment.label === "test") settleVitestConfig(passed);
 
   if (options.verbose || !passed) {
     replay(run.output);
@@ -756,12 +767,9 @@ function runSegment(segment, index, total, options) {
 }
 
 /**
- * Run one segment's command with this run's settings.
- *
- * The launch itself lives in `lib/verify-command.mjs`. It needs both start forms
- * -- a shell takes one quoted line, a direct launch takes an argv array -- and the
- * platform rules that decide which one applies, and this file is already the
- * aggregator's largest.
+ * Run one segment's command with this run's settings. The launch itself lives in
+ * `lib/verify-command.mjs`: it needs both start forms and the platform rules that
+ * pick one, and this file is already the aggregator's largest.
  *
  * @param {Command} command
  * @param {VerifyOptions} options
@@ -774,6 +782,24 @@ function runSegmentCommand(command, options) {
     maxBuffer: MAX_BUFFER_BYTES,
     normalize: normalizeOutput,
   });
+}
+
+/**
+ * Remove the one-run config, or keep it and say where it is: a pass wants the
+ * file gone, a failure wants the selection it died with.
+ *
+ * @param {boolean} passed whether the vitest segment proved its contract
+ */
+function settleVitestConfig(passed) {
+  if (VITEST_CONFIG_PATH === null) return;
+
+  // The self-test reads the file after a pass, which is otherwise when it goes.
+  if (passed && process.env.HARUYUKI_KEEP_VITEST_CONFIG !== "1") {
+    rmSync(VITEST_CONFIG_PATH, { force: true });
+    VITEST_CONFIG_PATH = null;
+    return;
+  }
+  printLine(`${OUTPUT_INDENT}kept this run's vitest config: ${VITEST_CONFIG_PATH}`);
 }
 
 /**

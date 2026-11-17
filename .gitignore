@@ -41,6 +41,9 @@ build/
 coverage/
 .vitest/
 *.lcov
+# Written by scripts/verify.mjs for one run, because the file list does not fit
+# on a command line. Removed after a pass, kept after a failure.
+vitest.verify.generated.mts
 
 # --- Tool caches -----------------------------------------------------------
 .eslintcache
