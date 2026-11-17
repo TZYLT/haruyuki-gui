@@ -106,7 +106,11 @@ importers:
         specifier: 8.19.0
         version: 8.19.0
 
-  packages/protocol: {}
+  packages/protocol:
+    dependencies:
+      '@letta-ai/letta-client':
+        specifier: ^1.10.2
+        version: 1.12.1
 
   packages/ui:
     dependencies:
@@ -381,6 +385,9 @@ packages:
 
   '@keyv/serialize@1.1.1':
     resolution: {integrity: sha512-dXn3FZhPv0US+7dtJsIi2R+c7qWYiReoEh5zUntWCf4oSpMNib8FDhSoed6m3QyZdx5hK7iLFkYk3rNxwt8vTA==}
+
+  '@letta-ai/letta-client@1.12.1':
+    resolution: {integrity: sha512-rYjXMXpkfssj7VBBX3qCp6mdpNRv6YPNrliYsjkhWoQDqGg3J9bsgIQ28ZhQTddabYxRUIwcdzuaizFx8pvZ7A==}
 
   '@malept/cross-spawn-promise@2.0.0':
     resolution: {integrity: sha512-1DpKU0Z5ThltBwjNySMC14g0CkbyhCaz9FkhxqNsZI6uAPJXFS8cMXlBKo26FJ8ZuW6S9GCMcR9IO5k2X5/9Fg==}
@@ -2844,6 +2851,8 @@ snapshots:
       keyv: 5.6.0
 
   '@keyv/serialize@1.1.1': {}
+
+  '@letta-ai/letta-client@1.12.1': {}
 
   '@malept/cross-spawn-promise@2.0.0':
     dependencies:
