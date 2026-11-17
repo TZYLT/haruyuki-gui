@@ -125,6 +125,11 @@ export type ReplayStates = readonly ReplayStateKind[];
  * The order is `begin`, then `messages` once per page, then `states`, then
  * `focus`, then `end`. Content before instruction: a consumer told where to
  * scroll before it has the rows would scroll to the wrong place.
+ *
+ * One implementation exists today, and it is the one in `agent.ts`. That makes
+ * this a proposal rather than a settled contract: the semantics are defined by the
+ * first consumer that is not ours, and until one exists the shape may still be
+ * wrong in ways neither side can see.
  */
 export interface ReplaySink {
   begin(agentId: string): void;
