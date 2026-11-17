@@ -298,14 +298,37 @@ export async function scanArtifacts(releaseDir) {
     if (!entry.isFile()) continue;
     const absolute = path.join(entry.parentPath ?? releaseDir, entry.name);
     const relative = path.relative(releaseDir, absolute).split(path.sep).join("/");
-    // `win-unpacked/` is build output, not something a user downloads. The
-    // shipped files are the archives and the image; the tree is zip content.
+    // `win-unpacked/` holds the files a user downloads, assembled. It is not
+    // itself a download, so it stays out of the artifact list - but it does
+    // have to be reported, because the artifact claim is about the tree as much
+    // A listing that silently dropped it would make that criterion unjudgeable
+    // from the manifest, which is the same defect this item exists to remove.
     if (relative.startsWith("win-unpacked/") || relative.startsWith("linux-unpacked/")) continue;
     const info = await stat(absolute);
     artifacts.push({ file: relative, bytes: info.size });
   }
 
   return artifacts.sort((left, right) => left.file.localeCompare(right.file));
+}
+
+/**
+ * The unpacked trees, which are assembled output rather than downloads.
+ *
+ * Kept separate from the artifact list instead of dropped: the claim is about
+ * "win-unpacked plus a zip", so a manifest that does not mention the tree
+ * cannot be used to judge it.
+ *
+ * @param {string} releaseDir
+ * @returns {Promise<string[]>} tree directory names that exist
+ */
+export async function scanTrees(releaseDir) {
+  if (!existsSync(releaseDir)) return [];
+
+  const entries = await readdir(releaseDir, { withFileTypes: true });
+  return entries
+    .filter((entry) => entry.isDirectory() && entry.name.endsWith("-unpacked"))
+    .map((entry) => entry.name)
+    .sort();
 }
 
 /**
@@ -347,8 +370,9 @@ export async function writeChecksums(releaseDir, artifacts) {
 async function roundTwo(options) {
   const releaseDir = path.join(DESKTOP_DIR, "release");
   const artifacts = await scanArtifacts(releaseDir);
+  const trees = await scanTrees(releaseDir);
 
-  if (artifacts.length === 0) {
+  if (artifacts.length === 0 && trees.length === 0) {
     process.stdout.write(
       "\nrelease/ holds no artifacts. The build and package steps belong to W2-WIN\n" +
         "and W3-LINUX and are not wired yet; run with --skip-bundle to stop after\n" +
@@ -360,6 +384,10 @@ async function roundTwo(options) {
   }
 
   const checksums = await writeChecksums(releaseDir, artifacts);
+
+  if (trees.length > 0) {
+    process.stdout.write(`\n==> unpacked trees\n${trees.map((tree) => `  ${tree}/`).join("\n")}\n`);
+  }
 
   process.stdout.write("\n==> artifacts\n");
   for (const artifact of artifacts) {

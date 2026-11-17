@@ -15,6 +15,7 @@ import {
   dereferenceTree,
   parseArgs,
   scanArtifacts,
+  scanTrees,
   UsageError,
   writeChecksums,
 } from "./release.mjs";
@@ -109,5 +110,18 @@ describe("writeChecksums", () => {
 
     // Two spaces, a bare file name: anything else fails to verify downstream.
     expect(contents).toMatch(/^[0-9a-f]{64} {2}a\.zip\n$/);
+  });
+});
+
+describe("scanTrees", () => {
+  it("reports the unpacked tree that the artifact list leaves out", async () => {
+    if (work === null) throw new Error("no work directory");
+    await mkdir(path.join(work, "win-unpacked"), { recursive: true });
+    await writeFile(path.join(work, "win-unpacked", "app.exe"), "BINARY");
+
+    // The tree is not a download, so it stays out of the artifacts - but a
+    // manifest that never mentions it cannot judge the artifact claim.
+    expect(await scanTrees(work)).toEqual(["win-unpacked"]);
+    expect((await scanArtifacts(work)).map((artifact) => artifact.file)).toEqual([]);
   });
 });
