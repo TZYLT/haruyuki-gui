@@ -83,3 +83,22 @@ export type CapabilityInput<C extends CapabilityName> = RowOf<C>["input"];
 
 /** The `answered.data` an E1 `CommandReply<C>` carries for capability `C`. */
 export type CapabilityOutput<C extends CapabilityName> = RowOf<C>["output"];
+
+/**
+ * Exhaustiveness guard.
+ *
+ * Type-level only: no runtime export, no value to keep alive. `_Check<T>` only
+ * accepts `true`, so a missing capability row (or an extra row that is not a
+ * capability) turns this into a compile error the moment a domain is added.
+ */
+type _Check<T extends true> = T;
+
+/** Every `CapabilityName` has a row. */
+type _AllPresent = _Check<CapabilityName extends keyof CapabilityIoTypes ? true : false>;
+
+/** No row exists that is not a capability. */
+type _NoExtras = _Check<
+  Exclude<keyof CapabilityIoTypes, CapabilityName> extends never ? true : false
+>;
+
+export type { _AllPresent, _NoExtras };

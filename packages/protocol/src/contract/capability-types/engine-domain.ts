@@ -261,3 +261,145 @@ export interface ChatGPTUsageReadErrorPayload {
   readonly message: string;
   readonly retryAfterMs?: number;
 }
+
+/** One credential field of a provider auth method (`protocol_v2.ts`). */
+export interface ConnectProviderField {
+  readonly key: string;
+  readonly label: string;
+  readonly placeholder?: string;
+  readonly secret?: boolean;
+  readonly required?: boolean;
+}
+
+export interface ConnectProviderAuthMethod {
+  readonly id: string;
+  readonly label: string;
+  readonly description: string;
+  readonly fields: readonly ConnectProviderField[];
+}
+
+export interface ConnectProviderConnectionState {
+  readonly is_connected: boolean;
+  readonly id?: string;
+  readonly provider_name?: string;
+  readonly provider_type?: string;
+  readonly auth_type?: "api" | "oauth";
+  readonly base_url?: string;
+  readonly timeout?: number | false;
+  readonly region?: string;
+}
+
+/** One row of the provider store (`protocol_v2.ts:1372-1391`). */
+export interface ConnectProviderEntry {
+  readonly id: string;
+  readonly display_name: string;
+  readonly description: string;
+  readonly provider_type: string;
+  readonly provider_name: string;
+  readonly provider_names: readonly string[];
+  readonly is_oauth?: boolean;
+  readonly oauth_provider_id?: string;
+  readonly requires_api_key: boolean;
+  readonly fields?: readonly ConnectProviderField[];
+  readonly auth_methods?: readonly ConnectProviderAuthMethod[];
+  /** First connected provider, kept for older clients. */
+  readonly connected: ConnectProviderConnectionState;
+  readonly connected_providers: readonly ConnectProviderConnectionState[];
+}
+
+/** ChatGPT device-code tokens (`types/chatgpt-oauth.ts`). */
+export interface ChatGPTOAuthConfig {
+  readonly access_token: string;
+  readonly id_token: string;
+  readonly refresh_token?: string;
+  readonly account_id: string;
+  readonly expires_at: number;
+}
+
+/** Persisted OAuth bundle pi-ai refreshes (`provider-oauth-config.ts`). */
+export interface ProviderOAuthTokensConfig {
+  readonly type: "oauth";
+  readonly access: string;
+  readonly refresh: string;
+  /** Epoch milliseconds, matching pi-ai. */
+  readonly expires: number;
+  readonly [key: string]: unknown;
+}
+
+export type ConnectProviderOAuthConfig = ChatGPTOAuthConfig | ProviderOAuthTokensConfig;
+
+/** Experiment switch identifier (`protocol_v2.ts:139-149`). */
+export type ExperimentId =
+  | "artifacts"
+  | "conversation_titles"
+  | "desktop_conversation_bootstrap"
+  | "diffs"
+  | "memory_palace"
+  | "tui_cron"
+  | "ui_v2";
+
+export type ExperimentSource = "override" | "env" | "default";
+
+export interface ExperimentSnapshot {
+  readonly id: ExperimentId;
+  readonly label: string;
+  readonly description: string;
+  readonly envVar?: string;
+  readonly enabled: boolean;
+  readonly source: ExperimentSource;
+  readonly override: boolean | null;
+}
+
+export type ReflectionTriggerMode = "off" | "step-count" | "compaction-event";
+
+export type ReflectionSettingsScope = "local_project" | "global" | "both";
+
+/** @deprecated Retired by F-03; the field stays on the wire and is ignored. */
+export type ReflectionMergeMode = "auto" | "explicit";
+
+export interface ReflectionSettingsSnapshot {
+  readonly agent_id: string;
+  /** Derived view of the two switches; kept for older app-server clients. */
+  readonly trigger: ReflectionTriggerMode;
+  readonly step_count: number;
+  readonly onCompaction?: boolean;
+  readonly everyUserMessages?: number;
+  readonly deleteSessionOnSuccess?: boolean;
+  readonly timeoutMinutes?: number;
+  /** @deprecated Retired by F-03 (§7.7): retained for wire compatibility. */
+  readonly merge: ReflectionMergeMode;
+  /** @deprecated Retired by F-03 (§7.7): retained for wire compatibility. */
+  readonly merge_instructions: string;
+}
+
+export type ToolsetName = "codex" | "default" | "letta" | "none";
+
+export type ToolsetPreference = ToolsetName | "auto";
+
+/** Arguments of `subagent.launch` (`subagent-protocol.ts:5-26`). */
+export interface SubagentLaunchArgs {
+  readonly subagent_type?: string;
+  readonly prompt: string;
+  readonly description: string;
+  readonly client_message_id?: string;
+  readonly model?: string;
+  readonly agent_id?: string;
+  readonly conversation_id?: string;
+  readonly computer?: string;
+  readonly mcp?: {
+    readonly inherit: boolean;
+    readonly servers?: readonly string[];
+  };
+  readonly max_turns?: number;
+}
+
+/** What a launch reports (`subagent-protocol.ts:27-35`). */
+export type SubagentLaunchResult =
+  | {
+      readonly success: true;
+      readonly task_id: string;
+      readonly output_file: string;
+      readonly agent_id: string | null;
+      readonly conversation_id: string | null;
+    }
+  | { readonly success: false; readonly error: string };

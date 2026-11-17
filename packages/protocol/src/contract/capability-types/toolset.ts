@@ -1,8 +1,24 @@
 /**
  * Capability IO for the `toolset` family.
  *
- * One row per capability name in this domain, shaped as
- * `{ input; output }`. Rows are filled in by the domain work package; an
- * empty interface here means the domain has not been typed yet.
+ * `toolset.update` switches the harness preset for a runtime and answers with
+ * both the concrete toolset name and the preference that produced it.
  */
-export interface ToolsetIo {}
+
+import type { ToolsetName, ToolsetPreference } from "./engine-domain.js";
+
+export interface ToolsetUpdateInput {
+  readonly toolset_preference: ToolsetPreference;
+}
+
+export interface ToolsetUpdateOutput {
+  readonly current_toolset?: ToolsetName;
+  readonly current_toolset_preference?: ToolsetPreference;
+}
+
+export interface ToolsetIo {
+  readonly "toolset.update": {
+    readonly input: ToolsetUpdateInput;
+    readonly output: ToolsetUpdateOutput;
+  };
+}
