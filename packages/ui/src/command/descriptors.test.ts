@@ -56,6 +56,29 @@ describe("CAPABILITY_DESCRIPTORS", () => {
     expect(missingChinese).toEqual([]);
   });
 
+  it("declares no command copy the table cannot reach (no orphans)", () => {
+    const wanted = new Set<string>();
+
+    for (const row of COMMAND_DESCRIPTOR_LIST) {
+      wanted.add(row.labelKey);
+      wanted.add(row.descKey);
+    }
+
+    for (const family of CAPABILITY_FAMILIES) {
+      wanted.add(family.nameKey);
+    }
+
+    // Both directions matter: a missing key breaks a row, and an orphan key is
+    // copy nobody can reach -- the i18n gate cannot see these (they are built
+    // from a table), so this assertion is the only thing that keeps a renamed
+    // command from leaving its old copy behind forever.
+    const orphans = [...new Set([...Object.keys(en), ...Object.keys(zhCN)])]
+      .filter((key) => key.startsWith("page.command."))
+      .filter((key) => !wanted.has(key));
+
+    expect(orphans).toEqual([]);
+  });
+
   it("uses four segments at most", () => {
     const keys = [
       ...COMMAND_DESCRIPTOR_LIST.flatMap((row) => [row.labelKey, row.descKey]),
@@ -76,10 +99,14 @@ describe("CAPABILITY_DESCRIPTORS", () => {
   });
 
   it("prefix matches rank before inner matches", () => {
-    const results = filterDescriptors("apply");
+    const results = filterDescriptors("s");
+    const prefixHits = results.filter((row) => row.searchKeys.some((key) => key.startsWith("s")));
+    const innerHits = results.filter((row) => !row.searchKeys.some((key) => key.startsWith("s")));
 
-    expect(results.length).toBeGreaterThan(0);
-    expect(results[0]?.searchKeys.some((key) => key.startsWith("apply"))).toBe(true);
+    // Every prefix hit must come before every inner hit, not merely first.
+    expect(prefixHits.length).toBeGreaterThan(0);
+    expect(innerHits.length).toBeGreaterThan(0);
+    expect(results.slice(0, prefixHits.length)).toEqual(prefixHits);
   });
 
   it("groups every descriptor under exactly one family", () => {

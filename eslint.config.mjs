@@ -139,8 +139,14 @@ function uiImportPatterns({ r6 }) {
     {
       group: ["@haruyuki/protocol", "@haruyuki/protocol/*", "@haruyuki/protocol/**"],
       allowTypeImports: true,
+      // This fast pass cannot see the enumerated allow-list (ESLint has no
+      // "forbid all names except these" form), so its wording says what it can
+      // enforce: type imports here, and the value imports only through the
+      // authoritative gate in scripts/check-boundaries.mjs (CONST_EXPORTS_BY_EDGE,
+      // A file that imports one of those tables disables this
+      // rule with a comment naming the gate, which keeps the exception visible.
       message:
-        "R7: @haruyuki/ui may only 'import type' from @haruyuki/protocol; value imports are forbidden",
+        "R7 (fast pass): @haruyuki/ui may only 'import type' from @haruyuki/protocol; a value import of an allow-listed constant table needs an explicit eslint-disable naming scripts/check-boundaries.mjs",
     },
     {
       group: [
