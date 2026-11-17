@@ -25,6 +25,8 @@ import { buildFrame } from "../engine/client/send.js";
 import { createFrameReader } from "../engine/client/frame-reader.js";
 import { createChannel } from "../engine/client/channel.js";
 import { createCommandDispatcher } from "./dispatch.js";
+import { createEventMerger } from "../merge/event-merger.js";
+import { createFrameSender } from "../bridge/sender.js";
 
 const ENGINE = process.env["E1_ENGINE"];
 const enabled = typeof ENGINE === "string" && existsSync(ENGINE);
@@ -128,6 +130,49 @@ describe.skipIf(!enabled)("W-15 real engine", () => {
       expect(reply).toHaveProperty("completion", "answered");
     }
   }, 20_000);
+
+  it("carries a real terminal_output through the merger and sender", async () => {
+    const active = transport;
+
+    if (active === null) throw new Error("transport was not opened");
+
+    const channel = createChannel({
+      agentId: "__control__",
+      reader: createFrameReader(),
+      write: (request, requestId) => active.send(buildFrame(request, {}, requestId).raw),
+    });
+    active.onFrame(({ raw }) => channel.ingest(raw));
+    const dispatcher = createCommandDispatcher({ getChannel: () => channel });
+    const emitted: unknown[] = [];
+    const sender = createFrameSender({
+      transport: (payload) => emitted.push(JSON.parse(payload)),
+    });
+    const merger = createEventMerger({
+      agentId: "agent-a",
+      onFrame: (frame) => sender.send(frame),
+    });
+    const output = new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("no terminal_output within 8 s")), 8_000);
+
+      channel.onEvent((frame) => {
+        if (frame.type !== "terminal_output") return;
+
+        clearTimeout(timer);
+        merger.ingest(frame);
+        resolve();
+      });
+    });
+
+    const spawned = await dispatcher.invoke({
+      capability: "terminal.spawn",
+      body: { terminal_id: "e1-v22", cols: 80, rows: 24 },
+    });
+
+    expect(spawned).toEqual({ ok: true, completion: "accepted" });
+
+    await output;
+    expect(emitted.some((frame) => (frame as { t?: string }).t === "term.output")).toBe(true);
+  }, 25_000);
 
   it("returns accepted for terminal.kill, an untracked capability", async () => {
     const active = transport;
