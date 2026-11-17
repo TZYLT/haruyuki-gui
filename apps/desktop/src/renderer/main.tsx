@@ -18,13 +18,22 @@
 import { StrictMode, useEffect, useState, type ReactElement } from "react";
 import { createRoot } from "react-dom/client";
 
-import { LocaleProvider, applyTheme, createTerminalRouter, type ThemeAttrs } from "@haruyuki/ui";
+import {
+  LocaleProvider,
+  TERMINAL_STYLESHEET,
+  TerminalPanel,
+  applyTheme,
+  createTerminalRouter,
+  type CommandSender,
+  type ThemeAttrs,
+} from "@haruyuki/ui";
 import { SamplePage } from "@haruyuki/ui/examples";
 
 import { CrashPage, parseCrashParams } from "./crash-page.js";
 import { DiagnosticsPanel } from "./diagnostics-panel.js";
 import { BRIDGE_CHANNEL_NAMES } from "../shared/bridge.js";
 import { createRendererBridge, type BridgeBoot } from "./bridge.js";
+import { terminalNotices } from "./terminal-notices.js";
 import { ErrorBoundary, RendererErrorPage } from "./error-page.js";
 import { RuntimeErrorPage } from "./runtime-error.js";
 import {
@@ -123,6 +132,44 @@ applyTheme(boot.theme);
 // missing preload is a D1-level failure, not something D3 should paper over.
 const shellBridge = window.haruyuki;
 
+// Notices surface in the panel, one terminal at a time. The two callbacks used to
+// be the same `console.info` twice, and only one of them was ever reached: the
+// router's `onNotice` fires from `router.notice()`, which nothing calls -- the
+// notice arrives on `bridge:stream.terminal.notice` and `createRendererBridge`
+// reads it there. So the router keeps a callback that is delivered to the panel,
+// and the bridge's callback is the one that renders.
+const notices = terminalNotices;
+
+/**
+ * The command layer's stand-in, until the engine side exists.
+ *
+ * Every terminal command answers `not-implemented`, and that is the point: the
+ * panel has three distinguishable failures, and this is the one that says "this
+ * build cannot do it" rather than "the connection failed, try again". A stub that
+ * answered `channel-unavailable` would tell the user to wait for a reconnect that
+ * will never bring the feature; one that resolved `sent` would let the panel claim
+ * a session it does not have. Returning the honest one means the Reopen button
+ * renders "not available yet", which is a true sentence about this build.
+ *
+ * `detail` names the missing capability rather than apologising, so a field report
+ * says which channel to look for.
+ *
+ * @param command the command that was attempted
+ * @returns a failure that says the capability does not exist here
+ */
+async function sendUnavailable(command: {
+  readonly name: string;
+}): Promise<{ ok: false; reason: "not-implemented"; detail: string }> {
+  return {
+    ok: false,
+    reason: "not-implemented",
+    detail: `the command channel for ${command.name} is not wired in this build`,
+  };
+}
+
+/** Bound to the panel's contract, so the stub's shape is checked at the call site. */
+const send: CommandSender = sendUnavailable;
+
 if (shellBridge !== undefined) {
   const terminalRouter = createTerminalRouter({
     ack: (ack) => {
@@ -130,18 +177,18 @@ if (shellBridge !== undefined) {
         .invoke(BRIDGE_CHANNEL_NAMES.terminalAck, ack)
         .catch((error: unknown) => console.error("terminal ack failed", error));
     },
-    onNotice: (notice) => {
-      // D3 has no visible notice surface; E3 renders the marker. The console is
-      // the seam until then, so a dropped terminal slice is still observable.
-      console.info("terminal notice", notice.terminal_id, notice.droppedBytes);
-    },
+    // Kept because the router calls it whenever a slice is dropped for a terminal
+    // that has no sink. Forwarding it to the same notice surface means a future
+    // producer of this callback needs no second wiring; today nothing calls
+    // `router.notice()`, so this arm is a seam rather than a live path.
+    onNotice: (notice) => notices.publish(notice),
   });
 
   createRendererBridge({
     bridge: shellBridge,
     boot: boot.bridge,
     terminal: terminalRouter,
-    onNotice: (notice) => console.info("terminal notice", notice.terminal_id, notice.droppedBytes),
+    onNotice: (notice) => notices.publish(notice),
     onReadyError: (error) => console.error("bridge ready failed", error),
   });
 }
@@ -392,6 +439,34 @@ function Shell(): ReactElement {
           ) : (
             <>
               <SamplePage locale={locale} />
+              {/*
+               * The terminal panel, mounted on the default route so a session has a
+               * surface. Three of its inputs are honest placeholders, because the
+               * things that would fill them live in another package:
+               *
+               *   - `send` is a stub that answers `not-implemented` for every
+               *     command. The four terminal command channels
+               *     (`terminal.spawn`/`input`/`resize`/`kill`) are not in the
+               *     preload's allowlist; they belong to the engine command layer.
+               *     The stub is not a fallback that pretends to work: the panel
+               *     renders the third failure state, so the user reads "this is
+               *     not available yet" instead of pressing a button that does
+               *     nothing.
+               *   - `engineReady` is `false`. The bridge reports a ready *frame it
+               *     sends*, not a readiness it is told about, so there is no
+               *     signal to read -- and "not ready" is the safe default: the
+               *     opposite guess enables a Reopen button that would do nothing.
+               *   - `terminalId` is a placeholder. The real id is chosen when the
+               *     command layer spawns the session, because the engine echoes
+               *     back the id it was given; generating one here would be a
+               *     second answer to "which terminal is this".
+               */}
+              <TerminalPanel
+                terminalId="renderer-terminal"
+                css={TERMINAL_STYLESHEET}
+                send={send}
+                engineReady={false}
+              />
               {/*
                * Mounted hidden on the default route so the menu's `open` message has a
                * listener without reloading the page. The panel renders nothing until

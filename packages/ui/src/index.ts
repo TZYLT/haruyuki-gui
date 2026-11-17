@@ -32,3 +32,8 @@ export * from "./components/index.js";
 export * from "./i18n/index.js";
 export * from "./icons/index.js";
 export * from "./tokens/index.js";
+
+// The terminal layer is a namespace of its own rather than a star re-export: its
+// module forwards an explicit list (see `terminal/index.ts`), and forwarding the
+// whole directory here would turn that list back into "whatever is in the folder".
+export * from "./terminal/index.js";
