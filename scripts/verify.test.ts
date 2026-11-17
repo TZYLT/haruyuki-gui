@@ -84,6 +84,16 @@ const GATE_SELF_TEST_FILES = [
 ];
 
 /** Default-mode segment labels, in the documented order. */
+/**
+ * Segment counts and labels below are literals on purpose.
+ *
+ * They are not derived from the assembled list, because what they test is that
+ * inserting a segment makes someone update this file: an inserted segment shifts
+ * every number after it, and a derived count would pass silently with the wrong
+ * order. The cost of "insert one segment, change ten lines" is the signal that the
+ * segment list is a decision, not a consequence -- so do not refactor these into a
+ * computation without deciding what replaces that signal.
+ */
 const DEFAULT_LABELS = [
   "typecheck",
   "lint",

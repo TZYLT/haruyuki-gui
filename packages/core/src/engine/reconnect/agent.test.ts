@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { createReconnectAgent } from "./agent";
+import { createProbe } from "./probe";
 import { createTransportWatch } from "./watcher";
 import type { PageResult } from "./controller";
 import type { ReplayGap, ReplaySink, RecoveryStep, ReplayStateKind } from "./types";
@@ -196,6 +197,37 @@ describe("assembled reconnect layer", () => {
     await agent.recover();
 
     expect(gaps).toEqual([]);
+  });
+
+  it("lets a probe cycle touch nothing the consumer can see", () => {
+    // A probe is a liveness check, not a refresh: it may send, and it may change
+    // its own verdict, but it must not move the layer's state or hand the consumer
+    // a single event. The send count is asserted too -- a probe that does nothing
+    // at all would satisfy the rest of this test.
+    const { agent, clock, steps, gaps, sinkCalls } = build();
+    const sent: number[] = [];
+    const statuses: string[] = [];
+    agent.onStatus((status) => statuses.push(status.state));
+
+    const probe = createProbe({
+      clock,
+      send: async () => {
+        sent.push(sent.length + 1);
+        return { ok: true };
+      },
+    });
+
+    probe.start();
+    clock.advance(10_000);
+    clock.advance(10_000);
+    probe.stop();
+
+    expect(sent.length).toBeGreaterThan(0);
+    expect(statuses).toEqual([]);
+    expect(steps).toEqual([]);
+    expect(gaps).toEqual([]);
+    expect(sinkCalls).toEqual([]);
+    expect(agent.status().state).toBe("ready");
   });
 
   it("stops listening to the watch after dispose", () => {
