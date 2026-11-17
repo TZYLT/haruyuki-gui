@@ -140,6 +140,15 @@ export const zhCN = {
   "page.conversation.title": "对话",
   "page.tree.title": "文件",
   "page.error.retry": "重试",
+  "page.command.title": "命令样例",
+  "page.command.deviceInfo": "获取设备信息",
+  "page.command.terminalKill": "结束样例终端",
+  "page.command.answered": "已应答",
+  "page.command.accepted": "已发送至引擎",
+  "page.command.notAvailable": "该功能暂不可用",
+  "page.command.notConnected": "引擎未连接",
+  "page.command.scopeRequired": "请先选择一个会话",
+  "page.command.badPayload": "请求内容无效",
 
   // ----------------------------------------------------------------- error
   "error.network.unreachable": "无法连接到服务",

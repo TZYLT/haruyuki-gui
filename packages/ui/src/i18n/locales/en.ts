@@ -185,6 +185,15 @@ export const en = {
   "page.conversation.title": "Conversation",
   "page.tree.title": "Files",
   "page.error.retry": "Try again",
+  "page.command.title": "Command sample",
+  "page.command.deviceInfo": "Get device info",
+  "page.command.terminalKill": "Kill sample terminal",
+  "page.command.answered": "Answered",
+  "page.command.accepted": "Sent to the engine",
+  "page.command.notAvailable": "This feature is not available",
+  "page.command.notConnected": "The engine is not connected",
+  "page.command.scopeRequired": "Select a conversation first",
+  "page.command.badPayload": "The request is invalid",
 
   // ----------------------------------------------------------------- error
   "error.network.unreachable": "The service is unreachable",
