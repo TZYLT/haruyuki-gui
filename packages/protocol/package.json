@@ -8,7 +8,7 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit -p ."
   },
   "dependencies": {
     "@letta-ai/letta-client": "^1.10.2"
