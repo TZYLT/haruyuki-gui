@@ -88,3 +88,69 @@ export function hiddenTabCount(doc: LayoutDoc): number {
 
   return total;
 }
+
+/**
+ * Reset to a document while carrying forward tabs the current build cannot own.
+ *
+ * "Reset layout" returns the user to the default arrangement, but it must not
+ * delete an unknown page's data or a tab the user closed as unknown: those tabs
+ * are the only record that the page existed. They are appended to the first
+ * panel of the default document; `hidden` stays as it was.
+ *
+ * @param next the fresh document
+ * @param previous the document being replaced
+ * @param isUnknown whether a page id is unknown to this build
+ * @returns `next` with the preserved tabs appended, or `next` unchanged
+ */
+export function preserveResetTabs(
+  next: LayoutDoc,
+  previous: LayoutDoc,
+  isUnknown: (pageId: string) => boolean,
+): LayoutDoc {
+  const preserved = new Map<string, { tabId: string; pageId: string; hidden?: boolean }>();
+
+  const visit = (node: LayoutNode): void => {
+    if (node.type === "panel") {
+      for (const tab of node.tabs) {
+        if (tab.hidden === true || isUnknown(tab.pageId)) {
+          preserved.set(tab.tabId, {
+            tabId: tab.tabId,
+            pageId: tab.pageId,
+            ...(tab.hidden === true ? { hidden: true } : {}),
+          });
+        }
+      }
+
+      return;
+    }
+
+    for (const child of node.children) visit(child);
+  };
+
+  visit(previous.root);
+
+  if (preserved.size === 0) return next;
+
+  const append = (node: LayoutNode): LayoutNode => {
+    if (node.type === "panel") {
+      const known = new Set(node.tabs.map((tab) => tab.tabId));
+      const additions = [...preserved.values()].filter((tab) => !known.has(tab.tabId));
+
+      return additions.length === 0 ? node : { ...node, tabs: [...node.tabs, ...additions] };
+    }
+
+    let done = false;
+    const children = node.children.map((child) => {
+      if (done) return child;
+
+      const result = append(child);
+      done = JSON.stringify(result) !== JSON.stringify(child);
+
+      return result;
+    });
+
+    return { ...node, children };
+  };
+
+  return { ...next, root: append(next.root) };
+}

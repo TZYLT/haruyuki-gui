@@ -29,6 +29,7 @@ import {
   connectTerminalFeed,
   createPageRegistry,
   createTerminalRouter,
+  preserveResetTabs,
   registerSamplePages,
   type CommandSender,
   type TerminalRouter,

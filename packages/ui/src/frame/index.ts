@@ -25,6 +25,7 @@ export type { EditAction, TopBarProps } from "./TopBar.js";
 export { createActivityStore, badgeText } from "./activity.js";
 export type { ActivityState, ActivityStore } from "./activity.js";
 export { toDockview, toLayoutDoc, docEquals } from "./layout/map.js";
+export { hiddenTabCount, hideTab, preserveResetTabs } from "./layout/hidden.js";
 export type { DockviewLayout, HiddenTab, SerializedLayout } from "./layout/map.js";
 export { PAGE_IDS, unknownPageDefinitions } from "./contract.js";
 export type { PageId } from "./contract.js";

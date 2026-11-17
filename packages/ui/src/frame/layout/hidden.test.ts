@@ -9,7 +9,7 @@
 import { describe, expect, it } from "vitest";
 import type { LayoutDoc } from "@haruyuki/protocol";
 
-import { hiddenTabCount, hideTab } from "./hidden.js";
+import { hiddenTabCount, hideTab, preserveResetTabs } from "./hidden.js";
 
 /** @returns a document with a left rail, a main panel and a hidden tab already in it */
 function doc(): LayoutDoc {
@@ -92,5 +92,36 @@ describe("hiddenTabCount", () => {
     const next = hideTab(doc(), "mystery");
 
     expect(hiddenTabCount(next as LayoutDoc)).toBe(1);
+  });
+});
+
+describe("preserveResetTabs", () => {
+  it("keeps unknown and hidden tabs when resetting to the default", () => {
+    const previous: LayoutDoc = {
+      version: 1,
+      root: {
+        type: "panel",
+        id: "main",
+        tabs: [
+          { tabId: "known", pageId: "conversation" },
+          { tabId: "unknown", pageId: "vendor.future" },
+          { tabId: "hidden", pageId: "vendor.closed", hidden: true },
+        ],
+      },
+    };
+    const next: LayoutDoc = {
+      version: 1,
+      root: {
+        type: "panel",
+        id: "main",
+        tabs: [{ tabId: "conversation", pageId: "conversation" }],
+      },
+    };
+    const result = preserveResetTabs(next, previous, (id) => id === "vendor.future");
+
+    expect(result.root.type).toBe("panel");
+    if (result.root.type !== "panel") return;
+
+    expect(result.root.tabs.map((tab) => tab.tabId)).toEqual(["conversation", "unknown", "hidden"]);
   });
 });

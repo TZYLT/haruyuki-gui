@@ -235,6 +235,12 @@ export const en = {
     "{count} tabs are hidden and will reappear once their pages are available.",
   "page.frame.unknown.hide": "Close (hide only)",
 
+  "page.topbar.resetTitle": "Reset layout?",
+  "page.topbar.resetBody":
+    "All pages return to the default arrangement. Unknown and hidden pages are kept.",
+  "page.topbar.resetConfirm": "Reset",
+  "page.topbar.cancel": "Cancel",
+
   // ----------------------------------------------------------------- error
   "error.network.unreachable": "The service is unreachable",
   "error.unexpected": "An unexpected error occurred",

@@ -189,6 +189,11 @@ export const zhCN = {
   "page.frame.banner.hidden": "有 {count} 个标签已隐藏，页面可用后会重新显示。",
   "page.frame.unknown.hide": "关闭（只是隐藏）",
 
+  "page.topbar.resetTitle": "重置布局？",
+  "page.topbar.resetBody": "所有页面回到默认排列。未知页面与隐藏页面会保留。",
+  "page.topbar.resetConfirm": "重置",
+  "page.topbar.cancel": "取消",
+
   // ----------------------------------------------------------------- error
   "error.network.unreachable": "无法连接到服务",
   "error.unexpected": "发生了意外错误",

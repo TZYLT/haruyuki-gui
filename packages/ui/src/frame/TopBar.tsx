@@ -12,6 +12,7 @@
 
 import { useEffect, useRef, useState, type ReactElement } from "react";
 
+import { Button } from "../components/Button.js";
 import { Dialog } from "../components/Dialog.js";
 import { useT } from "../i18n/index.js";
 
@@ -35,6 +36,7 @@ export function TopBar(props: TopBarProps): ReactElement {
   const t = useT();
   const [menu, setMenu] = useState<"edit" | "help" | null>(null);
   const [about, setAbout] = useState(false);
+  const [resetOpen, setResetOpen] = useState(false);
   const root = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
@@ -110,7 +112,7 @@ export function TopBar(props: TopBarProps): ReactElement {
               role="menuitem"
               onClick={() => {
                 setMenu(null);
-                props.onResetLayout?.();
+                setResetOpen(true);
               }}
             >
               {t("page.topbar.resetLayout")}
@@ -149,6 +151,30 @@ export function TopBar(props: TopBarProps): ReactElement {
 
       <Dialog open={about} onOpenChange={setAbout} title={t("page.topbar.aboutTitle")}>
         <p>{t("page.topbar.version", { version: props.version })}</p>
+      </Dialog>
+
+      <Dialog
+        open={resetOpen}
+        onOpenChange={setResetOpen}
+        title={t("page.topbar.resetTitle")}
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setResetOpen(false)}>
+              {t("page.topbar.cancel")}
+            </Button>
+            <Button
+              variant="danger"
+              onClick={() => {
+                setResetOpen(false);
+                props.onResetLayout?.();
+              }}
+            >
+              {t("page.topbar.resetConfirm")}
+            </Button>
+          </>
+        }
+      >
+        <p>{t("page.topbar.resetBody")}</p>
       </Dialog>
     </header>
   );
