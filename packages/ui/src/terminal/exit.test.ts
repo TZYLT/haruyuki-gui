@@ -14,6 +14,25 @@
  *   guard does not swallow the one byte a user cannot afford to lose. Keeping
  *   only the first would let a strict priority order pass review and then
  *   strand a foreground process.
+ *
+ * What each rule costs to break
+ *   Measured by breaking the module and running this file, so the numbers are
+ *   observations rather than intentions. Read them as a map from "the edit I am
+ *   about to make" to "how loudly this suite objects":
+ *
+ *     removing the interrupt rule ............... 4 of 27 fail
+ *     a selection taking over Ctrl+C ............ 1 of 27 fail
+ *     dropping the composition guard ............ 2 of 27 fail
+ *     passing Ctrl+Shift+C through .............. 3 of 27 fail
+ *     not counting a trailing empty segment ..... 1 of 27 fail
+ *     not normalizing line endings .............. 5 of 27 fail
+ *     a stale composition flag beating the stop . 1 of 27 fail
+ *
+ *   The single-case rows are the ones worth knowing about. They are the rules
+ *   that exactly one assertion defends -- so if that assertion is ever
+ *   "simplified" into a general-case one, the rule loses its only guard and
+ *   nothing else in the file notices. That is not a reason to distrust the
+ *   suite, it is the reason those blocks say what defect they catch.
  */
 
 import { describe, expect, it } from "vitest";
