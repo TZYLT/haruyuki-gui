@@ -41,12 +41,14 @@
 
 import { useCallback, useEffect, useRef, useState, type ReactElement } from "react";
 
+import type { TerminalRouter } from "../bridge/terminal.js";
 import { Dialog } from "../components/index.js";
 import { useT } from "../i18n/index.js";
 import { killTerminal, sendInput, spawnTerminal } from "./commands.js";
 import type { CommandFailure, CommandOutcome, CommandSender } from "./commands.js";
 import { translateKey, translatePaste } from "./exit.js";
 import { createTerminalHost } from "./host.js";
+import { attachTerminalOutput } from "./output.js";
 import type { TerminalHost } from "./host.js";
 import type { TerminalPhase } from "./state.js";
 import { reducePhase } from "./state.js";
@@ -153,6 +155,16 @@ export interface TerminalPanelProps {
    * the two idle sentences the toolbar shows.
    */
   readonly engineReady: boolean;
+  /**
+   * The terminal router this panel's output arrives on.
+   *
+   * Optional because a host may not have one -- this package must mount and take
+   * keys without a bridge. When it is present the panel registers a sink for
+   * `terminalId` and unregisters it on unmount, which is the only path by which an
+   * engine's bytes reach the screen.
+   */
+  readonly router?: TerminalRouter;
+
   /** Called when the user asks to search the scrollback. */
   readonly onSearch?: () => void;
   /** Called when the user asks to export the buffer. */
@@ -247,6 +259,7 @@ export function TerminalPanel({
   cwd,
   send,
   engineReady,
+  router,
   onSearch,
   onExport,
   onOpenExternal,
@@ -545,6 +558,25 @@ export function TerminalPanel({
     container.addEventListener("compositionend", onCompositionEnd, true);
     container.addEventListener("paste", onPaste as EventListener, true);
 
+    // The wire that carries the engine's bytes onto the screen. Registered here
+    // rather than in a second effect so it shares this host's lifetime exactly: a
+    // sink outliving its emulator would confirm output that was painted into a
+    // torn-down buffer, which tells the peer to discard bytes nobody saw.
+    //
+    // `write` is passed as a closure over `terminal` rather than the object, so the
+    // sink cannot keep pointing at a previous mount's instance.
+    const output =
+      router === undefined
+        ? null
+        : attachTerminalOutput({
+            terminalId,
+            router,
+            write: (text, done) => {
+              terminal.write(text, done);
+            },
+            formatNotice: (bytes) => t("component.terminal.droppedBytes", { bytes }),
+          });
+
     return () => {
       container.removeEventListener("compositionstart", onCompositionStart, true);
       container.removeEventListener("compositionend", onCompositionEnd, true);
@@ -553,10 +585,14 @@ export function TerminalPanel({
       onKey.dispose();
       onData.dispose();
 
+      // Before the emulator goes: unregistering first means the router stops
+      // handing this sink slices, so nothing arrives between the two calls.
+      output?.dispose();
+
       host.dispose();
       hostRef.current = null;
     };
-  }, [css, offerPaste, transmit]);
+  }, [css, offerPaste, transmit, router, terminalId, t]);
 
   /**
    * Copy the terminal's current selection.

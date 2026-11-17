@@ -127,6 +127,10 @@ export const en = {
   // Two notices rather than two phases: neither of these is a fact about a
   // session. The first says the channel is down and a retry may work; the second
   // says this build does not have the capability and a retry cannot.
+  // The marker painted into the terminal when the peer dropped bytes for it. A
+  // catalogue key rather than a literal, because the sink is told it can supply
+  // no text of its own: the word for "omitted" belongs here.
+  "component.terminal.droppedBytes": "[omitted {bytes} bytes]",
   "component.terminal.noticeChannelUnavailable": "Cannot reach the engine right now",
   "component.terminal.noticeNotImplemented": "This is not available in this build yet",
   "component.terminal.phaseIdleReady": "Connection restored; reopen to start a new session",

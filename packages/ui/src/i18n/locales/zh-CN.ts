@@ -97,6 +97,7 @@ export const zhCN = {
 
   // ------------------------------------------------------- terminal panel
   "component.terminal.phaseIdleOffline": "尚未连接到引擎",
+  "component.terminal.droppedBytes": "[已省略 {bytes} 字节]",
   "component.terminal.noticeChannelUnavailable": "暂时无法连接引擎",
   "component.terminal.noticeNotImplemented": "该功能暂不可用",
   "component.terminal.phaseIdleReady": "连接已恢复，重新打开即可开始新会话",

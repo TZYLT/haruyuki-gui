@@ -26,6 +26,7 @@ import {
   applyTheme,
   createTerminalRouter,
   type CommandSender,
+  type TerminalRouter,
   type TerminalSignal,
   type ThemeAttrs,
 } from "@haruyuki/ui";
@@ -204,20 +205,31 @@ function subscribeToFrames(receive: (signal: TerminalSignal) => void): () => voi
   };
 }
 
-if (shellBridge !== undefined) {
-  const terminalRouter = createTerminalRouter({
-    ack: (ack) => {
-      void shellBridge
-        .invoke(BRIDGE_CHANNEL_NAMES.terminalAck, ack)
-        .catch((error: unknown) => console.error("terminal ack failed", error));
-    },
-    // Kept because the router calls it whenever a slice is dropped for a terminal
-    // that has no sink. Forwarding it to the same notice surface means a future
-    // producer of this callback needs no second wiring; today nothing calls
-    // `router.notice()`, so this arm is a seam rather than a live path.
-    onNotice: (notice) => notices.publish(notice),
-  });
+/**
+ * The router this session's output arrives on, or `null` when the preload failed.
+ *
+ * Module scope rather than inside the block below because the panel needs it as a
+ * prop, and the panel is a component: passing it down from a block-scoped local
+ * would make the sink's registration depend on render order. `null` rather than
+ * `undefined` so the panel's `router` prop stays a value a host may omit.
+ */
+const terminalRouter: TerminalRouter | null =
+  shellBridge === undefined
+    ? null
+    : createTerminalRouter({
+        ack: (ack) => {
+          void shellBridge
+            .invoke(BRIDGE_CHANNEL_NAMES.terminalAck, ack)
+            .catch((error: unknown) => console.error("terminal ack failed", error));
+        },
+        // Kept because the router calls it whenever a slice is dropped for a terminal
+        // that has no sink. Forwarding it to the same notice surface means a future
+        // producer of this callback needs no second wiring; today nothing calls
+        // `router.notice()`, so this arm is a seam rather than a live path.
+        onNotice: (notice) => notices.publish(notice),
+      });
 
+if (shellBridge !== undefined && terminalRouter !== null) {
   createRendererBridge({
     bridge: shellBridge,
     boot: boot.bridge,
@@ -501,6 +513,7 @@ function Shell(): ReactElement {
                 send={send}
                 engineReady={false}
                 subscribe={subscribeToFrames}
+                {...(terminalRouter === null ? {} : { router: terminalRouter })}
               />
               {/*
                * Mounted hidden on the default route so the menu's `open` message has a

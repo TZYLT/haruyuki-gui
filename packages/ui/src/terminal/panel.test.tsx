@@ -281,6 +281,68 @@ describe("TerminalPanel: it mounts the terminal it was given a sheet for", () =>
   });
 });
 
+describe("TerminalPanel: the engine's bytes have a road to the screen", () => {
+  it("registers a sink while mounted and unregisters it when it unmounts", async () => {
+    // The panel-level half of `output.test.ts`: that file proves the loop closes
+    // once a sink is registered, this one proves the panel is what registers it.
+    // Without this, the sink could be perfect and never attached to a session.
+    const { createTerminalRouter } = await import("../bridge/terminal.js");
+    const acks: unknown[] = [];
+    const router = createTerminalRouter({
+      ack: (ack) => acks.push(ack),
+      onNotice: vi.fn(),
+      batchBytes: 1,
+      intervalMs: 0,
+    });
+
+    const harness = renderPanel({ router });
+
+    // A slice for this terminal is absorbed while the panel is mounted.
+    router.deliver({
+      terminal_id: "t-1",
+      slice: 0,
+      slices: 1,
+      offset: 0,
+      bytes: 5,
+      final: true,
+      text: "hello",
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(router.stats.delivered).toBeGreaterThan(0);
+    expect(acks.length).toBeGreaterThan(0);
+    expect(harness.commands).toEqual([]); // nothing about the panel sent a command
+
+    router.dispose();
+  });
+
+  it("leaves the router counting the terminal as unseen once the panel is gone", async () => {
+    // Measured: a disposed xterm still fires its completion callback. So a sink
+    // left registered after unmount would confirm bytes painted into a torn-down
+    // buffer -- the peer would discard output nobody saw.
+    const { createTerminalRouter } = await import("../bridge/terminal.js");
+    const router = createTerminalRouter({ ack: vi.fn(), onNotice: vi.fn() });
+
+    renderPanel({ router });
+    cleanup();
+
+    router.deliver({
+      terminal_id: "t-1",
+      slice: 0,
+      slices: 1,
+      offset: 0,
+      bytes: 5,
+      final: true,
+      text: "ghost",
+    });
+
+    expect(router.stats.noSink).toBe(1);
+
+    router.dispose();
+  });
+});
+
 describe("TerminalPanel: a command that never left is not a session that started", () => {
   /**
    * Render a panel whose command layer answers with one fixed failure.
