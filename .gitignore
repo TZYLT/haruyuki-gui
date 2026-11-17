@@ -84,8 +84,9 @@ _acceptance/
 /apps/desktop/release/
 
 # --- handoff: development accident dumps, read then deleted ---------------
-# Written by a leader when it stops, read by whoever takes over, deleted after.
-# Deliberately not versioned: these are transcripts of what went wrong during
-# development, not project artifacts. A committed handoff would outlive the
-# accident it describes and read like documentation.
+# Written by a leader when it stops. Read and deleted by the operator - not by
+# master, and not by whoever takes over next. This is the owner's in-tray, not
+# a document that circulates: if it outlived the accident it describes it would
+# start reading like documentation, and the next person would trust it instead
+# of re-checking what it warns about.
 /handoff/
