@@ -354,18 +354,40 @@ export async function scanTrees(releaseDir) {
  */
 async function roundTwo(options) {
   const releaseDir = path.join(DESKTOP_DIR, "release");
+
+  // Bundle first: `electron-builder` packages `dist/`, and a tree that was
+  // never built packages an empty app.asar that only fails at launch.
+  const okBuild = step("build", () => run("pnpm", ["build"], DESKTOP_DIR));
+  if (!okBuild) return 1;
+
+  // One invocation per requested platform. electron-builder takes `--win`/
+  // `--linux` rather than a list, and passing neither means "host platform",
+  // which is not what "both" means here.
+  for (const target of options.targets) {
+    const flag = target === "win32" ? "--win" : "--linux";
+    const okPackage = step(`package ${target}`, () =>
+      run(
+        "npx",
+        ["electron-builder", "--config", "electron-builder.config.cjs", flag, "--x64"],
+        DESKTOP_DIR,
+      ),
+    );
+    // A platform that was attempted and failed is a failure, and stopping here
+    // keeps the manifest from claiming a build that did not finish.
+    if (!okPackage) return 1;
+  }
+
   const artifacts = await scanArtifacts(releaseDir);
   const trees = await scanTrees(releaseDir);
 
   if (artifacts.length === 0 && trees.length === 0) {
     process.stdout.write(
-      "\nrelease/ holds no artifacts. The build and package steps belong to W2-WIN\n" +
-        "and W3-LINUX and are not wired yet; run with --skip-bundle to stop after\n" +
-        "round 1, which is a complete claim on its own.\n",
+      "\nrelease/ is still empty after packaging. run with --skip-bundle to stop\n" +
+        "after round 1, which is a complete claim on its own.\n",
     );
     // Not zero: this run promised artifacts by omitting --skip-bundle and did
     // not produce any. Writing an empty manifest would look like success.
-    return options.targets.length > 0 ? 1 : 3;
+    return 1;
   }
 
   // `manifest.mjs` is the single producer of both hash documents: it hashes the
