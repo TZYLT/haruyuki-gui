@@ -338,6 +338,31 @@ describe("reset at a connection boundary", () => {
     feed(merger, [loopFrame(5)]);
     expect(merger.stats().late).toBe(1);
   });
+
+  it("reports a replay that started before the reset as duplicates, not as late", () => {
+    const merger = createEventMerger({ agentId: "agent-a" });
+
+    // The old connection delivered 1..3.
+    feed(merger, [loopFrame(1), loopFrame(2), loopFrame(3)]);
+
+    // The new connection replays from one, but the reset was not called before
+    // it. The numbers are recognised as already handled: the symptom is
+    // `duplicates`, not `late`, and a late run never forms to heal it.
+    feed(merger, [loopFrame(1), loopFrame(2), loopFrame(3)]);
+
+    expect(merger.stats().duplicates).toBe(3);
+    expect(merger.stats().late).toBe(0);
+    expect(merger.watermark()).toBe(3);
+
+    // The reset clears the handled numbers as well as the watermark, so the
+    // same frames are new again rather than a second round of duplicates.
+    merger.reset("reconnect-reset");
+    feed(merger, [loopFrame(1), loopFrame(2), loopFrame(3)]);
+
+    expect(merger.stats().duplicates).toBe(3);
+    expect(merger.stats().late).toBe(0);
+    expect(merger.watermark()).toBe(3);
+  });
 });
 
 describe("full corpus replay", () => {

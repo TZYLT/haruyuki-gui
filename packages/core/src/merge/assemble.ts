@@ -239,10 +239,12 @@ export function createAssembler(options: { limit?: number } = {}): Assembler {
           return null;
         }
 
-        if (input.runSeq === 1 && entry.text.length > 0 && entry.maxSeq > 1) {
+        if (input.runSeq === 1 && entry.parts.length > 0 && entry.maxSeq > 1) {
           // The message was being assembled from a later piece, so this one is
           // the engine starting over: the earlier text was partial and cannot
-          // be kept in front of the new run.
+          // be kept in front of the new run. `parts`, not `text`, is the test:
+          // a run may so far have carried only tool calls or thinking blocks,
+          // and a text-only check would treat the restart as an old piece.
           entry = fresh();
           reset = true;
           first = true;

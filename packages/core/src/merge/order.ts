@@ -238,14 +238,14 @@ export function createOrderGate<T>(
         // Give up on the hole rather than keep the stream waiting for it: the
         // watermark jumps to just below the oldest held frame, which is the
         // furthest point the buffer can prove was reached, and the held frames
-        // are then released in order.
+        // are then released in order. The oldest held number is necessarily
+        // ahead of the expectation: anything at or below it was delivered or
+        // dropped before this frame could be buffered.
         const oldest = Math.min(...buffer.keys());
 
-        if (oldest > expected) {
-          gaps.push({ from: expected, to: oldest - 1 });
-          mark = oldest - 1;
-          drain(out);
-        }
+        gaps.push({ from: expected, to: oldest - 1 });
+        mark = oldest - 1;
+        drain(out);
       }
 
       return { deliver: out, duplicate: false, late: false, rebaselined: false, gaps };

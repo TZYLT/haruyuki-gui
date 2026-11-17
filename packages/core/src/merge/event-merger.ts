@@ -63,6 +63,8 @@ type OpenMessage = {
   readonly authorAgentId: string | null;
   readonly subagentId: string | null;
   readonly messageId: string;
+  /** The conversation the message belongs to; a turn end only closes its own. */
+  readonly conversationId: string;
 };
 
 /**
@@ -89,15 +91,25 @@ export function createEventMerger(options: EventMergerOptions): EventMerger {
   /** Usage per `(author, subagent, run)`, kept until the turn that reported it ends. */
   const usageByRun = new Map<string, UsageSnapshot>();
 
-  /** Whether a gap was seen since the current turn began. */
-  let turnIncomplete = false;
+  /** Conversations whose current turn saw a gap or a late frame. */
+  const turnIncomplete = new Map<string, boolean>();
 
-  /** Remembering a failure to hand one terminal frame to the sink. */
+  /**
+   * Remembering a failure to hand one terminal frame to the sink.
+   *
+   * An empty list is a dropped event, not a no-op: the caller asked for slices
+   * and got none (a payload without `terminal_id`, or with empty `data`), so it
+   * is counted the same way as a sink failure.
+   */
   const emitTerminal = (frames: readonly Frame<"term.output">[]): void => {
+    if (frames.length === 0) {
+      counters.count("terminalDropped");
+
+      return;
+    }
+
     if (options.onFrame === undefined) {
-      if (frames.length > 0) {
-        counters.count("terminalDropped", frames.length);
-      }
+      counters.count("terminalDropped", frames.length);
 
       return;
     }
@@ -166,10 +178,13 @@ export function createEventMerger(options: EventMergerOptions): EventMerger {
     return found;
   };
 
-  /** Complete every open message of one author, because its turn ended. */
+  /** Complete every open message of one author in one conversation, because its turn ended. */
   const closeMessages = (facts: EnvelopeFacts, at: number, out: MergerChange[]): void => {
     for (const [key, open] of openMessages) {
-      if (open.authorAgentId !== facts.authorAgentId) {
+      if (
+        open.authorAgentId !== facts.authorAgentId ||
+        open.conversationId !== facts.conversationId
+      ) {
         continue;
       }
 
@@ -178,6 +193,10 @@ export function createEventMerger(options: EventMergerOptions): EventMerger {
       const done = assembler.complete(open.authorAgentId, open.subagentId, open.messageId);
 
       if (done === null) {
+        // The assembly entry was evicted before the turn ended. The message is
+        // gone without a `message.complete`; counting it is the only signal.
+        counters.count("incompleteMessages");
+
         continue;
       }
 
@@ -238,8 +257,24 @@ export function createEventMerger(options: EventMergerOptions): EventMerger {
             authorAgentId: facts.authorAgentId,
             subagentId: facts.subagentId,
             messageId: classified.messageId,
+            conversationId: facts.conversationId,
           },
         );
+
+        // A message that never ends (its `turn_finished` was lost in a gap)
+        // would otherwise keep this table growing for the life of the channel.
+        // The bound matches the assembly table, and an eviction is counted
+        // because the message can no longer be completed.
+        while (openMessages.size > (limits.assembling ?? MERGE_LIMITS.assembling)) {
+          const oldest = openMessages.keys().next();
+
+          if (oldest.done) {
+            break;
+          }
+
+          openMessages.delete(oldest.value);
+          counters.count("incompleteMessages");
+        }
 
         // A restart is announced before the first new piece, so a consumer
         // that clears on reset has already cleared when the text arrives.
@@ -345,13 +380,13 @@ export function createEventMerger(options: EventMergerOptions): EventMerger {
       const record = asRecord(raw);
       const runId = readString(record?.["run_id"]);
       const usage = takeUsage(facts, runId);
-      const incomplete = turnIncomplete;
+      const incomplete = turnIncomplete.get(facts.conversationId) === true;
 
-      if (turnIncomplete) {
+      if (incomplete) {
         counters.count("incompleteTurns");
       }
 
-      turnIncomplete = false;
+      turnIncomplete.delete(facts.conversationId);
 
       out.push({
         authorAgentId: facts.authorAgentId,
@@ -470,6 +505,10 @@ export function createEventMerger(options: EventMergerOptions): EventMerger {
         if (facts.seq === null) {
           counters.count("unorderedFrames");
           out.push(...mapFrame(frame, facts));
+          // The same contract as the ordered path: a subscriber has seen the
+          // change before `ingest` returns, so the two delivery channels cannot
+          // disagree about what arrived.
+          dispatch(out);
 
           return out;
         }
@@ -482,7 +521,7 @@ export function createEventMerger(options: EventMergerOptions): EventMerger {
 
         if (outcome.late) {
           counters.count("late");
-          turnIncomplete = true;
+          turnIncomplete.set(facts.conversationId, true);
         }
 
         if (outcome.rebaselined) {
@@ -491,7 +530,7 @@ export function createEventMerger(options: EventMergerOptions): EventMerger {
 
         for (const gap of outcome.gaps) {
           counters.noteGap(gap.from, gap.to, facts.at);
-          turnIncomplete = true;
+          turnIncomplete.set(facts.conversationId, true);
         }
 
         out.push(...deliverOutcome(outcome.deliver));
@@ -523,7 +562,7 @@ export function createEventMerger(options: EventMergerOptions): EventMerger {
       gate.reset();
       keys.clear();
       usageByRun.clear();
-      turnIncomplete = false;
+      turnIncomplete.clear();
       // The assembly table is deliberately kept: a message that was streaming
       // when the connection dropped continues under the same id after it comes
       // back, and dropping the half here would make the user watch it disappear.

@@ -54,8 +54,9 @@ const ENVELOPE_KEYS = ["runtime", "event_seq", "emitted_at", "idempotency_key"];
  * Resolve a relative `.js` specifier to the `.ts` file next to it.
  *
  * Only relative specifiers are considered: a bare name is a package (or a
- * builtin), and rewriting those would break the very first import. A `.js` file
- * that actually exists still wins, so a future emitted build would keep working.
+ * builtin), and rewriting those would break the very first import. A `.ts`
+ * next to the specifier wins even when a built `.js` also exists, because the
+ * benchmark always runs from source and this tree carries no build output.
  */
 registerHooks({
   resolve(specifier, context, nextResolve) {

@@ -25,6 +25,10 @@
  * exist here. Absolute numbers depend on the machine, its load and its
  * temperature; they are useful as an order of magnitude and for comparing two
  * revisions on the same machine, not as a budget.
+ *
+ * One pass over every recording is discarded before timing, and the recording
+ * order rotates between passes: the cold path (JIT, lazy linking, page faults)
+ * belongs to the warm-up rather than to whichever row happens to run first.
  */
 
 import process from "node:process";
@@ -221,18 +225,15 @@ function measureRecording(createEventMerger, frames) {
 }
 
 /**
- * Run one recording `runs` times and keep the median of every column.
+ * Combine several passes over one recording into one row.
  *
  * A fresh loop per pass: a merger carries state, and reusing one would measure
  * the second pass against a table the first already filled.
  *
- * @param {(options: object) => object} createEventMerger the merge loop factory
- * @param {object[]} frames the frames
- * @param {number} runs how many passes
+ * @param {object[]} passes one measurement per pass, in run order
  * @returns {object} the combined measurements
  */
-function measureWithRuns(createEventMerger, frames, runs) {
-  const passes = Array.from({ length: runs }, () => measureRecording(createEventMerger, frames));
+function combinePasses(passes) {
   const firstTexts = passes.map((pass) => pass.firstTextNs).filter((value) => value !== null);
 
   return {
@@ -305,6 +306,8 @@ function printMethod(runs, recordings) {
   console.log("             magnitude and compare runs on the same machine, not as a budget.");
   console.log("             A short session has few samples, so its p95 is close to its slowest");
   console.log("             frame -- usually the first one, which pays for the warm-up.");
+  console.log("             One pass over every recording is discarded before timing, and the");
+  console.log("             recording order rotates between passes, so no row owns the cold path.");
   console.log(`scope:       ${recordings} recordings, ${runs} pass(es) each, median per column`);
   console.log("");
 }
@@ -317,15 +320,38 @@ function printMethod(runs, recordings) {
 async function main(runs) {
   const { createEventMerger } = await loadMergeModule();
   const recordings = readAllRecordings();
+  const names = [...recordings.keys()];
 
   printMethod(runs, recordings.size);
+
+  // One discarded pass over every recording. The first pass pays for JIT
+  // compilation, lazily linked modules and page faults; charging that to
+  // whichever recording happens to run first made that row look expensive for
+  // reasons that have nothing to do with the merge.
+  for (const frames of recordings.values()) {
+    measureRecording(createEventMerger, frames);
+  }
+
+  /** @type {Map<string, object[]>} */
+  const passes = new Map(names.map((name) => [name, []]));
+
+  // Rotate the order between passes. A fixed order lets the first recording in
+  // every pass warm whatever the warm-up pass missed, and lets a drifting
+  // machine (thermal, background load) favour one end of the table.
+  for (let run = 0; run < runs; run += 1) {
+    for (let index = 0; index < names.length; index += 1) {
+      const name = names[(index + run) % names.length];
+
+      passes.get(name).push(measureRecording(createEventMerger, recordings.get(name)));
+    }
+  }
 
   const rows = [];
   let totalFrames = 0;
   let totalChanges = 0;
 
-  for (const [name, frames] of recordings) {
-    const measured = measureWithRuns(createEventMerger, frames, runs);
+  for (const name of names) {
+    const measured = combinePasses(passes.get(name));
 
     totalFrames += measured.frames;
     totalChanges += measured.changes;

@@ -297,6 +297,26 @@ describe("createOrderGate", () => {
     expect(gate.buffered()).toBe(1);
   });
 
+  it("forgets which numbers were handled when the numbering restarts", () => {
+    const gate = createOrderGate<string>();
+
+    for (let seq = 1; seq <= 5; seq += 1) {
+      gate.accept(seq, `old-${seq}`);
+    }
+
+    gate.reset();
+    gate.accept(3, "new-3");
+    gate.accept(4, "new-4");
+
+    // 2 was delivered under the old numbering and has not been seen since the
+    // reset. If the handled set survived, this would be a repeat; it is a frame
+    // from the previous generation and is dropped as late instead.
+    const stale = gate.accept(2, "old-2");
+
+    expect(stale.late).toBe(true);
+    expect(stale.duplicate).toBe(false);
+  });
+
   it("adopts the first number after a reset as the new base", () => {
     const gate = createOrderGate<string>();
 

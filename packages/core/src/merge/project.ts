@@ -72,9 +72,14 @@ const USAGE_FIELDS = [
   ["cost_cache_write_usd", "costCacheWriteUsd"],
 ] as const;
 
-/** A usage frame that reported no number the snapshot can hold. */
+/**
+ * A usage frame that reported no number the snapshot can hold.
+ *
+ * `{}` is deliberately distinct from `null`: it says "a report arrived but
+ * named no usable number", while `null` says "no report arrived". A consumer
+ * that folds the two together shows a zero where the cost is simply unknown.
+ */
 const EMPTY_USAGE: UsageSnapshot = Object.freeze({});
-
 /**
  * Copy the usage numbers a delta carries, and only those.
  *

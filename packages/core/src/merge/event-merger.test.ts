@@ -36,6 +36,23 @@ function frame(
   };
 }
 
+/** One sequenced frame from a named conversation. */
+function frameIn(
+  conversationId: string,
+  seq: number,
+  raw: Record<string, unknown>,
+): EngineEventFrame {
+  return {
+    type: String(raw["type"] ?? "stream_delta"),
+    raw,
+    at: 1_000 + seq,
+    envelope: {
+      event_seq: seq,
+      runtime: { agent_id: "agent-a", conversation_id: conversationId },
+    },
+  };
+}
+
 /** One delta of an assistant message. */
 function delta(seqId: number, text: string, id = "m-1", runId = "r-1"): Record<string, unknown> {
   return {
@@ -91,6 +108,22 @@ describe("createEventMerger delivery", () => {
       "he",
       "llo",
     ]);
+  });
+
+  it("delivers an unordered frame to subscribers, not only to the caller", () => {
+    const merger = createEventMerger({ agentId: "agent-a" });
+    const seen: string[] = [];
+
+    merger.subscribe((change) => seen.push(change.kind));
+
+    const returned = merger.ingest({
+      type: "memory_updated",
+      raw: { type: "memory_updated" },
+      at: 1,
+    });
+
+    expect(kinds(returned)).toEqual(["passthrough"]);
+    expect(seen).toEqual(["passthrough"]);
   });
 
   it("refuses a repeated event number and counts it", () => {
@@ -212,6 +245,31 @@ describe("createEventMerger turn lifecycle", () => {
     expect(stop.authorAgentId).toBe("agent-sub");
   });
 
+  it("closes only the message of the conversation whose turn ended", () => {
+    const merger = createEventMerger({ agentId: "agent-a" });
+
+    merger.ingest(frameIn("conv-1", 1, delta(1, "one", "m-1")));
+    merger.ingest(frameIn("conv-2", 2, delta(1, "two", "m-2")));
+
+    const changes = merger.ingest(frameIn("conv-1", 3, finished()));
+
+    expect(kinds(changes)).toEqual(["message.complete", "turn.finished"]);
+    expect(changes[0]?.kind === "message.complete" && changes[0].messageId).toBe("m-1");
+  });
+
+  it("counts a message whose assembly entry was evicted before its turn ended", () => {
+    const merger = createEventMerger({ agentId: "agent-a", limits: { assembling: 1 } });
+
+    merger.ingest(frame(1, delta(1, "a", "m-a")));
+    merger.ingest(frame(2, delta(1, "b", "m-b")));
+
+    const changes = merger.ingest(frame(3, finished()));
+
+    expect(kinds(changes)).toEqual(["message.complete", "turn.finished"]);
+    expect(changes[0]?.kind === "message.complete" && changes[0].messageId).toBe("m-b");
+    expect(merger.stats().incompleteMessages).toBe(1);
+  });
+
   it("pauses on requires_approval instead of closing the message", () => {
     const merger = createEventMerger({ agentId: "agent-a" });
 
@@ -288,6 +346,18 @@ describe("createEventMerger pass-through branches", () => {
       type: "terminal_output",
       raw: { type: "terminal_output", terminal_id: "t-1", data: "hi" },
       at: 1,
+    });
+
+    expect(merger.stats().terminalDropped).toBe(1);
+  });
+
+  it("counts a terminal output with no payload as dropped", () => {
+    const merger = createEventMerger({ agentId: "agent-a", onFrame: () => {} });
+
+    merger.ingest({
+      type: "terminal_output",
+      raw: { type: "terminal_output", terminal_id: "t-1", data: "" },
+      at: 2,
     });
 
     expect(merger.stats().terminalDropped).toBe(1);

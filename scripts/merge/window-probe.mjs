@@ -532,6 +532,8 @@ async function main(runs) {
   let firstMaxUs = 0;
   let deferredTotal = 0;
   let termCallsOk = true;
+  /** Measured transport calls per window for the terminal burst. */
+  const termCalls = [];
 
   for (const windowMs of WINDOWS_MS) {
     const bursts = [];
@@ -559,6 +561,8 @@ async function main(runs) {
     const firstCalls = firstPasses.map((pass) => pass.calls);
 
     const term = await termPass(bridge, windowMs);
+
+    termCalls.push(term.calls);
 
     if (term.calls !== TERM_FRAMES) {
       termCallsOk = false;
@@ -602,9 +606,13 @@ async function main(runs) {
   const deltaRow = protocol.FRAME_TYPES["delta.message"];
   const termRow = protocol.FRAME_TYPES["term.output"];
 
+  const termCallSummary = termCalls.every((count) => count === termCalls[0])
+    ? String(termCalls[0])
+    : termCalls.join("/");
+
   console.log("");
   console.log(
-    `term.output: ${TERM_FRAMES} frames -> ${TERM_FRAMES} calls at every window; ` +
+    `term.output: ${TERM_FRAMES} frames -> ${termCallSummary} calls across the swept windows; ` +
       `${termCallsOk ? "PASS" : "FAIL"} (never coalesced, regardless of windowMs)`,
   );
   console.log(

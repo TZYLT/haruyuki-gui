@@ -53,12 +53,19 @@ describe("stream healing", () => {
 
     expect(merger.watermark()).toBe(47);
 
-    // 32 numbers below the watermark that were never delivered: the fallback
-    // pulls the watermark back instead of dropping the stream forever.
-    for (let seq = 1; seq <= 32; seq += 1) {
+    // 31 numbers below the watermark that were never delivered: the fallback
+    // lets one more arrive and then pulls the watermark back instead of
+    // dropping the stream forever.
+    for (let seq = 1; seq <= 31; seq += 1) {
       merger.ingest(frame(seq, delta(seq + 2, "x")));
     }
 
+    const healed = merger.ingest(frame(32, delta(34, "x")));
+
+    // Healing means the triggering frame is delivered, not merely counted: the
+    // watermark moves to it and its text reaches the caller.
+    expect(healed.some((change) => change.kind === "message.delta")).toBe(true);
+    expect(merger.watermark()).toBe(32);
     expect(merger.stats().rebaselines).toBe(1);
     expect(merger.stats().lastRebaselineAt).not.toBeNull();
   });

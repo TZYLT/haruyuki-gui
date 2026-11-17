@@ -177,6 +177,30 @@ describe("createAssembler", () => {
     });
   });
 
+  it("restarts a message that had only non-text parts so far", () => {
+    const assembler = createAssembler();
+
+    // A run can start with a tool call and no text yet. The message is still
+    // past piece one, so an unseen piece one is the engine starting over; a
+    // text-only restart check would swallow the new run as an old piece.
+    assembler.push(input({ runSeq: 2, parts: [{ type: "tool_call", id: "call-1" }] }));
+
+    const restarted = assembler.push(input({ runSeq: 1, parts: [textPart("Hello")] }));
+
+    expect(restarted?.reset).toBe(true);
+    expect(restarted?.text).toBe("Hello");
+  });
+
+  it("does not restart a one-piece message when that piece is repeated", () => {
+    const assembler = createAssembler();
+
+    assembler.push(input({ runSeq: 1, parts: [textPart("only")] }));
+
+    // The same piece again is a repeat, not a restart; clearing here would
+    // erase the single line the user is already reading.
+    expect(assembler.push(input({ runSeq: 1, parts: [textPart("only")] }))).toBeNull();
+  });
+
   it("clears the incomplete mark when the message restarts", () => {
     const assembler = createAssembler();
 
