@@ -241,7 +241,7 @@ function start() {
     });
     const seconds = (performance.now() - started) / 1000;
 
-    printSummary(results, seconds);
+    printSummary(results, seconds, options.root);
     printHooksHint(options.root);
 
     process.exitCode = results.every((result) => result.passed) ? 0 : 1;
@@ -853,12 +853,17 @@ function formatSeconds(seconds) {
  * @param {number} seconds Total wall time.
  * @returns {void}
  */
-function printSummary(results, seconds) {
+function printSummary(results, seconds, root) {
   const failed = results.filter((result) => !result.passed);
   const skipped = results.filter((result) => result.skipped === true);
   const duration = `${seconds.toFixed(1)}s`;
 
   printLine();
+
+  // The tree this ran in, on the line people paste. Two checkouts of the same
+  // commit can disagree, so "green" without a location is a fact about an unknown
+  // directory.
+  printLine(`verify: root ${root}`);
 
   if (failed.length === 0) {
     printLine(`verify: ${results.length}/${results.length} segments passed in ${duration}`);
