@@ -293,7 +293,12 @@ export function createEventMerger(options: EventMergerOptions): EventMerger {
       }
 
       if (classified.kind === "stop") {
-        closeMessages(facts, facts.at, out);
+        // `requires_approval` pauses the turn: the tool call is waiting for a
+        // person, and the assistant message may still grow after the approval.
+        // Closing it here would make the continuation look like a new message.
+        if (classified.stopReason !== "requires_approval") {
+          closeMessages(facts, facts.at, out);
+        }
 
         out.push({
           authorAgentId: facts.authorAgentId,

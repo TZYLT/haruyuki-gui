@@ -212,6 +212,29 @@ describe("createEventMerger turn lifecycle", () => {
     expect(stop.authorAgentId).toBe("agent-sub");
   });
 
+  it("pauses on requires_approval instead of closing the message", () => {
+    const merger = createEventMerger({ agentId: "agent-a" });
+
+    merger.ingest(frame(1, delta(1, "before")));
+    const paused = merger.ingest(
+      frame(2, {
+        type: "stream_delta",
+        delta: {
+          message_type: "stop_reason",
+          run_id: "r-1",
+          stop_reason: "requires_approval",
+        },
+      }),
+    );
+
+    expect(kinds(paused)).toEqual(["turn.stopped"]);
+
+    // The answer keeps growing after the approval, so the message stays open.
+    const after = merger.ingest(frame(3, delta(2, " after")));
+
+    expect(kinds(after)).toEqual(["message.delta"]);
+  });
+
   it("announces a restart before the first piece of the new run", () => {
     const merger = createEventMerger({ agentId: "agent-a" });
 
