@@ -115,6 +115,7 @@ export function AppFrame(props: AppFrameProps): ReactElement {
   const compactRef = useRef(false);
   const saveRef = useRef(props.onLayoutChange);
   const maximizedGroup = useRef<string | null>(null);
+  const lastMainGroup = useRef<string | null>(null);
   const temporary = useRef(new Set<string>());
   saveRef.current = props.onLayoutChange;
   const [compact, setCompact] = useState(false);
@@ -252,8 +253,16 @@ export function AppFrame(props: AppFrameProps): ReactElement {
       title: definition === undefined ? pageId : t(definition.titleKey),
       params: { pageId, ...(params ?? {}) },
     };
+    const remembered =
+      lastMainGroup.current === null ? undefined : api.getGroup(lastMainGroup.current);
     const host =
-      side === null ? (compactRef.current ? mainGroup(api) : undefined) : sideGroup(api, side);
+      side !== null
+        ? sideGroup(api, side)
+        : target === "focused" && remembered !== undefined
+          ? remembered
+          : compactRef.current
+            ? mainGroup(api)
+            : undefined;
 
     if (host !== undefined) {
       api.addPanel({
@@ -384,8 +393,15 @@ export function AppFrame(props: AppFrameProps): ReactElement {
     // In compact mode the maximised group has to follow the active tab, or the
     // user would switch to a tab that is not on screen.
     if (typeof event.api.onDidActivePanelChange === "function") {
-      event.api.onDidActivePanelChange(() => {
+      event.api.onDidActivePanelChange((change) => {
         if (compactRef.current) applyCompact(event.api);
+        const panel = change.panel;
+        const active = pageIdOfPanel(panel);
+
+        if (panel !== undefined && props.registry.get(active)?.zone === "main") {
+          lastMainGroup.current = panel.group?.id ?? null;
+        }
+
         setActivePageId(pageIdOfPanel(event.api.activePanel));
       });
     }
