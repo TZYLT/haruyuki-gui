@@ -141,9 +141,16 @@ function step(label, body) {
  * @param {NodeJS.ProcessEnv} [env]
  */
 function run(command, args, cwd, env) {
+  // On Windows `pnpm` is `pnpm.cmd`, a batch file, and Node refuses to spawn it
+  // without a shell (ENOENT, not EACCES). The repository already solves this in
+  // scripts/lib/verify-command.mjs, so the same rule is reused rather than
+  // re-derived: only a real `.exe` may be spawned directly.
+  const shell = process.platform === "win32" && !/\.exe$/i.test(command);
+
   return spawnSync(command, args, {
     cwd,
     encoding: "utf8",
+    shell,
     // `ELECTRON_RUN_AS_NODE` is set globally on the verification machine and
     // would make the Electron binary behave as plain Node for every child
     // process, including the packaged app. Strip it rather than inherit it.
@@ -231,6 +238,21 @@ async function roundOne(options) {
   } else if (!existsSync(path.join(ENGINE_ARTIFACT, "package", "haruyuki.js"))) {
     process.stderr.write(`--skip-fetch given but ${ENGINE_ARTIFACT} has no package\n`);
     return 2;
+  }
+
+  // electron@45 has no postinstall; the binary downloads on first require().
+  // lock.mjs spawns electron.exe to read process.versions, so a fresh worktree
+  // has no dist/ until something requires it. Doing it here keeps the promise
+  // one command: nobody has to remember a fourth script.
+  //
+  // Skip when dist/ is already populated: the download is 234 MB and the
+  // common case is a tree that has been installed once already.
+  const electronDist = path.join(REPO_ROOT, "node_modules", "electron", "dist");
+  if (!existsSync(electronDist)) {
+    const okElectron = step("electron binary", () =>
+      run(process.execPath, ["node_modules/electron/install.js"], REPO_ROOT),
+    );
+    if (!okElectron) return 2;
   }
 
   const deref = await dereferenceTree(path.join(ENGINE_ARTIFACT, "package"));
