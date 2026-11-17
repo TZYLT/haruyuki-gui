@@ -90,6 +90,11 @@ describe("recovery sequence", () => {
 
     expect(first.staleCount).toBe(1);
     expect(second.staleCount).toBe(1);
+    // The count alone would pass for a run that also re-appended the page: a
+    // second recovery must not carry a counter over from the first.
+    expect(second.appended).toBe(first.appended);
+    expect(second.pages).toBe(first.pages);
+    expect(second.nextBefore).toBe(first.nextBefore);
   });
 
   it("reports nothing stale when everything came back", async () => {

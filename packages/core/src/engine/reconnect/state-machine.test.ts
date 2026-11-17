@@ -75,6 +75,20 @@ describe("reconnect state machine", () => {
     expect(machine.canSend()).toBe(false);
   });
 
+  it("uses the shipped window when the caller names none", () => {
+    // The tests above pass the window in, so they would stay green if the default
+    // changed to a minute. This one does not name it: it pins the value the
+    // product actually ships.
+    const { clock, machine } = build();
+
+    machine.transportClosed("reset");
+    clock.advance(11_999);
+    expect(machine.status().state).toBe("reconnecting");
+
+    clock.advance(1);
+    expect(machine.status().state).toBe("degraded");
+  });
+
   it("comes back to ready when the recovery finishes, and stops the timer", () => {
     const { clock, machine } = build();
 

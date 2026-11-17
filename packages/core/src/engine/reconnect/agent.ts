@@ -89,11 +89,22 @@ export interface ReconnectAgent {
   dispose(): void;
 }
 
-const idOf = (message: unknown): string => {
-  if (typeof message === "object" && message !== null && "id" in message) {
-    return String((message as { id: unknown }).id);
-  }
-  return "";
+/**
+ * The id of a replayed message, or `null` when the value is not one.
+ *
+ * A replayed page is `unknown[]`, and the only thing that makes an id usable for
+ * continuity is that it is a string. Coercing instead would manufacture ids the
+ * engine never sent: `{ id: null }` would become the literal `"null"` and could
+ * then be matched against a cursor, and `{ id: 42 }` would become `"42"` and could
+ * never match the string cursor it should have matched. A message with no usable
+ * id is left out of the continuity comparison rather than counted as a position.
+ */
+const idOf = (message: unknown): string | null => {
+  if (typeof message !== "object" || message === null) return null;
+  if (!("id" in message)) return null;
+
+  const id = message.id;
+  return typeof id === "string" && id !== "" ? id : null;
 };
 
 export function createReconnectAgent(options: ReconnectAgentOptions): ReconnectAgent {
@@ -122,7 +133,7 @@ export function createReconnectAgent(options: ReconnectAgentOptions): ReconnectA
   const page: ReconnectAgentOptions["page"] = async (args) => {
     const result = await options.page(args);
     if (result.ok && Array.isArray(result.page.messages)) {
-      oldestPageIds = result.page.messages.map(idOf);
+      oldestPageIds = result.page.messages.map(idOf).filter((id): id is string => id !== null);
     }
     return result;
   };

@@ -268,6 +268,36 @@ describe("assembled reconnect layer", () => {
     expect(agent.status().state).toBe("ready");
   });
 
+  it("keeps one channel's trouble out of another's state", () => {
+    // Three sockets, one of them dying: the other two must not move. Attribution
+    // was tested where the close is observed; this asserts it where the state
+    // lives.
+    const watch = createTransportWatch();
+    const clock = fakeClock();
+    const buildOne = (agentId: string) =>
+      createReconnectAgent({
+        agentId,
+        clock,
+        watch,
+        sync: async () => ({ approvals: [], states: ALL_STATES }),
+        page: async () => pageOf(["m1"]),
+        sink: recordingSink().sink,
+      });
+
+    const a = buildOne("agent-a");
+    const b = buildOne("agent-b");
+    const socketA = fakeTransport();
+    const socketB = fakeTransport();
+    watch.attach("agent-a", socketA.transport);
+    watch.attach("agent-b", socketB.transport);
+
+    socketA.drop();
+
+    expect(a.status().state).not.toBe("ready");
+    expect(b.status().state).toBe("ready");
+    expect(b.canSend()).toBe(true);
+  });
+
   it("stops listening to the watch after dispose", () => {
     const { agent, watch } = build();
     const socket = fakeTransport();
