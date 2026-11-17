@@ -449,6 +449,13 @@ function buildSegments(options) {
       command: () => gate("scripts/check-frame.mjs", options.verbose),
     },
     {
+      //  the shell must not name a capability. The one sample page is
+      // allowlisted by file, and every literal it names is checked against
+      // capabilities.json so the exception cannot hide a misspelling.
+      label: "capabilities",
+      command: () => gate("scripts/check-capabilities.mjs", options.verbose),
+    },
+    {
       // One run, two outputs: the test verdicts and the coverage numbers.
       //
       // These were two segments, and the second re-ran every test under

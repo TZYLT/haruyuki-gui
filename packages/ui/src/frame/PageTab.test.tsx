@@ -47,7 +47,11 @@ function view(overrides: Record<string, unknown> = {}) {
   render(
     <LocaleProvider locale="en">
       <FrameHostProvider value={host}>
-        <PageTab {...({ api, params: { pageId: "conversation" } } as never)} />
+        <PageTab
+          {...({ api, params: { pageId: "conversation" } } as unknown as Parameters<
+            typeof PageTab
+          >[0])}
+        />
       </FrameHostProvider>
     </LocaleProvider>,
   );

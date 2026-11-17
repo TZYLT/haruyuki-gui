@@ -67,6 +67,7 @@ const SEGMENT_SCRIPTS = [
   "check-fixtures.mjs",
   "check-frame.mjs",
   "check-forbidden-literals.mjs",
+  "check-capabilities.mjs",
 ];
 
 /** Mirrors GATE_SELF_TEST_FILES in verify.mjs; see the note above. */
@@ -106,6 +107,7 @@ const DEFAULT_LABELS = [
   "i18n",
   "fixtures",
   "frame",
+  "capabilities",
   "test",
   // The size gate sits last in the default set, not behind --full. It used to be
   // a --full segment and therefore never ran before a landing, which is how a
@@ -396,7 +398,7 @@ afterAll(() => {
 });
 
 describe("verify aggregator: segment assembly", () => {
-  it("runs the eight default segments in the documented order", () => {
+  it("runs the nine default segments in the documented order", () => {
     const tree = makeStubTree();
     const run = cachedRun("default", () => runVerify(tree));
 

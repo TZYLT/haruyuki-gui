@@ -405,6 +405,32 @@ describe("AppFrame", () => {
     expect(onLayoutChange).not.toHaveBeenCalled();
   });
 
+  it("opens the same page twice with distinct tab ids", async () => {
+    render(
+      <LocaleProvider locale="en">
+        <AppFrame registry={registry()} doc={doc} revision={1} onLayoutChange={vi.fn()} />
+      </LocaleProvider>,
+    );
+
+    resize(1000);
+    await waitFor(() => expect(state.maximize).toHaveBeenCalledTimes(1));
+
+    for (let index = 0; index < 2; index += 1) {
+      fireEvent.click(screen.getByRole("button", { name: "Side rail" }));
+      fireEvent.click(screen.getByRole("button", { name: "Files" }));
+    }
+
+    expect(state.addPanel).toHaveBeenCalledTimes(2);
+
+    const ids = state.addPanel.mock.calls.map((call) => (call[0] as { id: string }).id);
+    const params = state.addPanel.mock.calls.map(
+      (call) => (call[0] as { params: { pageId: string } }).params.pageId,
+    );
+
+    expect(new Set(ids).size).toBe(2);
+    expect(params).toEqual(["tree", "tree"]);
+  });
+
   it("keeps a closed unknown tab in the document as hidden", () => {
     const onLayoutChange = vi.fn();
     const unknownDoc = docWithMainTabs([
