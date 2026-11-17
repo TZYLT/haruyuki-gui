@@ -167,10 +167,20 @@ import { runGate } from "./lib/gate-cli.mjs";
 export const MATRIX = {
   protocol: { core: "forbid", ui: "forbid", desktop: "forbid", vscode: "forbid" },
   core: { protocol: "allow", ui: "forbid", desktop: "forbid", vscode: "forbid" },
-  ui: { protocol: "type", core: "type", desktop: "forbid", vscode: "forbid" },
+  ui: { protocol: "type+const", core: "type", desktop: "forbid", vscode: "forbid" },
   desktop: { protocol: "allow", core: "allow", ui: "allow", vscode: "forbid" },
   vscode: { protocol: "allow", core: "allow", ui: "allow", desktop: "forbid" },
 };
+
+/**
+ * Constant exports each restricted cell may value-import.
+ *
+ * Enumerated on purpose: "protocol's constants" would silently widen the day
+ * someone adds a third table, while this list has to be edited deliberately.
+ */
+export const CONST_EXPORTS_BY_EDGE = new Map([
+  ["ui->protocol", new Set(["CAPABILITY_META", "CAPABILITY_TO_WIRE"])],
+]);
 
 /**
  * Rule id per restricted matrix edge. Exactly one entry per `forbid`/`type`
@@ -185,7 +195,7 @@ export const RULE_BY_EDGE = new Map([
   ["core->desktop", { rule: "R10", permission: "forbid" }],
   ["core->vscode", { rule: "R10", permission: "forbid" }],
   ["ui->core", { rule: "R6", permission: "type" }],
-  ["ui->protocol", { rule: "R7", permission: "type" }],
+  ["ui->protocol", { rule: "R7", permission: "type+const" }],
   ["ui->desktop", { rule: "R11", permission: "forbid" }],
   ["ui->vscode", { rule: "R11", permission: "forbid" }],
   ["desktop->vscode", { rule: "R8", permission: "forbid" }],
@@ -211,8 +221,11 @@ const RULE_MESSAGES = new Map([
   [
     "R7",
     (from, to) =>
-      `R7: @haruyuki/${from} may only type-import @haruyuki/${to}; ` +
-      "add 'import type' or move the shared runtime value out of @haruyuki/protocol",
+      `R7: @haruyuki/${from} may only type-import @haruyuki/${to}, or value-import its ` +
+      "allow-listed constant tables (" +
+      [...(CONST_EXPORTS_BY_EDGE.get(`${from}->${to}`) ?? [])].join(", ") +
+      "); " +
+      "add 'import type', import one of those constants, or move the shared runtime value out of @haruyuki/protocol",
   ],
   [
     "R8",
@@ -359,6 +372,7 @@ function collectViolations({ root, flags }) {
           sourceLine: lineOf(sourceFile, specifier.position),
           specifier: specifier.text,
           typeOnly: specifier.typeOnly,
+          names: specifier.names,
         }),
       );
     }
@@ -386,7 +400,16 @@ function collectViolations({ root, flags }) {
  * }} input
  * @returns {import("./lib/gate-cli.mjs").Violation[]}
  */
-function checkSpecifier({ scanRoot, file, sourcePackage, stats, sourceLine, specifier, typeOnly }) {
+function checkSpecifier({
+  scanRoot,
+  file,
+  sourcePackage,
+  stats,
+  sourceLine,
+  specifier,
+  typeOnly,
+  names,
+}) {
   const violation = (rule, message) => [{ file, line: sourceLine, rule, message }];
 
   // Test files may construct the real renderer-side collaborators.
@@ -439,7 +462,13 @@ function checkSpecifier({ scanRoot, file, sourcePackage, stats, sourceLine, spec
 
     countInternalEdge(stats, typeOnly);
 
-    const edge = evaluateEdge(sourcePackage, targetPackage, typeOnly, testExempt(targetPackage));
+    const edge = evaluateEdge(
+      sourcePackage,
+      targetPackage,
+      typeOnly,
+      testExempt(targetPackage),
+      names,
+    );
 
     return edge === null ? [] : violation(edge.rule, edge.message);
   }
@@ -460,7 +489,13 @@ function checkSpecifier({ scanRoot, file, sourcePackage, stats, sourceLine, spec
 
     countInternalEdge(stats, typeOnly);
 
-    const edge = evaluateEdge(sourcePackage, namedPackage, typeOnly, testExempt(namedPackage));
+    const edge = evaluateEdge(
+      sourcePackage,
+      namedPackage,
+      typeOnly,
+      testExempt(namedPackage),
+      names,
+    );
 
     return edge === null ? [] : violation(edge.rule, edge.message);
   }
@@ -509,7 +544,25 @@ function countInternalEdge(stats, typeOnly) {
  * @param {boolean} typeOnly Whether the import is type-only.
  * @returns {{ rule: string, message: string } | null} Null when allowed.
  */
-function evaluateEdge(from, to, typeOnly, exempt = false) {
+/**
+ * Whether a value import names only allow-listed constants of one edge.
+ *
+ * @param {string} key Matrix edge key, e.g. "ui->protocol".
+ * @param {readonly string[] | null} names Imported binding names, or null when
+ *   the form cannot be enumerated (namespace, default, require, dynamic).
+ * @returns {boolean}
+ */
+function isAllowListedConstImport(key, names) {
+  const allowed = CONST_EXPORTS_BY_EDGE.get(key);
+
+  if (allowed === undefined || names === null || names.length === 0) {
+    return false;
+  }
+
+  return names.every((name) => allowed.has(name));
+}
+
+function evaluateEdge(from, to, typeOnly, exempt = false, names = null) {
   if (from === null || from === to) {
     return null;
   }
@@ -527,7 +580,19 @@ function evaluateEdge(from, to, typeOnly, exempt = false) {
     throw new Error(`no matrix cell for ${from} -> ${to}`);
   }
 
-  if (permission === "allow" || (permission === "type" && typeOnly) || exempt) {
+  if (
+    permission === "allow" ||
+    (typeOnly && (permission === "type" || permission === "type+const")) ||
+    exempt
+  ) {
+    return null;
+  }
+
+  // "type+const": type imports plus the enumerated constant tables of the
+  // target package. A namespace/default import or a call form carries no names,
+  // so it is treated as a plain value import and stays red: the whitelist must
+  // be an enumeration, not "anything const-ish".
+  if (permission === "type+const" && isAllowListedConstImport(`${from}->${to}`, names)) {
     return null;
   }
 
@@ -689,232 +754,8 @@ export function assertMatrixIsConsistent(
  * @param {string} text File contents.
  * @returns {import("typescript").SourceFile}
  */
-function parseModule(file, text) {
-  return ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, scriptKindOf(file));
-}
+import { collectSpecifiers, parseModule } from "./lib/import-specifiers.mjs";
 
-/**
- * @param {string} file
- * @returns {import("typescript").ScriptKind}
- */
-function scriptKindOf(file) {
-  const extension = path.posix.extname(file).toLowerCase();
-
-  if (extension === ".tsx") {
-    return ts.ScriptKind.TSX;
-  }
-
-  if (extension === ".ts" || extension === ".mts" || extension === ".cts") {
-    return ts.ScriptKind.TS;
-  }
-
-  return ts.ScriptKind.JS;
-}
-
-/**
- * Collect every dependency-bearing node of one module.
- *
- * @param {import("typescript").SourceFile} sourceFile
- * @returns {Array<{ text: string, position: number, typeOnly: boolean }>}
- */
-function collectSpecifiers(sourceFile) {
-  /** @type {Array<{ text: string, position: number, typeOnly: boolean }>} */
-  const found = [];
-
-  /**
-   * @param {import("typescript").Node} node A string-literal-like node.
-   * @param {boolean} typeOnly
-   * @returns {void}
-   */
-  const record = (node, typeOnly) => {
-    const literal = /** @type {import("typescript").StringLiteralLike} */ (node);
-
-    found.push({ text: literal.text, position: literal.getStart(sourceFile), typeOnly });
-  };
-
-  /** @param {import("typescript").Node} node */
-  const visit = (node) => {
-    if (ts.isImportDeclaration(node) && ts.isStringLiteralLike(node.moduleSpecifier)) {
-      record(node.moduleSpecifier, isTypeOnlyImportClause(node.importClause));
-    } else if (
-      ts.isExportDeclaration(node) &&
-      node.moduleSpecifier !== undefined &&
-      ts.isStringLiteralLike(node.moduleSpecifier)
-    ) {
-      record(node.moduleSpecifier, isTypeOnlyExportDeclaration(node));
-    } else if (
-      ts.isImportEqualsDeclaration(node) &&
-      ts.isExternalModuleReference(node.moduleReference) &&
-      node.moduleReference.expression !== undefined &&
-      ts.isStringLiteralLike(node.moduleReference.expression)
-    ) {
-      record(node.moduleReference.expression, node.isTypeOnly === true);
-    } else if (ts.isCallExpression(node) && isRequireCall(node)) {
-      record(node.arguments[0], false);
-    } else if (ts.isCallExpression(node) && isModuleRequireCall(node)) {
-      record(node.arguments[0], false);
-    } else if (ts.isCallExpression(node) && isCreateRequireResultCall(node)) {
-      record(node.arguments[0], false);
-    } else if (ts.isCallExpression(node) && isDynamicImportCall(node)) {
-      record(node.arguments[0], false);
-    } else if (ts.isImportTypeNode(node) && isLiteralImportTypeNode(node)) {
-      // A type position exists only in type space, so every ImportTypeNode is
-      // type-only: accepted on the type-allowed edges, rejected on R1/R8-R11.
-      record(/** @type {import("typescript").LiteralTypeNode} */ (node.argument).literal, true);
-    }
-
-    ts.forEachChild(node, visit);
-  };
-
-  ts.forEachChild(sourceFile, visit);
-
-  return found;
-}
-
-/**
- * Type-only test for an import clause.
- *
- * `import type X from "m"` and `import type * as ns from "m"` are type-only.
- * `import { type X } from "m"` is type-only; `import { type X, y } from "m"` and
- * an empty clause both mean the module is executed, so they are value imports.
- *
- * @param {import("typescript").ImportClause | undefined} clause
- * @returns {boolean}
- */
-function isTypeOnlyImportClause(clause) {
-  if (clause === undefined) {
-    // Side-effect import: `import "m"` runs the module.
-    return false;
-  }
-
-  if (clause.isTypeOnly === true || clause.phaseModifier === ts.SyntaxKind.TypeKeyword) {
-    return true;
-  }
-
-  const bindings = clause.namedBindings;
-
-  if (bindings === undefined || !ts.isNamedImports(bindings)) {
-    return false;
-  }
-
-  return bindings.elements.length > 0 && bindings.elements.every((element) => element.isTypeOnly);
-}
-
-/**
- * Type-only test for `export ... from`.
- *
- * @param {import("typescript").ExportDeclaration} node
- * @returns {boolean}
- */
-function isTypeOnlyExportDeclaration(node) {
-  if (node.isTypeOnly === true) {
-    return true;
-  }
-
-  const clause = node.exportClause;
-
-  if (clause === undefined || !ts.isNamedExports(clause)) {
-    // `export * from` and `export * as ns from` re-export values.
-    return false;
-  }
-
-  return clause.elements.length > 0 && clause.elements.every((element) => element.isTypeOnly);
-}
-
-/**
- * `require("m")`, with exactly one string-literal-like argument.
- *
- * @param {import("typescript").CallExpression} node
- * @returns {boolean}
- */
-function isRequireCall(node) {
-  return (
-    ts.isIdentifier(node.expression) &&
-    node.expression.text === "require" &&
-    node.arguments.length === 1 &&
-    ts.isStringLiteralLike(node.arguments[0])
-  );
-}
-
-/**
- * `import("m")` in expression position, with a static string argument.
- *
- * @param {import("typescript").CallExpression} node
- * @returns {boolean}
- */
-function isDynamicImportCall(node) {
-  return (
-    node.expression.kind === ts.SyntaxKind.ImportKeyword &&
-    node.arguments.length === 1 &&
-    ts.isStringLiteralLike(node.arguments[0])
-  );
-}
-
-/**
- * `module.require("m")` with a static string argument. A non-literal argument
- * cannot be decided statically and is not collected (documented blind spot, the
- * same one `require(variable)` has).
- *
- * @param {import("typescript").CallExpression} node
- * @returns {boolean}
- */
-function isModuleRequireCall(node) {
-  return (
-    ts.isPropertyAccessExpression(node.expression) &&
-    node.expression.name.text === "require" &&
-    ts.isIdentifier(node.expression.expression) &&
-    node.expression.expression.text === "module" &&
-    node.arguments.length === 1 &&
-    ts.isStringLiteralLike(node.arguments[0])
-  );
-}
-
-/**
- * `createRequire(<anything>)("<literal>")` with a static string argument.
- *
- * The `createRequire(...)` call itself is not a dependency (its argument is
- * usually `import.meta.url`); the module load is the *returned* function call,
- * which this test recognizes. Both the bare `createRequire` and a
- * `<namespace>.createRequire` callee are accepted.
- *
- * @param {import("typescript").CallExpression} node
- * @returns {boolean}
- */
-function isCreateRequireResultCall(node) {
-  if (node.arguments.length !== 1 || !ts.isStringLiteralLike(node.arguments[0])) {
-    return false;
-  }
-
-  if (!ts.isCallExpression(node.expression)) {
-    return false;
-  }
-
-  const factory = node.expression.expression;
-
-  if (ts.isIdentifier(factory)) {
-    return factory.text === "createRequire";
-  }
-
-  return ts.isPropertyAccessExpression(factory) && factory.name.text === "createRequire";
-}
-
-/**
- * `import("<literal>")` in a type position, including `typeof import("...")`.
- *
- * @param {import("typescript").ImportTypeNode} node
- * @returns {boolean}
- */
-function isLiteralImportTypeNode(node) {
-  return ts.isLiteralTypeNode(node.argument) && ts.isStringLiteralLike(node.argument.literal);
-}
-
-/**
- * The path form of one specifier: a path specifier as written, a `file:` URL
- * converted with `fileURLToPath`, or none for a bare/external specifier.
- *
- * @param {string} specifier
- * @returns {{ kind: "path", value: string } | { kind: "none" } | { kind: "file-url-error", message: string }}
- */
 function pathFormOf(specifier) {
   if (isPathSpecifier(specifier)) {
     return { kind: "path", value: specifier };

@@ -159,9 +159,13 @@ const RED_CASES: Array<[string, string]> = [
   // module, so it is a value import.
   ["red-r6-ui-core-mixed", "R6"],
   ["red-r6-ui-core-side-effect", "R6"],
-  // R7: ui may only type-import protocol.
+  // R7: ui may only type-import protocol, or value-import its allow-listed
+  // constant tables. A namespace import cannot be enumerated and a mixed
+  // clause names something outside the list, so both stay red.
   ["red-r7-ui-protocol-value", "R7"],
   ["red-r7-ui-protocol-relative", "R7"],
+  ["red-r7-ui-protocol-namespace", "R7"],
+  ["red-r7-ui-protocol-partial", "R7"],
   // R8 / R9: the app shells must not import each other.
   ["red-r8-desktop-vscode", "R8"],
   ["red-r9-vscode-desktop", "R9"],
@@ -184,6 +188,8 @@ const GREEN_CASES: string[] = [
   "green-r1-protocol-clean",
   // A-2 / R6 / R7: every import-type form must pass.
   "green-r6-r7-type-only-forms",
+  // R7 relaxation: the enumerated constant tables of protocol are importable.
+  "green-r7-ui-protocol-const",
   // A-2 / R6 / R7: a type-position import() and typeof import() are type-only.
   "green-r6-r7-type-position",
   // A-2: core->protocol, ui->{protocol,core} type-only, desktop/vscode->all.
