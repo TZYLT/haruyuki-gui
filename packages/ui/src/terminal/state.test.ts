@@ -1,19 +1,28 @@
 /**
  * Tests for the terminal panel's phase machine.
  *
- * The interesting half of the decision table is the part that must change
- * nothing. Six phases against five signal kinds is thirty cells, and nine of them
- * move the panel, so twenty-one are inert. Two of the kinds carry a
- * discriminator -- readiness is true or false, an exit carries the engine's error
- * text or does not -- and split that way it is forty-two rows of which eleven
- * move and thirty-one are inert. The inert rows would be silent bugs if they were
- * written as conditions inside a component, so each row gets a case below, named
- * after the concrete thing it would break. There are twenty-nine cases rather
- * than thirty-one because in `idle` and `disconnected` the exit's error text is
- * never read: whatever that frame carries, the phase ignores it, and one case per
- * phase shows that. Every ignored case also asserts object
- * identity, because "ignored" in a component means "no re-render", and a freshly
- * built but equal state would repaint on every duplicate frame.
+ * The interesting half of the decision table is the part that must change nothing,
+ * and it is counted two ways, which must not be added together:
+ *
+ *   - by cell: six phases against five signal kinds is thirty cells; nine move the
+ *     panel and twenty-one are inert;
+ *   - by row, after splitting the two kinds that carry a discriminator (readiness
+ *     is true or false, an exit carries the engine's error text or does not): it
+ *     is forty-two rows, of which eleven move and thirty-one are inert.
+ *
+ * Twenty-one plus nine is thirty, and thirty-one plus eleven is forty-two; the two
+ * pairs describe the same table at two resolutions. Quoting a count from one
+ * resolution against a count from the other would produce a sum that looks
+ * checked and is meaningless.
+ *
+ * The inert rows would be silent bugs if they were written as conditions inside a
+ * component, so each row gets a case below, named after the concrete thing it
+ * would break. There are twenty-nine cases rather than thirty-one because in
+ * `idle` and `disconnected` the exit's error text is never read: whatever that
+ * frame carries, the phase ignores it, and one case per phase shows that. Every
+ * ignored case also asserts object identity, because "ignored" in a component
+ * means "no re-render", and a freshly built but equal state would repaint on every
+ * duplicate frame.
  *
  * What this file deliberately does not test
  *   The message catalogue. A phase is not a sentence; the panel chooses the text.

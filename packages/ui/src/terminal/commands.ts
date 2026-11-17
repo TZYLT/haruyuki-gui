@@ -154,7 +154,7 @@ async function hand(sender: CommandSender, command: TerminalCommand): Promise<Co
 
     if (answer.ok) return { kind: "sent" };
 
-    return { kind: "failed", reason: "channel-unavailable" };
+    return classify(answer.reason, answer.detail);
   } catch (thrown) {
     // A sender that throws instead of answering did not carry the command: the
     // write itself failed, or the connection settled under the call. That is a
