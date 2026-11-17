@@ -57,5 +57,21 @@ export default defineConfig({
     ],
     testTimeout: 30000,
     hookTimeout: 30000,
+    /**
+     * Cap the worker pool.
+     *
+     * Vitest defaults to one worker per CPU core. On a 24-core machine that is
+     * 24 parallel workers, and several of these test files spawn child
+     * processes of their own (the Electron probes, the acceptance demos) or hold
+     * a socket. The result is thread counts far above the core count: the box
+     * stops responding to the mouse while `verify` runs, and the wall-clock
+     * readings become meaningless because everything is contended.
+     *
+     * Twelve keeps the suite parallel enough to stay fast while leaving the
+     * machine usable. Override with `VITEST_MAX_WORKERS` when a slower run is
+     * acceptable, or raise it on a machine with fewer cores.
+     */
+    maxWorkers: process.env.VITEST_MAX_WORKERS ?? 12,
+    minWorkers: 1,
   },
 });
