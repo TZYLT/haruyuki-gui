@@ -725,6 +725,10 @@ function runSegment(segment, index, total, options) {
 
     if (run.spawnFailed) {
       printLine(`${OUTPUT_INDENT}the command could not be started at all`);
+    } else if (run.output.trim() === "") {
+      printLine(
+        `${OUTPUT_INDENT}the segment exited with status ${String(run.status)} and printed nothing`,
+      );
     }
 
     if (segment.warning !== undefined) {
