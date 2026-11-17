@@ -52,6 +52,16 @@ export interface ReconnectAgentOptions {
   readonly sink?: ReplaySink;
   /** Where our local conversation stopped, for continuity checking. */
   readonly cursor?: () => string | null;
+  /**
+   * Where the reader was when the connection dropped: `true` means the newest
+   * message was in view.
+   *
+   * The view owns scroll position, so it owns this answer; the layer only carries
+   * it across the gap. When nobody answers, the reader is kept with the newest
+   * message, because a jump to the newest is recoverable and a jump away from it
+   * looks like the conversation was replaced.
+   */
+  readonly scrollIntent?: () => boolean;
   readonly degradedAfterMs?: number;
   readonly maxPages?: number;
   readonly pageLimit?: number;
@@ -169,6 +179,9 @@ export function createReconnectAgent(options: ReconnectAgentOptions): ReconnectA
         loop: null,
       };
       options.sink.states(agentId, states);
+      // The scroll intent travels with the replay, not before it: the consumer
+      // needs the new content first and the instruction second.
+      options.sink.focus(agentId, { stickToBottom: options.scrollIntent?.() ?? true });
       options.sink.end(agentId, { appended: outcome.appended, hasMore: outcome.hasMore });
     }
 

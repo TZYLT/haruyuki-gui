@@ -58,14 +58,18 @@ function fakeTransport() {
 /** Records every call a consumer would receive, so "no clear" is checkable. */
 function recordingSink() {
   const calls: string[] = [];
+  const intents: boolean[] = [];
   const sink: ReplaySink = {
     begin: () => calls.push("begin"),
     messages: () => calls.push("messages"),
     states: () => calls.push("states"),
-    focus: () => calls.push("focus"),
+    focus: (_agent, intent) => {
+      calls.push("focus");
+      intents.push(intent.stickToBottom);
+    },
     end: () => calls.push("end"),
   };
-  return { sink, calls };
+  return { sink, calls, intents };
 }
 
 const pageOf = (
@@ -109,7 +113,7 @@ function build(
   agent.onStep((_agent, step) => steps.push(step));
   agent.onGap((_agent, gap) => gaps.push(gap));
 
-  return { agent, clock, watch, steps, gaps, sinkCalls: recorder.calls };
+  return { agent, clock, watch, steps, gaps, sinkCalls: recorder.calls, intents: recorder.intents };
 }
 
 describe("assembled reconnect layer", () => {
@@ -148,7 +152,7 @@ describe("assembled reconnect layer", () => {
 
     await agent.recover();
 
-    expect(sinkCalls).toEqual(["begin", "states", "end"]);
+    expect(sinkCalls).toEqual(["begin", "states", "focus", "end"]);
   });
 
   it("goes degraded when the window runs out, refuses to send, and recovers on retry", async () => {
@@ -170,6 +174,40 @@ describe("assembled reconnect layer", () => {
     agent.retry();
     expect(agent.status().state).toBe("reconnecting");
     expect(agent.status().cause).toBe("user-retry");
+  });
+
+  it("carries the reader's scroll position across the gap, and says where it came from", async () => {
+    // The view owns scroll position, so the value must be the one it supplied --
+    // not a constant this layer decided on.
+    const atBottom = build({ cursor: () => "m2", pages: () => pageOf(["m3", "m2"]) });
+    atBottom.agent.dispose();
+    const withIntent = createReconnectAgent({
+      agentId: "agent-a",
+      clock: atBottom.clock,
+      watch: atBottom.watch,
+      sync: async () => ({ approvals: [], states: ALL_STATES }),
+      page: async () => pageOf(["m3", "m2"]),
+      sink: {
+        begin: () => {},
+        messages: () => {},
+        states: () => {},
+        focus: (_agent, intent) => atBottom.intents.push(intent.stickToBottom),
+        end: () => {},
+      },
+      scrollIntent: () => false,
+    });
+
+    await withIntent.recover();
+
+    expect(atBottom.intents).toEqual([false]);
+  });
+
+  it("keeps the reader with the newest message when nobody says where they were", async () => {
+    const { agent, intents } = build();
+
+    await agent.recover();
+
+    expect(intents).toEqual([true]);
   });
 
   it("reports a gap when the page does not contain where we stopped", async () => {
