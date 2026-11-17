@@ -53,6 +53,7 @@ import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
 
 import { fail, toPosix } from "./lib/gate-cli.mjs";
+import { runCommand } from "./lib/verify-command.mjs";
 import { hooksInstalled } from "./lib/verify-hooks.mjs";
 
 /** Indentation of every replayed child line and hint line. */
@@ -696,19 +697,32 @@ function runSegment(segment, index, total, options) {
   }
 
   const started = performance.now();
-  const run = runCommand(segment.command(), options);
+  const run = runSegmentCommand(segment.command(), options);
   const seconds = (performance.now() - started) / 1000;
   const passed = segment.evaluate === undefined ? run.status === 0 : segment.evaluate(run);
+
+  // A segment that never started is not a red test, and the two need different
+  // repairs: one is a broken gate, the other is broken code. Before this split
+  // they were indistinguishable -- the failure of a 0.02 s run that executed
+  // nothing looked exactly like a suite of failing tests.
+  const couldNotRun =
+    !passed && run.timedOut !== true && (run.spawnFailed === true || run.output.trim() === "");
 
   if (options.verbose || !passed) {
     replay(run.output);
   }
 
-  const verdict = passed ? "PASS" : "FAIL";
+  const verdict = passed ? "PASS" : couldNotRun ? "COULD-NOT-RUN" : "FAIL";
 
   printLine(`[${position}/${total}] ${segment.label}  ${verdict}  ${formatSeconds(seconds)}`);
 
   if (!passed) {
+    if (couldNotRun) {
+      printLine(
+        `${OUTPUT_INDENT}this segment could not run: nothing was exercised, so nothing is proven about the code`,
+      );
+    }
+
     if (run.spawnFailed) {
       printLine(`${OUTPUT_INDENT}the command could not be started at all`);
     }
@@ -727,66 +741,30 @@ function runSegment(segment, index, total, options) {
     }
   }
 
-  return { label: segment.label, passed };
+  return couldNotRun
+    ? { label: segment.label, passed, couldNotRun: true }
+    : { label: segment.label, passed };
 }
 
 /**
+ * Run one segment's command with this run's settings.
+ *
+ * The launch itself lives in `lib/verify-command.mjs`. It needs both start forms
+ * -- a shell takes one quoted line, a direct launch takes an argv array -- and the
+ * platform rules that decide which one applies, and this file is already the
+ * aggregator's largest.
+ *
  * @param {Command} command
  * @param {VerifyOptions} options
  * @returns {RunResult}
  */
-function runCommand(command, options) {
-  const result = spawnSync(toShellLine(command), {
-    shell: true,
+function runSegmentCommand(command, options) {
+  return runCommand(command, {
     cwd: options.root,
-    encoding: "utf8",
+    timeoutMs: SEGMENT_TIMEOUT_MS,
     maxBuffer: MAX_BUFFER_BYTES,
-    windowsHide: true,
-    // A hung segment must fail, not hang the run. `spawnSync` reports the kill as
-    // an `error` with code `ETIMEDOUT`, which the existing `spawnFailed` channel
-    // already turns into a failure line.
-    timeout: SEGMENT_TIMEOUT_MS,
-    env: { ...process.env, NO_COLOR: "1", FORCE_COLOR: "0" },
+    normalize: normalizeOutput,
   });
-
-  const timedOut = result.error?.code === "ETIMEDOUT";
-
-  return {
-    status: timedOut ? null : result.status,
-    output: normalizeOutput(
-      `${result.stdout ?? ""}${result.stderr ?? ""}${
-        timedOut ? `\nsegment exceeded ${SEGMENT_TIMEOUT_MS} ms and was killed` : ""
-      }`,
-    ),
-    spawnFailed: result.error !== undefined,
-  };
-}
-
-/**
- * @param {Command} command
- * @returns {string} One quoted command line, ready for `shell: true`.
- */
-function toShellLine(command) {
-  return [command.command, ...command.args].map(quoteArgument).join(" ");
-}
-
-/**
- * Quote one argument for the shell. Plain tokens (the common case here) are
- * left alone so the replayed command line stays readable.
- *
- * @param {string} argument
- * @returns {string}
- */
-function quoteArgument(argument) {
-  if (/^[A-Za-z0-9_./:=@+-]+$/.test(argument)) {
-    return argument;
-  }
-
-  if (process.platform === "win32") {
-    return `"${argument.replaceAll('"', '\\"')}"`;
-  }
-
-  return `'${argument.replaceAll("'", "'\\''")}'`;
 }
 
 /**
@@ -889,8 +867,28 @@ function printSummary(results, seconds) {
     return;
   }
 
-  printLine(`verify: ${failed.length} of ${results.length} segments FAILED in ${duration}`);
-  printLine(`  FAILED: ${failed.map((result) => result.label).join(", ")}`);
+  const couldNotRun = failed.filter((result) => result.couldNotRun === true);
+  const red = failed.filter((result) => result.couldNotRun !== true);
+
+  // All-red keeps the old wording: a caller reading logs greps for FAILED, and
+  // "did not pass" is reserved for a run that includes a segment that never
+  // started, where calling it a failure would blame the wrong thing.
+  printLine(
+    couldNotRun.length === 0
+      ? `verify: ${failed.length} of ${results.length} segments FAILED in ${duration}`
+      : `verify: ${failed.length} of ${results.length} segments did not pass in ${duration}`,
+  );
+
+  if (red.length > 0) {
+    printLine(`  FAILED: ${red.map((result) => result.label).join(", ")}`);
+  }
+
+  if (couldNotRun.length > 0) {
+    printLine(
+      `  COULD NOT RUN: ${couldNotRun.map((result) => result.label).join(", ")} ` +
+        `(the gate did not start, so the code under it was never exercised)`,
+    );
+  }
 }
 
 /**
