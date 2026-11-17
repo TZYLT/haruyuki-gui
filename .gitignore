@@ -82,3 +82,10 @@ _acceptance/
 /apps/desktop/runtime/
 /apps/desktop/runtime-lock.json
 /apps/desktop/release/
+
+# --- handoff: development accident dumps, read then deleted ---------------
+# Written by a leader when it stops, read by whoever takes over, deleted after.
+# Deliberately not versioned: these are transcripts of what went wrong during
+# development, not project artifacts. A committed handoff would outlive the
+# accident it describes and read like documentation.
+/handoff/
