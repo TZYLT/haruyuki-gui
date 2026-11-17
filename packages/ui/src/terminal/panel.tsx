@@ -505,7 +505,11 @@ export function TerminalPanel({
     // so a remount builds a new one. Creating it here rather than in state keeps
     // the imperative object out of React's snapshot: a re-render must not build
     // a second terminal.
-    const host = createTerminalHost({ css });
+    // 3000 is the product's choice (the document weighs memory against history and
+    // lands mid-range), measured by the probe at worst 21 ms and 0.57 MB against a
+    // 300 ms / 4 MB budget. The library default stays at 1000 because a consumer
+    // that did not choose should not pay three times the scrollback.
+    const host = createTerminalHost({ css, scrollback: 3000 });
     hostRef.current = host;
     host.open(container);
 

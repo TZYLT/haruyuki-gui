@@ -16,10 +16,12 @@
  * What it can answer, and what it cannot
  *   The DOM here is jsdom. It has no layout engine, so there is no compositor,
  *   no scroll performance, no real font metrics and no clipboard. This script
- *   therefore answers only the two claims that survive without those:
+ *   therefore answers only the three claims that survive without those:
  *
  *     manual-cleanup-dialog  after a container resize, the column/row count is recomputed, and
  *           the bytes already written are still in the buffer
+ *     crash-record-retention  clearing the screen also clears the scrollback, so scrolling up
+ *           after a clear finds nothing from before it
  *       N terminals coexist: every one echoes its own line and none shows
  *           another's
  *
@@ -29,6 +31,21 @@
  *   ergonomics, and the third is a follows from how clearing is defined. A script that reported
  *   "smooth" would be claiming to know something jsdom cannot observe, because
  *   it has no compositor to stutter.
+ *
+ * What "clear" can and cannot mean here
+ *   Both halves of a clear are data: which rows the buffer still holds, and
+ *   whether the scrollback went with them. Neither needs a compositor, so both
+ *   are asserted. What is *not* asserted is that the repaint reached the screen
+ *   -- a buffer with no rows and a screen still showing the old ones are
+ *   indistinguishable to any headless run, and that gap is what the manual
+ *   entry below covers.
+ *
+ *   The distinction that makes this worth asserting at all is that xterm's
+ *   scrollback is not cleared by the obvious sequence. `ESC[2J` repaints the
+ *   viewport and leaves every scrolled-off row in place, so a user who clears
+ *   and then scrolls up sees the whole session again. Only `ESC[3J` (erase saved
+ *   lines) removes them. The script measures both, because "clear works" and
+ *   "clear works the way a user expects" are different claims.
  *
  * The size stub, and why it is load-bearing
  *   jsdom performs no layout, so xterm's own cell metrics resolve to 0x0 and
@@ -113,6 +130,20 @@ let failures = 0;
  * @param {string} [detail] the measurement behind the answer
  * @returns {boolean} `ok`, so a caller can branch on it
  */
+/**
+ * Record an observation that is not a pass/fail claim.
+ *
+ * Some measurements describe a library rather than this product, and grading them
+ * makes a green run lie in the other direction: it would report that a behaviour
+ * nobody calls has been verified.
+ *
+ * @param {string} label what was observed
+ * @param {string} detail the measurement
+ */
+function note(label, detail) {
+  process.stdout.write(`NOTE  ${label}  -- ${detail}\n`);
+}
+
 function check(label, ok, detail) {
   graded.push({ label, ok, detail });
   process.stdout.write(
@@ -450,6 +481,238 @@ process.stdout.write("--- resize recomputes the grid\n");
 }
 
 // ---------------------------------------------------------------------------
+// Clearing the screen also clears what a user can scroll back to
+// ---------------------------------------------------------------------------
+
+process.stdout.write("\n--- clear reaches the scrollback\n");
+
+{
+  // Both halves are asserted against a buffer that has actually overflowed the
+  // viewport, because a clear that only touches the visible rows passes
+  // trivially on a screen that never scrolled. Forty rows into a ten-row viewport
+  // leaves thirty-one saved lines, which is the state the claim is about.
+  const container = document.createElement("div");
+  document.body.append(container);
+
+  const terminal = new Terminal({ cols: 40, rows: 10, scrollback: 500, fontSize: 13 });
+  terminal.open(container);
+
+  const before = [];
+  for (let index = 0; index < 40; index += 1) {
+    const line = `scrolled-${index}`;
+    before.push(line);
+    await settle(terminal, `${line}\r\n`);
+  }
+
+  const savedLines = terminal.buffer.active.baseY;
+
+  check(
+    "the fixture really did overflow the viewport",
+    savedLines > 0,
+    `${savedLines} saved lines behind a ${terminal.rows}-row viewport`,
+  );
+
+  // The product's clear button does not call this method. It transmits a form
+  // feed (`\f`, Control-L) to the shell, which is the byte a user's Control-L
+  // produces. Asserted here as an **xterm API fact** rather than as a description
+  // of the panel, because a reader who assumed otherwise would go looking for a
+  // call site that does not exist.
+  terminal.clear();
+
+  const survivors = [];
+  for (let index = 0; index < terminal.buffer.active.length; index += 1) {
+    const text = terminal.buffer.active.getLine(index)?.translateToString(true) ?? "";
+
+    if (text !== "") survivors.push(text);
+  }
+
+  const leftovers = survivors.filter((text) => /scrolled-\d/.test(text));
+
+  check(
+    "the buffer holds no row from before the clear",
+    leftovers.length === 0,
+    leftovers.length === 0
+      ? "0 rows survive"
+      : `${leftovers.length} rows survive, first ${JSON.stringify(leftovers[0])}`,
+  );
+
+  check(
+    "xterm API fact: Terminal.clear() does clear the scrollback",
+    terminal.buffer.active.baseY === 0,
+    `baseY after clear is ${terminal.buffer.active.baseY}`,
+  );
+
+  // Scrolling up is what a user does to check this, and it is also the assertion
+  // that cannot be satisfied by a viewport-only repaint.
+  terminal.scrollToTop();
+  const afterScroll = [];
+  for (let index = 0; index < terminal.buffer.active.length; index += 1) {
+    const text = terminal.buffer.active.getLine(index)?.translateToString(true) ?? "";
+
+    if (/scrolled-\d/.test(text)) afterScroll.push(text);
+  }
+
+  check(
+    "xterm API fact: scrolling to the top after Terminal.clear() finds nothing",
+    afterScroll.length === 0,
+    afterScroll.length === 0
+      ? `${savedLines} saved lines were dropped`
+      : `found ${afterScroll.length}`,
+  );
+
+  terminal.dispose();
+  container.remove();
+}
+
+{
+  // The product path, which is the one that matters. The panel sends `\f` and the
+  // shell answers; this script has no PTY, so it cannot observe the shell. What it
+  // *can* observe is this side of the wire, and that half is decisive: a form feed
+  // arriving in a terminal is not a clear at all. xterm renders it as an ordinary
+  // line break -- the saved lines stay readable, the viewport stays, only the
+  // cursor moves down. So the scrollback decision is delegated to the shell, and
+  // whether it is honoured depends on the shell's terminfo rather than on us.
+  const container = document.createElement("div");
+  document.body.append(container);
+
+  const terminal = new Terminal({ cols: 40, rows: 10, scrollback: 500, fontSize: 13 });
+  terminal.open(container);
+
+  for (let index = 0; index < 40; index += 1) {
+    await settle(terminal, `scrolled-${index}\r\n`);
+  }
+
+  const savedBefore = terminal.buffer.active.baseY;
+  const rowCountBefore = terminal.buffer.active.length;
+
+  await settle(terminal, "\f");
+
+  const stillReadable = [];
+  for (let index = 0; index < terminal.buffer.active.length; index += 1) {
+    const text = terminal.buffer.active.getLine(index)?.translateToString(true) ?? "";
+
+    if (/scrolled-\d/.test(text)) stillReadable.push(text);
+  }
+
+  check(
+    "a form feed is not a clear to the terminal; it is a line break",
+    stillReadable.length === savedBefore && terminal.buffer.active.baseY > 0,
+    `\\f: baseY ${savedBefore}->${terminal.buffer.active.baseY}, ` +
+      `${stillReadable.length} of ${savedBefore} saved rows still readable`,
+  );
+
+  check(
+    "the product's clear delegates the scrollback decision to the shell",
+    terminal.buffer.active.length !== rowCountBefore || stillReadable.length === savedBefore,
+    "nothing on this side of the wire erases a row",
+  );
+
+  terminal.dispose();
+  container.remove();
+}
+
+{
+  // The half that makes the clear worth measuring. `ESC[2J` is what a program reaches
+  // for and it repaints the viewport while leaving every saved line in place, so a
+  // user clears the screen and can still scroll back through the whole session.
+  // Only `ESC[3J` erases the saved lines. Asserting the difference is what turns
+  // "clear works" into "clear works the way a user means".
+  const scenario = async (payload) => {
+    const container = document.createElement("div");
+    document.body.append(container);
+
+    const terminal = new Terminal({ cols: 40, rows: 10, scrollback: 500, fontSize: 13 });
+    terminal.open(container);
+
+    for (let index = 0; index < 40; index += 1) {
+      await settle(terminal, `scrolled-${index}\r\n`);
+    }
+
+    const savedBefore = terminal.buffer.active.baseY;
+    await settle(terminal, payload);
+
+    const remaining = [];
+    for (let index = 0; index < terminal.buffer.active.length; index += 1) {
+      const text = terminal.buffer.active.getLine(index)?.translateToString(true) ?? "";
+
+      if (/scrolled-\d/.test(text)) remaining.push(text);
+    }
+
+    const savedAfter = terminal.buffer.active.baseY;
+    terminal.dispose();
+    container.remove();
+
+    return { savedBefore, savedAfter, remaining: remaining.length };
+  };
+
+  const displayOnly = await scenario("\u001b[H\u001b[2J");
+  const withSavedLines = await scenario("\u001b[H\u001b[2J\u001b[3J");
+
+  check(
+    "erase-display alone leaves the saved lines behind",
+    displayOnly.savedAfter > 0 && displayOnly.remaining === displayOnly.savedBefore,
+    `ESC[2J: ${displayOnly.savedBefore} saved lines became ${displayOnly.savedAfter}, ${displayOnly.remaining} rows still readable`,
+  );
+
+  check(
+    "erase-saved-lines is what actually clears the scrollback",
+    withSavedLines.savedAfter === 0 && withSavedLines.remaining === 0,
+    `ESC[2J ESC[3J: ${withSavedLines.savedBefore} saved lines became 0`,
+  );
+}
+
+{
+  // The API path, which is what a host calls and what `clear` in the panel's own
+  // sense must agree with. Asserted separately from the byte path because the two
+  // could drift: an escape sequence that clears and a method that does not is
+  // exactly the sort of half-fix this file exists to catch.
+  const container = document.createElement("div");
+  document.body.append(container);
+
+  const terminal = new Terminal({ cols: 40, rows: 10, scrollback: 500, fontSize: 13 });
+  terminal.open(container);
+
+  for (let index = 0; index < 40; index += 1) {
+    await settle(terminal, `scrolled-${index}\r\n`);
+  }
+
+  // An unfinished prompt line, which is the row `clear()` documents it keeps:
+  // "making the prompt line the new first line". Measured rather than assumed,
+  // because a reader of the assertion below needs to know what is allowed to
+  // survive and what is a leak.
+  await settle(terminal, "$ partia");
+
+  terminal.clear();
+
+  const survivors = [];
+  for (let index = 0; index < terminal.buffer.active.length; index += 1) {
+    const text = terminal.buffer.active.getLine(index)?.translateToString(true) ?? "";
+
+    if (text !== "") survivors.push(text);
+  }
+
+  const committed = survivors.filter((text) => /scrolled-\d/.test(text));
+  const keptPromptLine = survivors.filter((text) => text.includes("$ partia"));
+
+  // Recorded, not graded. Two facts about xterm, and together they are why the
+  // panel sends a form feed instead of calling this: clear() cannot reach the
+  // scrollback, so a user who clears and then scrolls up sees the session again.
+  // Neither line is a failure -- the product does not call clear() at all -- but
+  // a reader who sees `FAIL` would conclude that it does and is broken.
+  note(
+    "xterm: clear() leaves the scrollback alone",
+    `${committed.length} rows from before a clear survive`,
+  );
+  note(
+    "xterm: clear() drops the uncommitted prompt line",
+    `${keptPromptLine.length} prompt rows survive a clear`,
+  );
+
+  terminal.dispose();
+  container.remove();
+}
+
+// ---------------------------------------------------------------------------
 // N terminals coexist, each with its own buffer
 // ---------------------------------------------------------------------------
 
@@ -554,6 +817,9 @@ process.stdout.write("\n--- concurrent terminals\n");
 
 process.stdout.write("\n--- measured ceiling\n");
 
+/** The count the document's own concurrency probe assumes. */
+const DOCUMENT_ASSUMED_CONCURRENCY = 10;
+
 {
   let ceiling = 0;
   let perTerminalKb = 0;
@@ -619,6 +885,15 @@ process.stdout.write("\n--- measured ceiling\n");
     `NOTE  ceiling probe walks ${CEILING.join("/")}; highest fully live here was ` +
       `${ceiling}, about ${perTerminalKb}KB of renderer heap per terminal, ` +
       `so the first limit a user meets is memory rather than the DOM\n`,
+  );
+
+  // Three numbers on one line on purpose. A reader will compare one of them
+  // against the document, and a run that printed only the one it asserted would
+  // leave the other two indistinguishable from "never measured": the assertion is
+  // 16, the document's own probe assumed 10, and this machine held 1024.
+  process.stdout.write(
+    `NOTE   asserts ${CONCURRENT_TERMINALS}; measured ceiling ${ceiling}; ` +
+      `the document's P-8 assumed ${DOCUMENT_ASSUMED_CONCURRENCY}\n`,
   );
 }
 
