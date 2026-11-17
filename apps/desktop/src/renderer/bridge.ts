@@ -15,6 +15,7 @@
 
 import { createFrameEntry, type FrameEntry } from "@haruyuki/ui";
 import type { TerminalNotice, TerminalRouter } from "@haruyuki/ui";
+import type { LayoutSnapshotBody } from "@haruyuki/protocol";
 
 import { BRIDGE_CHANNEL_NAMES } from "../shared/bridge.js";
 
@@ -39,6 +40,8 @@ export interface RendererBridgeOptions {
   onNotice: (notice: TerminalNotice) => void;
   /** Optional; called when the ready invoke rejects. */
   onReadyError?: (error: unknown) => void;
+  /** Optional; the bulk `layout.snapshot` route, once the frame host is mounted. */
+  onLayoutSnapshot?: (body: LayoutSnapshotBody) => void;
 }
 
 /** The renderer's bridge handle. */
@@ -71,6 +74,14 @@ export function createRendererBridge(options: RendererBridgeOptions): RendererBr
       if (disposed || typeof payload !== "string") return;
 
       entry.handle(payload);
+
+      if (channel === BRIDGE_CHANNEL_NAMES.frameDeliver.bulk) {
+        const layout = readLayoutBody(payload);
+
+        if (layout !== null) options.onLayoutSnapshot?.(layout);
+
+        return;
+      }
 
       if (channel !== BRIDGE_CHANNEL_NAMES.frameDeliver.stream) return;
 
@@ -178,6 +189,38 @@ function readTermBody(payload: string): {
       bytes: readNumber(record["bytes"]),
       final: record["final"] === true,
     };
+  } catch {
+    return null;
+  }
+}
+
+/** Read a `layout.snapshot` body out of one serialized frame; null for every other type. */
+function readLayoutBody(payload: string): LayoutSnapshotBody | null {
+  try {
+    const parsed: unknown = JSON.parse(payload);
+
+    if (typeof parsed !== "object" || parsed === null) return null;
+
+    const frame = parsed as Record<string, unknown>;
+
+    if (frame["t"] !== "layout.snapshot") return null;
+
+    const body = frame["body"];
+
+    if (typeof body !== "object" || body === null) return null;
+
+    const record = body as Record<string, unknown>;
+    const items = record["items"];
+    const revision = record["revision"];
+
+    if (!Array.isArray(items) || items.length !== 1) return null;
+    if (typeof revision !== "number" || !Number.isFinite(revision)) return null;
+
+    const doc = items[0];
+
+    if (typeof doc !== "object" || doc === null) return null;
+
+    return body as unknown as LayoutSnapshotBody;
   } catch {
     return null;
   }
