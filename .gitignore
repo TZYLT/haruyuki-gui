@@ -87,9 +87,10 @@ _acceptance/
 /apps/desktop/release/
 
 # --- handoff: development accident dumps, read then deleted ---------------
-# Written by a leader when it stops. Read and deleted by the operator - not by
-# master, and not by whoever takes over next. This is the owner's in-tray, not
-# a document that circulates: if it outlived the accident it describes it would
+# Not a scanning boundary: the file stays on disk for the reader. It just must
+# never outlive the incident it describes, or the next person trusts it.
+# Written by a leader when it stops; read and deleted by the operator, not by
+# whoever takes over next -- if it outlived the accident it describes it would
 # start reading like documentation, and the next person would trust it instead
 # of re-checking what it warns about.
 /handoff/
