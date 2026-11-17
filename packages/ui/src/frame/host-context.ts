@@ -20,6 +20,15 @@ export interface FrameHost {
   readonly layoutRevision: number;
   openPage(pageId: string, target?: OpenTarget): string;
   closeTab(tabId: string): void;
+  /**
+   * Close the tab *without deleting it from the layout document*.
+   *
+   * This is the path for a page this build cannot render (`59` section 4.4): the
+   * tab leaves the dock, the document keeps it with `hidden: true`, and a later
+   * build that registers the page shows it again. `closeTab` is the ordinary
+   * close, which really does drop the tab.
+   */
+  hideTab(tabId: string): void;
 }
 
 const CONTEXT = createContext<FrameHost | null>(null);

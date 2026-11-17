@@ -178,6 +178,16 @@ export const zhCN = {
   "page.topbar.aboutTitle": "关于 Haruyuki",
   "page.topbar.version": "版本 {version}",
 
+  "page.frame.sideRail.title": "侧轨",
+  "page.frame.sideRail.left": "左侧轨",
+  "page.frame.sideRail.right": "右侧轨",
+  "page.frame.sideRail.collapse": "折叠侧轨",
+  "page.frame.sideRail.expand": "展开侧轨",
+  "page.frame.sideRail.empty": "这一侧还没有页面。",
+  "page.frame.compact.back": "返回布局",
+  "page.frame.banner.hidden": "有 {count} 个标签已隐藏，页面可用后会重新显示。",
+  "page.frame.unknown.hide": "关闭（只是隐藏）",
+
   // ----------------------------------------------------------------- error
   "error.network.unreachable": "无法连接到服务",
   "error.unexpected": "发生了意外错误",

@@ -103,3 +103,153 @@
 .hz-topbar__menu button {
   text-align: left;
 }
+
+/* ---------------------------------------------------------------- notices -- */
+
+/* The frame's stack: notice bars above the dock, everything laid out by the
+   tokens below rather than by fixed heights, so a dismissed banner gives its
+   space back. */
+.hz-frame__stack {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+
+.hz-frame__banners {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: var(--ui-space-1, 4px);
+  padding: var(--ui-space-1, 4px) var(--ui-space-2, 8px);
+}
+
+.hz-banner__message {
+  margin: 0;
+}
+
+.hz-banner__actions {
+  display: flex;
+  gap: var(--ui-space-2, 8px);
+  margin-top: var(--ui-space-2, 8px);
+}
+
+/* ------------------------------------------------------------------ rails -- */
+
+/* A rail is the entry strip for one side: a column of the side's registered
+   pages plus the collapse toggle. Collapsing narrows it; it never changes the
+   dock, so no page is unloaded and no layout is written. */
+.hz-rail {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: var(--ui-space-1, 4px);
+  width: 160px;
+  min-height: 0;
+  padding: var(--ui-space-1, 4px);
+  overflow: hidden auto;
+}
+
+.hz-rail--collapsed {
+  width: 48px;
+}
+
+.hz-rail[data-side="right"] {
+  align-items: flex-end;
+}
+
+.hz-rail__toggle,
+.hz-rail__entry {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-space-2, 8px);
+  width: 100%;
+  min-width: 0;
+  padding: var(--ui-space-1, 4px);
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.hz-rail__toggle {
+  justify-content: center;
+}
+
+.hz-rail--collapsed .hz-rail__toggle svg {
+  transform: rotate(-90deg);
+}
+
+.hz-rail__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-space-1, 4px);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  width: 100%;
+}
+
+.hz-rail__label {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.hz-rail__entry[aria-current="page"] {
+  font-weight: 600;
+}
+
+.hz-rail__empty {
+  margin: 0;
+  padding: var(--ui-space-1, 4px);
+  color: var(--ui-color-neutral-2);
+  font-size: var(--ui-font-size-1, 12px);
+}
+
+/* ---------------------------------------------------------------- compact -- */
+
+/* The compact entry: one bar with the side-rail list and the way back. */
+.hz-compact-bar {
+  position: relative;
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--ui-space-1, 4px);
+  padding: var(--ui-space-1, 4px) var(--ui-space-2, 8px);
+}
+
+.hz-compact-bar__menu {
+  position: absolute;
+  top: 100%;
+  left: var(--ui-space-2, 8px);
+  z-index: 10;
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: var(--ui-space-2, 8px);
+  border: 1px solid var(--ui-color-neutral-3);
+  background-color: var(--ui-color-surface-1);
+}
+
+.hz-compact-pages {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-space-2, 8px);
+  min-width: 200px;
+}
+
+.hz-compact-pages__group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-space-1, 4px);
+}
+
+.hz-compact-pages__heading {
+  margin: 0;
+  color: var(--ui-color-neutral-2);
+  font-size: var(--ui-font-size-1, 12px);
+  font-weight: 500;
+}

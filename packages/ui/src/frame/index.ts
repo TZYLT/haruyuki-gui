@@ -14,9 +14,13 @@
 /** Identifies the frame layer in diagnostics. */
 export const FRAME_LAYER = "frame" as const;
 
-export { AppFrame } from "./AppFrame.js";
-export { TopBar } from "./TopBar.js";
+export { AppFrame, COMPACT_WIDTH } from "./AppFrame.js";
 export type { AppFrameProps } from "./AppFrame.js";
+export { Banner, BANNER_SCENE_TONE } from "./Banner.js";
+export type { BannerProps, BannerScene } from "./Banner.js";
+export { CompactSideRail, SideRail } from "./SideRail.js";
+export type { CompactSideRailProps, SideRailProps, SideRailSide } from "./SideRail.js";
+export { TopBar } from "./TopBar.js";
 export type { EditAction, TopBarProps } from "./TopBar.js";
 export { createActivityStore, badgeText } from "./activity.js";
 export type { ActivityState, ActivityStore } from "./activity.js";

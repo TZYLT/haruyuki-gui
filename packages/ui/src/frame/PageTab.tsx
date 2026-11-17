@@ -51,7 +51,10 @@ export function PageTab(props: IDockviewPanelHeaderProps<PagePanelParams>): Reac
           aria-label={t("page.frame.tab.close")}
           onClick={(event) => {
             event.stopPropagation();
-            props.api.close();
+            // A page this build does not know is hidden rather than dropped:
+            // the document keeps the tab so a later build can show it.
+            if (definition === undefined) host.hideTab(tabId);
+            else props.api.close();
           }}
         >
           ×

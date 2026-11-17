@@ -5,9 +5,15 @@
  * tab is inactive, so page state survives a switch. The page itself is chosen
  * from the registry here; an unknown id becomes the placeholder instead of a
  * thrown render, because a layout written by a newer build must still open.
+ *
+ * The error boundary retries by remounting the page: a page that threw during
+ * render usually threw from state that a plain re-render would reproduce, and
+ * the retry has to keep the same props (`59` section 4.6). Remounting is
+ * therefore expressed as a changing React key over the same element, not as a
+ * different element.
  */
 
-import { Component, type ErrorInfo, type ReactElement, type ReactNode } from "react";
+import { Component, Fragment, type ErrorInfo, type ReactElement, type ReactNode } from "react";
 import type { IDockviewPanelProps } from "dockview-react";
 
 import { ErrorState } from "../components/ErrorState.js";
@@ -21,10 +27,10 @@ export type PagePanelParams = { pageId: string };
 
 /** Catches a page render failure so the rest of the frame keeps working. */
 class PageBoundary extends Component<
-  { readonly children: ReactNode; readonly title: string; readonly onRetry: () => void },
-  { readonly failed: boolean }
+  { readonly children: ReactNode; readonly title: string },
+  { readonly failed: boolean; readonly attempt: number }
 > {
-  state = { failed: false };
+  state = { failed: false, attempt: 0 };
 
   static getDerivedStateFromError(): { failed: boolean } {
     return { failed: true };
@@ -39,11 +45,16 @@ class PageBoundary extends Component<
   render(): ReactNode {
     if (this.state.failed) {
       return (
-        <ErrorState title={this.props.title} onRetry={() => this.setState({ failed: false })} />
+        <ErrorState
+          title={this.props.title}
+          onRetry={() => this.setState((state) => ({ failed: false, attempt: state.attempt + 1 }))}
+        />
       );
     }
 
-    return this.props.children;
+    // The key only changes on retry, so an ordinary re-render keeps the page
+    // mounted; a retry remounts it with exactly the props it had.
+    return <Fragment key={this.state.attempt}>{this.props.children}</Fragment>;
   }
 }
 
@@ -57,7 +68,7 @@ export function PageHost(props: IDockviewPanelProps<PagePanelParams>): ReactElem
   const tabId = props.api.id;
 
   if (definition === undefined) {
-    return <UnknownPage pageId={pageId} onClose={() => props.api.close()} />;
+    return <UnknownPage pageId={pageId} onHide={() => host.hideTab(tabId)} />;
   }
 
   const pageParams: Record<string, unknown> = { ...params };
@@ -66,7 +77,7 @@ export function PageHost(props: IDockviewPanelProps<PagePanelParams>): ReactElem
   const Component = definition.component;
 
   return (
-    <PageBoundary title={t("page.frame.error.title")} onRetry={() => undefined}>
+    <PageBoundary title={t("page.frame.error.title")}>
       <Component
         instanceId={tabId}
         pageId={pageId}
@@ -77,7 +88,7 @@ export function PageHost(props: IDockviewPanelProps<PagePanelParams>): ReactElem
         layoutRevision={host.layoutRevision}
         setTitle={(title) => props.api.setTitle(title)}
         setActivity={(update) => host.activity.set(tabId, update)}
-        close={() => props.api.close()}
+        close={() => host.closeTab(tabId)}
         openPage={(next, _params, target) => host.openPage(next, target)}
       />
     </PageBoundary>
