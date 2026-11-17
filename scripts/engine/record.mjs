@@ -15,6 +15,27 @@
  * truncated fixture that looks like a complete one, and can never overwrite the
  * previous recording. SIGINT/SIGTERM/SIGBREAK remove the run root (and the
  * provider credentials copied into it) before exiting.
+ *
+ * ## The isolated home breaks git hooks, every time
+ *
+ * `--provider-auth` and the rest of the run live in a throwaway home
+ * (`HARUYUKI_HOME`), and a `runtime_start` that creates an agent initialises a
+ * git-backed memory repository inside it. That initialisation runs
+ * `git commit`, which runs `.git/hooks/pre-commit` -- and a hook file copied into
+ * a fresh temporary directory has no execute bit, so the whole `runtime_start`
+ * fails with `env: failed to run command '.git/hooks/pre-commit': Permission
+ * denied`. The message points at permissions; the cause is that a temp tree never
+ * carries the bit.
+ *
+ * It is not intermittent, so do not retry hoping for a different result. Point
+ * git at no hooks for the child:
+ *
+ * ```bash
+ * GIT_CONFIG_COUNT=1 \
+ *   GIT_CONFIG_KEY_0=core.hooksPath \
+ *   GIT_CONFIG_VALUE_0=_no_hooks_ \
+ *   node scripts/engine/record.mjs --scenario ... --send ...
+ * ```
  */
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";

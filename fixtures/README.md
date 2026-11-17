@@ -20,6 +20,13 @@ level are one corpus with published totals (frame counts and distinct types
 asserted by tests), and adding files beside them would silently invalidate those
 numbers.
 
+Inside `reconnect/`, `reconnect-approvals.jsonl` is **hand-written**, and its
+header says so (`clock: "synthetic"`, `origin: "hand-written"` with the reason).
+An approval is addressed to the **client** — the client supplies the tool being
+approved — and the recorder is a bare websocket client with no toolset, so the
+engine never asks it for permission. There is no recorder flag that changes that,
+because the missing piece is a role, not a setting.
+
 **Rule: the top level keeps exactly those seven.** A new recording goes into a
 subdirectory of its own. The gate walks subdirectories, so a nested recording is
 checked exactly like the rest; only the seven are the "corpus" whose totals other
