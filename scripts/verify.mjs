@@ -322,8 +322,8 @@ function assertSegmentFiles(options, segments) {
  * Every repository file one segment will read, as repo-relative posix paths.
  *
  * Two shapes exist today: a gate segment runs `process.execPath <script>`, and
- * a vitest segment passes test files after `exec vitest`. Anything else (a pnpm
- * workspace-wide command, a flag) contributes nothing.
+ * a vitest segment lists test files after the runner's own path. Anything else
+ * (a pnpm workspace-wide command, a flag) contributes nothing.
  *
  * @param {Segment} segment
  * @returns {string[]}
@@ -332,15 +332,19 @@ function segmentInputs(segment) {
   const { command, args } = segment.command();
   const inputs = [];
 
+  // A gate segment runs `process.execPath <script>`; only the script counts.
+  // The vitest segment now spawns the runner through `process.execPath` too, so
+  // the check above would otherwise claim the runner path as an input. The
+  // runner is a dependency, not a repository file, and the test paths follow it.
   if (command === process.execPath && args.length > 0 && !args[0].startsWith("-")) {
-    inputs.push(args[0]);
+    if (!TEST_FILE_PATTERN.test(args[0]) && !args[0].includes("vitest")) {
+      inputs.push(args[0]);
+    }
   }
 
-  if (args[0] === "exec" && args[1] === "vitest") {
-    for (const arg of args) {
-      if (TEST_FILE_PATTERN.test(arg)) {
-        inputs.push(arg);
-      }
+  for (const arg of args) {
+    if (TEST_FILE_PATTERN.test(arg)) {
+      inputs.push(arg);
     }
   }
 
@@ -540,12 +544,25 @@ function gate(relative, verbose) {
 /**
  * Build the vitest invocation for a set of test files.
  *
+ * The runner is reached through `process.execPath` rather than `pnpm exec`.
+ * On Windows `pnpm` resolves to `pnpm.cmd`, a batch file, and `cmd.exe` gives a
+ * single command line roughly 8 KiB. This segment passes one path per test file,
+ * so the argv grows with the suite: 144 files fits at about 6.5 K characters,
+ * and 167 does not. The failure is especially unhelpful -- `cmd.exe` writes
+ * "The command line is too long." to stderr and the reporter shows only a
+ * status code -- so the message looks like a wall of unreadable output rather
+ * than a length limit. Calling the runner directly skips the batch layer and
+ * the limit with it.
+ *
  * @param {string[]} files repo-relative test paths
  * @param {string[]} [extraArgs] additional vitest flags
  * @returns {{ command: string, args: string[] }}
  */
 function vitest(files, extraArgs = []) {
-  return { command: "pnpm", args: ["exec", "vitest", "run", ...files, ...extraArgs] };
+  // `options.root` is `process.cwd()` and this helper is called while building
+  // segments, before any segment runs, so the cwd is still the repository root.
+  const runner = path.join(process.cwd(), "node_modules", "vitest", "vitest.mjs");
+  return { command: process.execPath, args: [runner, "run", ...files, ...extraArgs] };
 }
 
 /**

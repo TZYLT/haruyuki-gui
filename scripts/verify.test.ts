@@ -155,6 +155,7 @@ function makeStubTree(
   mkdirSync(path.join(root, "scripts"), { recursive: true });
   writeFileSync(path.join(root, "package.json"), '{ "name": "stub-tree", "private": true }\n');
   writeFileSync(path.join(root, "node_modules", ".keep"), "");
+  writeFakeVitest(root);
 
   for (const name of SEGMENT_SCRIPTS) {
     if (!missing.has(`scripts/${name}`)) {
@@ -184,6 +185,35 @@ function makeStubTree(
   writeFakePnpm(bin);
 
   return { base, root, bin, logFile };
+}
+
+/**
+ * Write the fake vitest entry point the aggregator now spawns directly.
+ *
+ * The aggregator used to reach the runner through `pnpm exec vitest`, which let
+ * the stub `pnpm` on PATH record and short-circuit it. It now spawns
+ * `node <root>/node_modules/vitest/vitest.mjs` to stay under the Windows command
+ * line limit, so the stub tree needs a file at that path: one that records its
+ * arguments in the same log format the assertions already parse, and exits with
+ * the status the test asks for.
+ *
+ * @param root stub checkout
+ */
+function writeFakeVitest(root: string): void {
+  const target = path.join(root, "node_modules", "vitest", "vitest.mjs");
+
+  mkdirSync(path.dirname(target), { recursive: true });
+  writeFileSync(
+    target,
+    [
+      'import { appendFileSync } from "node:fs";',
+      "const args = process.argv.slice(2);",
+      "const log = process.env.HARUYUKI_STUB_LOG;",
+      'if (log) appendFileSync(log, `pnpm exec vitest ${args.join(" ")}\\n`);',
+      "process.exit(Number(process.env.HARUYUKI_STUB_PNPM_STATUS ?? 0));",
+      "",
+    ].join("\n"),
+  );
 }
 
 /**
