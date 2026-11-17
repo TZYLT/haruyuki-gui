@@ -122,9 +122,10 @@ describe.skipIf(!enabled)("W-15 real engine", () => {
 
     expect(reply.ok).toBe(true);
 
-    if (reply.ok) {
-      expect(reply.completion).toBe("answered");
+    if (reply.ok && reply.completion === "answered") {
       expect(reply.data).toBeTruthy();
+    } else {
+      expect(reply).toHaveProperty("completion", "answered");
     }
   }, 20_000);
 

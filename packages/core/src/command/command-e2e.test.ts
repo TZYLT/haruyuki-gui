@@ -20,7 +20,11 @@ import type { CommandCall, CommandReply } from "./types.js";
 
 describe("W-15 command + frame seam", () => {
   it("returns answered for a response capability", async () => {
-    const send = vi.fn(async () => ({ ok: true as const, data: { version: "0.6.0" }, raw: {} }));
+    const send = vi.fn(async (_request: unknown) => ({
+      ok: true as const,
+      data: { version: "0.6.0" },
+      raw: {},
+    }));
     const dispatcher = createCommandDispatcher({
       getChannel: (agentId) => (agentId === "__control__" ? { send } : undefined),
     });
@@ -33,7 +37,11 @@ describe("W-15 command + frame seam", () => {
   });
 
   it("returns accepted for an untracked capability and does not claim data", async () => {
-    const send = vi.fn(async () => ({ ok: true as const, data: { ignored: true }, raw: {} }));
+    const send = vi.fn(async (_request: unknown) => ({
+      ok: true as const,
+      data: { ignored: true },
+      raw: {},
+    }));
     const dispatcher = createCommandDispatcher({
       getChannel: () => ({ send }),
     });
