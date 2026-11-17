@@ -194,7 +194,7 @@ describe("recovery sequence", () => {
     ]);
   });
 
-  it("lets a failed resync fail the whole sequence", async () => {
+  it("abandons the whole sequence when sync fails, because every later step reads a view that is known to be incomplete", async () => {
     // Everything after the resync would be acting on a view known to be
     // incomplete, so there is nothing useful to report as a partial success.
     const { ports: input } = ports({
@@ -204,6 +204,33 @@ describe("recovery sequence", () => {
     });
 
     await expect(runRecovery(input)).rejects.toThrow("resync failed");
+  });
+
+  it("takes the stale count from the reconcile, not from what the ledger remembers", async () => {
+    // The number has exactly one source. A ledger that remembers three approvals
+    // but reports five stale ones is not a realistic ledger -- it is a probe: if
+    // the recovery ever computed the count itself, this test would return 3 and
+    // the difference would be invisible in every other case.
+    const ledger = {
+      notePending: () => {},
+      noteResolved: () => {},
+      pendingCount: () => 3,
+      reconcile: () => ({
+        pending: [],
+        stale: [
+          { requestId: "a", at },
+          { requestId: "b", at },
+          { requestId: "c", at },
+          { requestId: "d", at },
+          { requestId: "e", at },
+        ],
+      }),
+    };
+    const { ports: input } = ports({ ledger, page: async () => pageOf([], false, null) });
+
+    const outcome = await runRecovery(input);
+
+    expect(outcome.staleCount).toBe(5);
   });
 
   it("keys the ledger through the pager, so a page of ids is what decides continuity", async () => {
