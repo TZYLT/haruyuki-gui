@@ -92,21 +92,34 @@ function describe(name: CapabilityName): CapabilityDescriptor {
 }
 
 /**
+ * Whether an entry marks itself the bidirectional legacy body.
+ *
+ * `legacy` is present only on the generated entries that set it, so the check
+ * narrows with `in` instead of asserting the whole union to `CapabilityMeta`.
+ *
+ * @param name capability name
+ * @returns true when the entry marks itself legacy
+ */
+function isLegacy(name: CapabilityName): boolean {
+  const meta = CAPABILITY_META[name];
+
+  return "legacy" in meta && meta.legacy === true;
+}
+
+/**
  * Capabilities the surface offers: everything except the bidirectional legacy
  * body (`file.ops`, excluded by its own metadata flag rather than a literal).
  */
 const OFFERED: readonly CapabilityName[] = (Object.keys(CAPABILITY_META) as CapabilityName[])
-  .filter((name) => (CAPABILITY_META[name] as CapabilityMeta).legacy !== true)
+  .filter((name) => !isLegacy(name))
   .sort((left, right) => left.localeCompare(right));
+
+/** The rows in display order; the record below is built from this array. */
+export const COMMAND_DESCRIPTOR_LIST: readonly CapabilityDescriptor[] = OFFERED.map(describe);
 
 /** Every offered capability, keyed by name. */
 export const CAPABILITY_DESCRIPTORS: Readonly<Record<string, CapabilityDescriptor>> =
-  Object.fromEntries(OFFERED.map((name) => [name, describe(name)]));
-
-/** The same rows in display order. */
-export const COMMAND_DESCRIPTOR_LIST: readonly CapabilityDescriptor[] = OFFERED.map(
-  (name) => CAPABILITY_DESCRIPTORS[name] as CapabilityDescriptor,
-);
+  Object.fromEntries(COMMAND_DESCRIPTOR_LIST.map((row) => [row.name, row]));
 
 /** Rows grouped by family, families in name order. */
 export const CAPABILITY_FAMILIES: readonly CapabilityFamily[] = (() => {
