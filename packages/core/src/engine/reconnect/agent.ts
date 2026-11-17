@@ -133,7 +133,12 @@ export function createReconnectAgent(options: ReconnectAgentOptions): ReconnectA
   const page: ReconnectAgentOptions["page"] = async (args) => {
     const result = await options.page(args);
     if (result.ok && Array.isArray(result.page.messages)) {
-      oldestPageIds = result.page.messages.map(idOf).filter((id): id is string => id !== null);
+      const items: readonly unknown[] = result.page.messages;
+      oldestPageIds = items.map(idOf).filter((id): id is string => id !== null);
+      // Handed over as it arrives rather than at the end: a consumer that renders
+      // from the sink would otherwise be told how many rows came without ever
+      // receiving one.
+      options.sink?.messages(agentId, items);
     }
     return result;
   };
@@ -183,17 +188,16 @@ export function createReconnectAgent(options: ReconnectAgentOptions): ReconnectA
           for (const listener of [...gapListeners]) listener(agentId, gap);
         }
       }
-      const states: Record<ReplayStateKind, null> = {
-        device: null,
-        queue: null,
-        subagent: null,
-        loop: null,
-      };
-      options.sink.states(agentId, states);
+      options.sink.states(agentId, outcome.states);
       // The scroll intent travels with the replay, not before it: the consumer
       // needs the new content first and the instruction second.
       options.sink.focus(agentId, { stickToBottom: options.scrollIntent?.() ?? true });
-      options.sink.end(agentId, { appended: outcome.appended, hasMore: outcome.hasMore });
+      options.sink.end(agentId, {
+        appended: outcome.appended,
+        hasMore: outcome.hasMore,
+        nextBefore: outcome.nextBefore,
+        stopReason: outcome.stopReason,
+      });
     }
 
     machine.recoveryFinished();

@@ -99,13 +99,20 @@ export type ReplayGap =
       readonly detectedAt: string;
     };
 
-/** The state snapshot handed to the consumer in one replay. */
-export interface ReplayStates {
-  readonly device: unknown | null;
-  readonly queue: unknown | null;
-  readonly subagent: unknown | null;
-  readonly loop: unknown | null;
-}
+/**
+ * Which state frames the replay actually carried.
+ *
+ * A list rather than an object with one key per kind, because the interesting
+ * question is "did this arrive", and an object forces the caller to fill in the
+ * kinds that did not. Filling them with `null` collapses three different things
+ * -- "the engine had nothing", "the frame did not arrive" and "it was cleared" --
+ * into one value, and a consumer cannot tell them apart afterwards.
+ *
+ * The values themselves do not travel here: the frames arrived on the connection
+ * the consumer is already reading, so this only has to say which ones were part
+ * of the replay.
+ */
+export type ReplayStates = readonly ReplayStateKind[];
 
 /**
  * What a replay hands to the consumer.
@@ -114,11 +121,31 @@ export interface ReplayStates {
  * recovery is an addition plus a state overwrite, never a reset. `messages` is
  * called with items in ascending id order and may be called more than once;
  * `focus` carries the scroll intent the consumer resolves.
+ *
+ * The order is `begin`, then `messages` once per page, then `states`, then
+ * `focus`, then `end`. Content before instruction: a consumer told where to
+ * scroll before it has the rows would scroll to the wrong place.
  */
 export interface ReplaySink {
   begin(agentId: string): void;
   messages(agentId: string, items: readonly unknown[]): void;
-  states(agentId: string, snapshot: ReplayStates): void;
+  states(agentId: string, arrived: ReplayStates): void;
   focus(agentId: string, intent: { readonly stickToBottom: boolean }): void;
-  end(agentId: string, summary: { readonly appended: number; readonly hasMore: boolean }): void;
+  /**
+   * The replay is over.
+   *
+   * `nextBefore` is the cursor the consumer needs to load older messages, and
+   * `stopReason` says whether the replay reached the end of what it could read or
+   * stopped for a reason of its own. Both were only reachable through the returned
+   * outcome before, which a consumer that renders from the sink never sees.
+   */
+  end(
+    agentId: string,
+    summary: {
+      readonly appended: number;
+      readonly hasMore: boolean;
+      readonly nextBefore: string | null;
+      readonly stopReason: string;
+    },
+  ): void;
 }

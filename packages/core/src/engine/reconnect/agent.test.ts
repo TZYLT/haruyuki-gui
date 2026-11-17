@@ -59,17 +59,29 @@ function fakeTransport() {
 function recordingSink() {
   const calls: string[] = [];
   const intents: boolean[] = [];
+  const rowCounts: number[] = [];
+  const arrivals: string[][] = [];
+  const summaries: Array<{ nextBefore: string | null; stopReason: string }> = [];
   const sink: ReplaySink = {
     begin: () => calls.push("begin"),
-    messages: () => calls.push("messages"),
-    states: () => calls.push("states"),
+    messages: (_agent, items) => {
+      calls.push("messages");
+      rowCounts.push(items.length);
+    },
+    states: (_agent, arrived) => {
+      calls.push("states");
+      arrivals.push([...arrived]);
+    },
     focus: (_agent, intent) => {
       calls.push("focus");
       intents.push(intent.stickToBottom);
     },
-    end: () => calls.push("end"),
+    end: (_agent, summary) => {
+      calls.push("end");
+      summaries.push({ nextBefore: summary.nextBefore, stopReason: summary.stopReason });
+    },
   };
-  return { sink, calls, intents };
+  return { sink, calls, intents, rowCounts, arrivals, summaries };
 }
 
 const pageOf = (
@@ -113,7 +125,18 @@ function build(
   agent.onStep((_agent, step) => steps.push(step));
   agent.onGap((_agent, gap) => gaps.push(gap));
 
-  return { agent, clock, watch, steps, gaps, sinkCalls: recorder.calls, intents: recorder.intents };
+  return {
+    agent,
+    clock,
+    watch,
+    steps,
+    gaps,
+    sinkCalls: recorder.calls,
+    intents: recorder.intents,
+    rowCounts: recorder.rowCounts,
+    arrivals: recorder.arrivals,
+    summaries: recorder.summaries,
+  };
 }
 
 describe("assembled reconnect layer", () => {
@@ -152,7 +175,7 @@ describe("assembled reconnect layer", () => {
 
     await agent.recover();
 
-    expect(sinkCalls).toEqual(["begin", "states", "focus", "end"]);
+    expect(sinkCalls).toEqual(["begin", "messages", "states", "focus", "end"]);
   });
 
   it("goes degraded when the window runs out, refuses to send, and recovers on retry", async () => {
@@ -174,6 +197,34 @@ describe("assembled reconnect layer", () => {
     agent.retry();
     expect(agent.status().state).toBe("reconnecting");
     expect(agent.status().cause).toBe("user-retry");
+  });
+
+  it("hands the rows over as they arrive, not just their count", async () => {
+    // A consumer that renders from the sink needs the rows themselves; telling it
+    // "six were appended" without ever delivering one leaves it with an empty list.
+    const { agent, rowCounts, summaries } = build();
+
+    await agent.recover();
+
+    expect(rowCounts).toEqual([2]);
+    expect(summaries).toHaveLength(1);
+    expect(summaries[0]).toMatchObject({ nextBefore: null, stopReason: "complete" });
+
+    // And the cursor the engine returned reaches the consumer, because "load
+    // older" needs it and the outcome it lives on is not what a sink sees.
+    const withCursor = build({ pages: () => pageOf(["m3", "m2"], true, "m2") });
+    await withCursor.agent.recover();
+    expect(withCursor.summaries[0]).toMatchObject({ nextBefore: "m2" });
+  });
+
+  it("says which state frames arrived instead of filling the rest with null", async () => {
+    // "the engine had nothing", "the frame did not arrive" and "it was cleared" are
+    // three different facts; a payload with one slot per kind collapses them.
+    const partial = build({ sync: async () => ({ approvals: [], states: ["device", "queue"] }) });
+
+    await partial.agent.recover();
+
+    expect(partial.arrivals).toEqual([["device", "queue"]]);
   });
 
   it("carries the reader's scroll position across the gap, and says where it came from", async () => {
