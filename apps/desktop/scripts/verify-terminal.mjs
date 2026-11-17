@@ -20,8 +20,9 @@
  *
  *     manual-cleanup-dialog  after a container resize, the column/row count is recomputed, and
  *           the bytes already written are still in the buffer
- *     crash-record-retention  clearing the screen also clears the scrollback, so scrolling up
- *           after a clear finds nothing from before it
+ *     crash-record-retention  what each of the three clears actually clears: the product's `\f`
+ *           (which delegates), `ESC[2J` (display only) and `ESC[3J` (scrollback
+ *           included)
  *       N terminals coexist: every one echoes its own line and none shows
  *           another's
  *
@@ -33,19 +34,25 @@
  *   it has no compositor to stutter.
  *
  * What "clear" can and cannot mean here
- *   Both halves of a clear are data: which rows the buffer still holds, and
- *   whether the scrollback went with them. Neither needs a compositor, so both
- *   are asserted. What is *not* asserted is that the repaint reached the screen
- *   -- a buffer with no rows and a screen still showing the old ones are
- *   indistinguishable to any headless run, and that gap is what the manual
- *   entry below covers.
+ *   Three different things are called "clear", and only one of them is what the
+ *   product does. They are measured separately because a reader who conflated
+ *   them would grade the wrong one:
  *
- *   The distinction that makes this worth asserting at all is that xterm's
- *   scrollback is not cleared by the obvious sequence. `ESC[2J` repaints the
- *   viewport and leaves every scrolled-off row in place, so a user who clears
- *   and then scrolls up sees the whole session again. Only `ESC[3J` (erase saved
- *   lines) removes them. The script measures both, because "clear works" and
- *   "clear works the way a user expects" are different claims.
+ *   1. The product sends a form feed (`\f`, Control-L) to the shell. That byte is
+ *      a line break to the terminal, not a clear, so the scrollback decision
+ *      belongs to the shell and no headless run can observe the answer. What this
+ *      script does assert is the part on our side of the wire: `\f` erases
+ *      nothing, so the panel is delegating rather than clearing.
+ *   2. `ESC[2J` erases the display and leaves every scrolled-off row in place.
+ *      A program that clears this way is repainting the viewport only.
+ *   3. `ESC[3J` erases the saved lines as well, and `Terminal.clear()` reaches the
+ *      scrollback too -- measured, and recorded as notes rather than graded,
+ *      because the product calls neither.
+ *
+ *   What is *not* asserted anywhere is that the repaint reached the screen: a
+ *   buffer with no rows and a screen still showing the old ones are
+ *   indistinguishable to any headless run, and that gap is what the manual entry
+ *   covers.
  *
  * The size stub, and why it is load-bearing
  *   jsdom performs no layout, so xterm's own cell metrics resolve to 0x0 and
@@ -583,27 +590,33 @@ process.stdout.write("\n--- clear reaches the scrollback\n");
   }
 
   const savedBefore = terminal.buffer.active.baseY;
-  const rowCountBefore = terminal.buffer.active.length;
+
+  /** Every row the user could scroll to right now, counted the same way before and after. */
+  const readableRows = () => {
+    const found = [];
+    for (let index = 0; index < terminal.buffer.active.length; index += 1) {
+      const text = terminal.buffer.active.getLine(index)?.translateToString(true) ?? "";
+
+      if (/scrolled-\d/.test(text)) found.push(text);
+    }
+    return found.length;
+  };
+
+  const readableBefore = readableRows();
 
   await settle(terminal, "\f");
 
-  const stillReadable = [];
-  for (let index = 0; index < terminal.buffer.active.length; index += 1) {
-    const text = terminal.buffer.active.getLine(index)?.translateToString(true) ?? "";
-
-    if (/scrolled-\d/.test(text)) stillReadable.push(text);
-  }
+  const readableAfter = readableRows();
 
   check(
     "a form feed is not a clear to the terminal; it is a line break",
-    stillReadable.length === savedBefore && terminal.buffer.active.baseY > 0,
-    `\\f: baseY ${savedBefore}->${terminal.buffer.active.baseY}, ` +
-      `${stillReadable.length} of ${savedBefore} saved rows still readable`,
+    readableAfter === readableBefore && terminal.buffer.active.baseY > 0,
+    `form feed: ${readableBefore} readable rows before, ${readableAfter} after; baseY ${savedBefore}->${terminal.buffer.active.baseY}`,
   );
 
   check(
     "the product's clear delegates the scrollback decision to the shell",
-    terminal.buffer.active.length !== rowCountBefore || stillReadable.length === savedBefore,
+    terminal.buffer.active.baseY > 0,
     "nothing on this side of the wire erases a row",
   );
 
@@ -694,17 +707,18 @@ process.stdout.write("\n--- clear reaches the scrollback\n");
   const committed = survivors.filter((text) => /scrolled-\d/.test(text));
   const keptPromptLine = survivors.filter((text) => text.includes("$ partia"));
 
-  // Recorded, not graded. Two facts about xterm, and together they are why the
-  // panel sends a form feed instead of calling this: clear() cannot reach the
-  // scrollback, so a user who clears and then scrolls up sees the session again.
-  // Neither line is a failure -- the product does not call clear() at all -- but
-  // a reader who sees `FAIL` would conclude that it does and is broken.
+  // Recorded, not graded, because the product does not call this method. The
+  // wording follows the measurement and not the expectation: clear() *does* reach
+  // the scrollback (baseY 0, no row from before survives), and it *keeps* the
+  // uncommitted prompt line. A note that said the opposite would be the same
+  // failure as a wrong PASS -- a reader takes it to the document and cannot tell
+  // that nobody checked.
   note(
-    "xterm: clear() leaves the scrollback alone",
-    `${committed.length} rows from before a clear survive`,
+    "xterm: clear() clears the scrollback too",
+    `${committed.length} rows from before a clear survive, baseY ${terminal.buffer.active.baseY}`,
   );
   note(
-    "xterm: clear() drops the uncommitted prompt line",
+    "xterm: clear() keeps the uncommitted prompt line",
     `${keptPromptLine.length} prompt rows survive a clear`,
   );
 
