@@ -186,6 +186,8 @@ const GATE_SELF_TEST_WARNING =
  * @property {string} [header] Longer heading, used in the bracket line.
  * @property {() => Command} command Built per run, so --verbose can leak in.
  * @property {string} [skipReason] Printed instead of running `command`.
+ * @property {boolean} [notProven] With `skipReason`: the gate exists but did not
+ *   run, so the summary must not call the run a pass.
  * @property {(run: RunResult) => boolean} [evaluate] Defaults to status === 0.
  * @property {string} [warning] Extra line printed when the segment fails.
  * @property {string[]} [notes] Informational lines after the conclusion.
@@ -206,7 +208,12 @@ const GATE_SELF_TEST_WARNING =
 function start() {
   try {
     const flags = parseArguments(process.argv.slice(2));
-    const options = { root: toPosix(process.cwd()), full: flags.full, verbose: flags.verbose };
+    const options = {
+      root: toPosix(process.cwd()),
+      full: flags.full,
+      verbose: flags.verbose,
+      noSize: flags.noSize,
+    };
 
     assertEnvironment(options);
 
@@ -250,15 +257,19 @@ function start() {
  * @returns {{ full: boolean, verbose: boolean }}
  */
 function parseArguments(argv) {
-  const flags = { full: false, verbose: false };
+  const flags = { full: false, verbose: false, noSize: false };
 
   for (const arg of argv) {
     if (arg === "--full") {
       flags.full = true;
     } else if (arg === "--verbose") {
       flags.verbose = true;
+    } else if (arg === "--no-size") {
+      // Skips the file-size segment. This is for the inner loop only: the run
+      // is then not a pass, and the summary says so. See buildSegments.
+      flags.noSize = true;
     } else {
-      throw new Error(`unknown argument: ${arg} (supported: --full, --verbose)`);
+      throw new Error(`unknown argument: ${arg} (supported: --full, --verbose, --no-size)`);
     }
   }
 
@@ -464,11 +475,26 @@ function buildSegments(options) {
         "in-process coverage of scripts/ stays low because gates run as child processes",
       ],
     },
+    // The file-size gate belongs in the default set, not behind `--full`.
+    //
+    // It ran only under `--full`, and `--full` is a deliberate hassle to run, so
+    // it was never run before a landing: `main` reached 1085 lines in
+    // `packages/core/src/engine/engine.ts` while every landing reported a green
+    // run. A gate nobody runs on the path that matters is not a gate. The
+    // segment costs about 0.2 s, so there is no reason to keep it out.
+    {
+      label: "file size",
+      // `notProven` so the summary says this run is not a pass when skipped.
+      notProven: options.noSize,
+      skipReason: options.noSize
+        ? "--no-size given: the size gate did not run, so this run is not a pass"
+        : undefined,
+      command: () => gate("scripts/check-file-size.mjs", false),
+    },
   ];
 
   if (options.full) {
     segments.push(
-      { label: "file size", command: () => gate("scripts/check-file-size.mjs", false) },
       { label: "cycles", command: () => gate("scripts/check-cycles.mjs", false) },
       {
         label: "module ownership",
@@ -651,9 +677,22 @@ function runSegment(segment, index, total, options) {
 
   if (segment.skipReason !== undefined) {
     printLine(`${OUTPUT_INDENT}${segment.skipReason}`);
-    printLine(`[${position}/${total}] ${segment.label}  PASS  0.00s`);
 
-    return { label: segment.label, passed: true };
+    // Two kinds of skip, and they must not look alike.
+    //
+    // `notProven` marks a segment whose gate exists and would say something, but
+    // was turned off for this run (`--no-size`). It prints SKIP and the summary
+    // refuses to call the run a pass.
+    //
+    // A plain skip is a segment with nothing to do -- the test set is empty --
+    // which is PASS in the only sense available: it could not have failed.
+    const notProven = segment.notProven === true;
+
+    printLine(`[${position}/${total}] ${segment.label}  ${notProven ? "SKIP" : "PASS"}  0.00s`);
+
+    return notProven
+      ? { label: segment.label, passed: true, skipped: true }
+      : { label: segment.label, passed: true };
   }
 
   const started = performance.now();
@@ -829,12 +868,23 @@ function formatSeconds(seconds) {
  */
 function printSummary(results, seconds) {
   const failed = results.filter((result) => !result.passed);
+  const skipped = results.filter((result) => result.skipped === true);
   const duration = `${seconds.toFixed(1)}s`;
 
   printLine();
 
   if (failed.length === 0) {
     printLine(`verify: ${results.length}/${results.length} segments passed in ${duration}`);
+
+    // A run with a skipped segment is reported as incomplete, not as a pass.
+    // `--no-size` exists to shorten the inner loop; it must never read as
+    // "everything is green" in a log someone later trusts.
+    if (skipped.length > 0) {
+      printLine(
+        `  NOT A PASS: ${String(skipped.length)} segment(s) did not run ` +
+          `(${skipped.map((result) => result.label).join(", ")}); re-run without the skip flag`,
+      );
+    }
 
     return;
   }
