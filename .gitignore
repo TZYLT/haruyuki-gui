@@ -15,7 +15,15 @@
 # Internal tooling that hard-codes host names and addresses. The design is in
 # docs/46 (also internal), so the file stays on the operator's machine rather
 # than in the repository the project is published from.
+#
+# remote-clean deletes a directory on that same machine. It carries no address
+# either, but publishing it would still be wrong: an outside reader cannot tell
+# from the file that it is written for one operator's peer, and a script whose
+# whole job is `rmdir /s /q` reads as a general-purpose tool right up until it
+# is pointed somewhere else. Keeping it beside remote-verify keeps the pair
+# honest - both are operator-local, and neither pretends to be portable.
 /scripts/remote-verify.mjs
+/scripts/remote-clean.mjs
 
 # --- Dependencies ----------------------------------------------------------
 node_modules/
