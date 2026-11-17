@@ -30,6 +30,12 @@ export function PageTab(props: IDockviewPanelHeaderProps<PagePanelParams>): Reac
   );
   const badge = badgeText(activity);
   const pinned = definition?.pinned === true;
+  const badgeLabel =
+    activity.approvals > 0
+      ? t("page.frame.badge.approvals", { count: String(Math.min(activity.approvals, 99)) })
+      : activity.streaming
+        ? t("page.frame.badge.streaming")
+        : t("page.frame.badge.unread", { count: String(Math.min(activity.unread, 99)) });
 
   useEffect(() => {
     if (props.api.isActive) host.activity.clearUnread(tabId);
@@ -77,7 +83,7 @@ export function PageTab(props: IDockviewPanelHeaderProps<PagePanelParams>): Reac
       {definition !== undefined && <span className="hz-tab__icon" aria-hidden="true" />}
       <span className="hz-tab__title">{props.api.title ?? pageId}</span>
       {badge !== null && (
-        <span className="hz-tab__badge" aria-label={String(badge)}>
+        <span className="hz-tab__badge" aria-label={badgeLabel}>
           {badge}
         </span>
       )}

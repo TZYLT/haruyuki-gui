@@ -246,6 +246,10 @@ export const en = {
   "page.frame.banner.readOnly":
     "This layout came from a newer version; it is read-only here and will not be overwritten until you upgrade.",
 
+  "page.frame.badge.approvals": "{count} approvals waiting",
+  "page.frame.badge.streaming": "Streaming",
+  "page.frame.badge.unread": "{count} unread",
+
   // ----------------------------------------------------------------- error
   "error.network.unreachable": "The service is unreachable",
   "error.unexpected": "An unexpected error occurred",

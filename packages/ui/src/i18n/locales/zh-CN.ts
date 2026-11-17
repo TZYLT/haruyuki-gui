@@ -198,6 +198,10 @@ export const zhCN = {
   "page.frame.banner.corrupt": "布局未能恢复，已使用默认布局。",
   "page.frame.banner.readOnly": "布局来自更新版本，当前版本只读，升级前不会覆盖它。",
 
+  "page.frame.badge.approvals": "{count} 个待审批",
+  "page.frame.badge.streaming": "正在流式输出",
+  "page.frame.badge.unread": "{count} 条未读",
+
   // ----------------------------------------------------------------- error
   "error.network.unreachable": "无法连接到服务",
   "error.unexpected": "发生了意外错误",
