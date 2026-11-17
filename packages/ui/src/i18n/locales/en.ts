@@ -181,6 +181,16 @@ export const en = {
   "page.conversation.empty.title": "No conversation yet",
   "page.conversation.empty.description": "Start typing to begin",
   "page.conversation.retryLater": "Try again in a moment",
+  "page.nav.title": "Navigation",
+  "page.conversation.title": "Conversation",
+  "page.memory.title": "Memory",
+  "page.tree.title": "Files",
+  "page.viewer.title": "Viewer",
+  "page.context.title": "Context",
+  "page.concurrency.title": "Concurrency",
+  "page.terminal.title": "Terminal",
+  "page.settings.title": "Settings",
+  "page.topics.title": "Topics",
   "page.error.retry": "Try again",
 
   // ----------------------------------------------------------------- error
