@@ -20,7 +20,7 @@ import { LocaleProvider } from "../i18n/index.js";
 interface FakePanel {
   readonly id: string;
   readonly params: { pageId: string };
-  readonly api: { close: () => void; setActive: () => void };
+  readonly api: { close: () => void; setActive: () => void; isVisible: boolean };
   group?: FakeGroup;
 }
 
@@ -138,7 +138,7 @@ function makePanel(pageId: string, id = pageId): FakePanel {
   return {
     id,
     params: { pageId },
-    api: { close: vi.fn(), setActive: vi.fn() },
+    api: { close: vi.fn(), setActive: vi.fn(), isVisible: true },
   };
 }
 
@@ -403,6 +403,22 @@ describe("AppFrame", () => {
     await waitFor(() => expect(state.exitMaximized).toHaveBeenCalledTimes(1));
     expect(screen.getByRole("navigation", { name: "Left rail" })).toBeTruthy();
     expect(onLayoutChange).not.toHaveBeenCalled();
+  });
+
+  it("cycles tabs with Ctrl+Tab and Ctrl+Shift+Tab", () => {
+    render(
+      <LocaleProvider locale="en">
+        <AppFrame registry={registry()} doc={doc} revision={1} onLayoutChange={vi.fn()} />
+      </LocaleProvider>,
+    );
+
+    const panels = state.panels as FakePanel[];
+
+    fireEvent.keyDown(document, { key: "Tab", ctrlKey: true });
+    expect(panels[2]?.api.setActive).toHaveBeenCalled();
+
+    fireEvent.keyDown(document, { key: "Tab", ctrlKey: true, shiftKey: true });
+    expect(panels[0]?.api.setActive).toHaveBeenCalled();
   });
 
   it("opens the same page twice with distinct tab ids", async () => {
