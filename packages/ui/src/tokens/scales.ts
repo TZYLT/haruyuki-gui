@@ -32,6 +32,22 @@ export type ScaleTokens = Record<
     | "--ui-diff-inlineAdd"
     | "--ui-diff-inlineRemove"
     | "--ui-diff-bg"
+    | "--ui-terminal-ansi-black"
+    | "--ui-terminal-ansi-red"
+    | "--ui-terminal-ansi-green"
+    | "--ui-terminal-ansi-yellow"
+    | "--ui-terminal-ansi-blue"
+    | "--ui-terminal-ansi-magenta"
+    | "--ui-terminal-ansi-cyan"
+    | "--ui-terminal-ansi-white"
+    | "--ui-terminal-ansi-brightBlack"
+    | "--ui-terminal-ansi-brightRed"
+    | "--ui-terminal-ansi-brightGreen"
+    | "--ui-terminal-ansi-brightYellow"
+    | "--ui-terminal-ansi-brightBlue"
+    | "--ui-terminal-ansi-brightMagenta"
+    | "--ui-terminal-ansi-brightCyan"
+    | "--ui-terminal-ansi-brightWhite"
   >,
   string
 >;

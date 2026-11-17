@@ -33,6 +33,54 @@ const SURFACES = ["--ui-color-surface-1", "--ui-color-surface-2", "--ui-color-su
 const STATUS_FAMILIES = ["danger", "warning", "success", "info"] as const;
 
 /**
+ * The eight normal ANSI colours, in SGR index order.
+ *
+ * A terminal program paints any of these as foreground text -- `ls --color`,
+ * `git diff`, a compiler diagnostic -- so each one is body text on the terminal
+ * background and takes the body-text threshold.
+ */
+const ANSI_NORMAL = [
+  "--ui-terminal-ansi-black",
+  "--ui-terminal-ansi-red",
+  "--ui-terminal-ansi-green",
+  "--ui-terminal-ansi-yellow",
+  "--ui-terminal-ansi-blue",
+  "--ui-terminal-ansi-magenta",
+  "--ui-terminal-ansi-cyan",
+  "--ui-terminal-ansi-white",
+] as const;
+
+/**
+ * The eight bright ANSI colours, the SGR 90-97 range.
+ *
+ * Bright is the bold/high-intensity variant a program reaches for to add
+ * emphasis, which is a non-text-level distinction rather than a second body
+ * colour, so it takes the large-text threshold. It is asserted rather than
+ * assumed: the values are ours, and a bright slot that sinks into the terminal
+ * background is still a program whose bold text is invisible.
+ */
+const ANSI_BRIGHT = [
+  "--ui-terminal-ansi-brightBlack",
+  "--ui-terminal-ansi-brightRed",
+  "--ui-terminal-ansi-brightGreen",
+  "--ui-terminal-ansi-brightYellow",
+  "--ui-terminal-ansi-brightBlue",
+  "--ui-terminal-ansi-brightMagenta",
+  "--ui-terminal-ansi-brightCyan",
+  "--ui-terminal-ansi-brightWhite",
+] as const;
+
+/**
+ * The background the ANSI colours are measured against.
+ *
+ * `--ui-code-bg` is the surface closest to a terminal background that already
+ * exists, and it is the one a code block and a terminal panel actually share, so
+ * measuring against it measures the pair that renders instead of a pair nothing
+ * puts a colour on.
+ */
+const TERMINAL_BACKGROUND = "--ui-code-bg";
+
+/**
  * @param key theme key
  * @returns the theme's tokens narrowed to palette entries
  */
@@ -244,6 +292,62 @@ describe("palette contrast", () => {
     }
   });
 
+  it("keeps every normal ANSI colour readable as terminal text", () => {
+    // A terminal does not choose its colours; the program inside does, by index.
+    // Any of the eight may therefore end up as the foreground of ordinary text on
+    // the terminal background, so each one has to clear the body-text threshold
+    // there rather than only in a designer's preview.
+    for (const key of Object.keys(THEMES)) {
+      const tokens = paletteOf(key);
+
+      for (const slot of ANSI_NORMAL) {
+        const ratio = contrastRatio(tokens[slot] as string, tokens[TERMINAL_BACKGROUND] as string);
+
+        expect(ratio, `${slot} on ${TERMINAL_BACKGROUND} in ${key}`).toBeGreaterThanOrEqual(
+          MIN_RATIO_BODY_TEXT,
+        );
+      }
+    }
+  });
+
+  it("keeps every bright ANSI colour above the non-text threshold", () => {
+    // Bright is the high-intensity variant a program uses for emphasis. It is the
+    // same text, so leaving it unmeasured would leave the emphasis case to
+    // chance; the threshold is the non-text one because bright is a distinction
+    // on top of readable, not a second body colour.
+    for (const key of Object.keys(THEMES)) {
+      const tokens = paletteOf(key);
+
+      for (const slot of ANSI_BRIGHT) {
+        const ratio = contrastRatio(tokens[slot] as string, tokens[TERMINAL_BACKGROUND] as string);
+
+        expect(ratio, `${slot} on ${TERMINAL_BACKGROUND} in ${key}`).toBeGreaterThanOrEqual(
+          MIN_RATIO_LARGE_TEXT_OR_ICON,
+        );
+      }
+    }
+  });
+
+  it("keeps each ANSI colour apart from its bright variant", () => {
+    // `\e[31m` and `\e[91m` are two different instructions for the same meaning.
+    // If the two values are equal the program cannot express emphasis at all; if
+    // bright is not the lighter of the pair it renders as de-emphasis, which is
+    // the opposite of what a program asking for bright means.
+    for (const key of Object.keys(THEMES)) {
+      const tokens = paletteOf(key);
+
+      for (let index = 0; index < ANSI_NORMAL.length; index += 1) {
+        const normal = tokens[ANSI_NORMAL[index] as string] as string;
+        const bright = tokens[ANSI_BRIGHT[index] as string] as string;
+
+        expect(
+          relativeLuminance(bright),
+          `${ANSI_BRIGHT[index]} is not lighter than ${ANSI_NORMAL[index]} in ${key}`,
+        ).toBeGreaterThan(relativeLuminance(normal));
+      }
+    }
+  });
+
   it("uses opaque hex for every colour slot", () => {
     // The two overlay slots are the documented exception: they are translucent
     // *by definition* -- a scrim that is opaque is a black rectangle, and a
@@ -259,7 +363,8 @@ describe("palette contrast", () => {
           !name.startsWith("--ui-color-") &&
           !name.startsWith("--ui-code-") &&
           !name.startsWith("--ui-math-") &&
-          !name.startsWith("--ui-diff-")
+          !name.startsWith("--ui-diff-") &&
+          !name.startsWith("--ui-terminal-")
         ) {
           continue;
         }

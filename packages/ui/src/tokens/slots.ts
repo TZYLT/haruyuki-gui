@@ -213,6 +213,39 @@ export const CODE_SLOTS: readonly string[] = [
   "--ui-code-border",
 ];
 
+/**
+ * The sixteen ANSI colours a terminal draws, in the SGR order.
+ *
+ * A terminal emulator does not choose colours; the program running inside it
+ * does, and it names them by index (`\e[31m` is red, `\e[91m` is bright red).
+ * So the palette needs all sixteen or a program that uses them renders in
+ * whatever the emulator's built-in default is, which is the one palette the
+ * theme system cannot reach.
+ *
+ * They are their own namespace rather than part of `--ui-color-*`: the names are
+ * fixed by the terminal protocol, not by our semantic families, and "bright
+ * black" is not a step of `neutral`. The values are ours, so all four themes
+ * still hold the contrast contract.
+ */
+export const TERMINAL_SLOTS: readonly string[] = [
+  "--ui-terminal-ansi-black",
+  "--ui-terminal-ansi-red",
+  "--ui-terminal-ansi-green",
+  "--ui-terminal-ansi-yellow",
+  "--ui-terminal-ansi-blue",
+  "--ui-terminal-ansi-magenta",
+  "--ui-terminal-ansi-cyan",
+  "--ui-terminal-ansi-white",
+  "--ui-terminal-ansi-brightBlack",
+  "--ui-terminal-ansi-brightRed",
+  "--ui-terminal-ansi-brightGreen",
+  "--ui-terminal-ansi-brightYellow",
+  "--ui-terminal-ansi-brightBlue",
+  "--ui-terminal-ansi-brightMagenta",
+  "--ui-terminal-ansi-brightCyan",
+  "--ui-terminal-ansi-brightWhite",
+];
+
 /** Math formula surface, consumed by the rendering item. */
 export const MATH_SLOTS: readonly string[] = ["--ui-math-fg", "--ui-math-error", "--ui-math-bg"];
 
@@ -250,6 +283,7 @@ export type TokenName =
   | (typeof Z_SLOTS)[number]
   | (typeof MOTION_SLOTS)[number]
   | (typeof CODE_SLOTS)[number]
+  | (typeof TERMINAL_SLOTS)[number]
   | (typeof MATH_SLOTS)[number]
   | (typeof DIFF_SLOTS)[number];
 
@@ -265,7 +299,8 @@ export type ThemeTokens = Record<TokenName, string>;
  */
 export const ALL_TOKEN_SLOTS: readonly string[] = [
   ...COLOR_SLOTS,
-  ...SPACE_SLOTS,  ...FONT_FAMILY_SLOTS,
+  ...SPACE_SLOTS,
+  ...FONT_FAMILY_SLOTS,
   ...FONT_SIZE_SLOTS,
   ...FONT_WEIGHT_SLOTS,
   ...FONT_LINE_HEIGHT_SLOTS,
@@ -274,6 +309,7 @@ export const ALL_TOKEN_SLOTS: readonly string[] = [
   ...Z_SLOTS,
   ...MOTION_SLOTS,
   ...CODE_SLOTS,
+  ...TERMINAL_SLOTS,
   ...MATH_SLOTS,
   ...DIFF_SLOTS,
 ];

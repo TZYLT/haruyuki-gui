@@ -15,6 +15,16 @@
  *   against it so a filled button label is readable in every combination
  * - each status foreground >= 4.5:1 on both `surface-1` and its own subtle
  *   background
+ * - each of the eight normal ANSI colours >= 4.5:1 on `code-bg`, and each of the
+ *   eight bright ones >= 3:1 there, because a terminal program decides which of
+ *   the sixteen it paints without asking us
+ *
+ * The ANSI sixteen are their own namespace (`--ui-terminal-ansi-*`) because the
+ * names are fixed by the terminal protocol rather than by our semantic families.
+ * They are solved the same way as everything else here: a fixed hue and
+ * saturation per family in all four themes, and a lightness picked so the ratio
+ * lands on the threshold. The bright step is systematically the lighter one, so
+ * `\e[91m` reads as emphasis instead of as a second body colour.
  *
  * The values are measured by `tokens/contrast.ts` and enforced by the token gate
  * and by `contrast.test.ts`. They were chosen against those ratios, not judged by
@@ -63,6 +73,22 @@ export interface Palette {
   "--ui-diff-inlineAdd": string;
   "--ui-diff-inlineRemove": string;
   "--ui-diff-bg": string;
+  "--ui-terminal-ansi-black": string;
+  "--ui-terminal-ansi-red": string;
+  "--ui-terminal-ansi-green": string;
+  "--ui-terminal-ansi-yellow": string;
+  "--ui-terminal-ansi-blue": string;
+  "--ui-terminal-ansi-magenta": string;
+  "--ui-terminal-ansi-cyan": string;
+  "--ui-terminal-ansi-white": string;
+  "--ui-terminal-ansi-brightBlack": string;
+  "--ui-terminal-ansi-brightRed": string;
+  "--ui-terminal-ansi-brightGreen": string;
+  "--ui-terminal-ansi-brightYellow": string;
+  "--ui-terminal-ansi-brightBlue": string;
+  "--ui-terminal-ansi-brightMagenta": string;
+  "--ui-terminal-ansi-brightCyan": string;
+  "--ui-terminal-ansi-brightWhite": string;
 }
 
 /** Light, normal contrast: the default theme. */
@@ -102,6 +128,22 @@ export const LIGHT_NORMAL: Palette = {
   "--ui-diff-inlineAdd": "#c6e7d0",
   "--ui-diff-inlineRemove": "#f8c9c4",
   "--ui-diff-bg": "#ffffff",
+  "--ui-terminal-ansi-black": "#101213",
+  "--ui-terminal-ansi-red": "#992a24",
+  "--ui-terminal-ansi-green": "#1f5e39",
+  "--ui-terminal-ansi-yellow": "#704c0c",
+  "--ui-terminal-ansi-blue": "#274f9d",
+  "--ui-terminal-ansi-magenta": "#8f2b6a",
+  "--ui-terminal-ansi-cyan": "#1d5a67",
+  "--ui-terminal-ansi-white": "#656d79",
+  "--ui-terminal-ansi-brightBlack": "#606873",
+  "--ui-terminal-ansi-brightRed": "#d6564f",
+  "--ui-terminal-ansi-brightGreen": "#309159",
+  "--ui-terminal-ansi-brightYellow": "#ac7413",
+  "--ui-terminal-ansi-brightBlue": "#547ed4",
+  "--ui-terminal-ansi-brightMagenta": "#cc54a0",
+  "--ui-terminal-ansi-brightCyan": "#2d8a9f",
+  "--ui-terminal-ansi-brightWhite": "#858d99",
 };
 
 /** Light, high contrast: black text, wider gaps, same hues. */
@@ -141,6 +183,22 @@ export const LIGHT_HIGH: Palette = {
   "--ui-diff-inlineAdd": "#a9dcbc",
   "--ui-diff-inlineRemove": "#f6bdb7",
   "--ui-diff-bg": "#ffffff",
+  "--ui-terminal-ansi-black": "#060607",
+  "--ui-terminal-ansi-red": "#74201b",
+  "--ui-terminal-ansi-green": "#18472b",
+  "--ui-terminal-ansi-yellow": "#553909",
+  "--ui-terminal-ansi-blue": "#1e3c78",
+  "--ui-terminal-ansi-magenta": "#6c2050",
+  "--ui-terminal-ansi-cyan": "#16434e",
+  "--ui-terminal-ansi-white": "#59616b",
+  "--ui-terminal-ansi-brightBlack": "#515861",
+  "--ui-terminal-ansi-brightRed": "#d03c35",
+  "--ui-terminal-ansi-brightGreen": "#2b824f",
+  "--ui-terminal-ansi-brightYellow": "#9a6811",
+  "--ui-terminal-ansi-brightBlue": "#3f6fcf",
+  "--ui-terminal-ansi-brightMagenta": "#c43b92",
+  "--ui-terminal-ansi-brightCyan": "#287c8f",
+  "--ui-terminal-ansi-brightWhite": "#757f8c",
 };
 
 /** Dark, normal contrast. */
@@ -180,6 +238,22 @@ export const DARK_NORMAL: Palette = {
   "--ui-diff-inlineAdd": "#28472f",
   "--ui-diff-inlineRemove": "#4d2a28",
   "--ui-diff-bg": "#16181c",
+  "--ui-terminal-ansi-black": "#818995",
+  "--ui-terminal-ansi-red": "#e28a85",
+  "--ui-terminal-ansi-green": "#3db66f",
+  "--ui-terminal-ansi-yellow": "#da9318",
+  "--ui-terminal-ansi-blue": "#83a2e0",
+  "--ui-terminal-ansi-magenta": "#db87bc",
+  "--ui-terminal-ansi-cyan": "#3eafc9",
+  "--ui-terminal-ansi-white": "#dbdde1",
+  "--ui-terminal-ansi-brightBlack": "#9097a2",
+  "--ui-terminal-ansi-brightRed": "#eeb9b7",
+  "--ui-terminal-ansi-brightGreen": "#85d6a7",
+  "--ui-terminal-ansi-brightYellow": "#eebe6a",
+  "--ui-terminal-ansi-brightBlue": "#b4c6ec",
+  "--ui-terminal-ansi-brightMagenta": "#e9b6d7",
+  "--ui-terminal-ansi-brightCyan": "#8ed0df",
+  "--ui-terminal-ansi-brightWhite": "#ecedef",
 };
 
 /** Dark, high contrast: white text, wider gaps, same hues. */
@@ -219,6 +293,22 @@ export const DARK_HIGH: Palette = {
   "--ui-diff-inlineAdd": "#1e4030",
   "--ui-diff-inlineRemove": "#4a1f1d",
   "--ui-diff-bg": "#0b0d10",
+  "--ui-terminal-ansi-black": "#8a929e",
+  "--ui-terminal-ansi-red": "#e69a96",
+  "--ui-terminal-ansi-green": "#4bc37d",
+  "--ui-terminal-ansi-yellow": "#e79f23",
+  "--ui-terminal-ansi-blue": "#93aee4",
+  "--ui-terminal-ansi-magenta": "#e097c5",
+  "--ui-terminal-ansi-cyan": "#58bad0",
+  "--ui-terminal-ansi-white": "#e3e5e8",
+  "--ui-terminal-ansi-brightBlack": "#9ca3ad",
+  "--ui-terminal-ansi-brightRed": "#f1c5c3",
+  "--ui-terminal-ansi-brightGreen": "#9addb6",
+  "--ui-terminal-ansi-brightYellow": "#f1c983",
+  "--ui-terminal-ansi-brightBlue": "#c0d0ef",
+  "--ui-terminal-ansi-brightMagenta": "#edc2dd",
+  "--ui-terminal-ansi-brightCyan": "#a0d8e4",
+  "--ui-terminal-ansi-brightWhite": "#f2f3f5",
 };
 
 /** Colour family helper for gates that want to group slots. */
