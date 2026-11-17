@@ -42,7 +42,7 @@ describe("header-field reporting", () => {
     checkHeaderFields("a.jsonl", header({ originReason: "because" }), warnings);
 
     expect(warnings).toHaveLength(1);
-    expect(warnings[0].startsWith("note ")).toBe(true);
+    expect(warnings[0]?.startsWith("note ")).toBe(true);
   });
 
   it("keeps the known set free of fields the gate does not read", () => {
