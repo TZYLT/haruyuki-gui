@@ -114,6 +114,60 @@ export const en = {
   "component.alert.dismiss": "Dismiss alert",
   "component.form.required": "This field is required",
 
+  // ------------------------------------------------------- terminal panel
+  // The panel's own copy. Two of these are not decoration: the phase sentences
+  // are the only place the user learns whether a process died or never started,
+  // and the paste sentences are the only warning before several commands run.
+  //
+  // `phaseIdleOffline` and `phaseIdleReady` are two keys for one phase on
+  // purpose. "Idle" means both "nothing has been asked of the engine yet" and
+  // "the connection came back and you may start again"; one sentence covering
+  // both tells a user who just lost a shell that they never had one.
+  "component.terminal.phaseIdleOffline": "Not connected to the engine",
+  "component.terminal.phaseIdleReady": "Connection restored; reopen to start a new session",
+  "component.terminal.phaseStarting": "Starting the shell",
+  "component.terminal.phaseRunning": "Running",
+  "component.terminal.phaseExited": "Exited with code {code}",
+  // `{detail}` is the engine's own untranslated text, placed in a sentence we
+  // own: the engine knows why the spawn failed, this catalogue knows how to ask.
+  "component.terminal.phaseFailed": "The shell could not be started: {detail}",
+  "component.terminal.phaseDisconnected": "The engine disconnected and ended this shell",
+  "component.terminal.action.reopen": "Reopen",
+  "component.terminal.action.stop": "Stop",
+  "component.terminal.action.clear": "Clear",
+  "component.terminal.action.fontSmaller": "Smaller terminal text",
+  "component.terminal.action.fontLarger": "Larger terminal text",
+  "component.terminal.action.more": "More actions",
+  "component.terminal.menu.copy": "Copy",
+  "component.terminal.menu.paste": "Paste",
+  "component.terminal.menu.selectAll": "Select all",
+  "component.terminal.menu.search": "Search",
+  "component.terminal.menu.export": "Export",
+  "component.terminal.menu.openExternal": "Open this folder in the system terminal",
+  "component.terminal.paste.confirmTitle": "Paste {lines} lines?",
+  "component.terminal.paste.confirmMessage":
+    "The shell will run each of the {lines} lines as it receives them.",
+  "component.terminal.a11y.region": "Terminal",
+
+  // The search bar. `matchCount` is a plural because English says "1 match" and
+  // "3 matches"; Chinese selects only `other`, so its single branch carries the
+  // same two placeholders and the placeholder check keeps the pair honest.
+  // `prevMatch`/`nextMatch` are the two arrows' accessible names, not their
+  // tooltips: a control nobody can identify by ear is a control half the users
+  // cannot operate.
+  "component.terminal.search.placeholder": "Find in scrollback",
+  "component.terminal.search.noMatch": "No matches",
+  "component.terminal.search.prevMatch": "Previous match",
+  "component.terminal.search.nextMatch": "Next match",
+  "component.terminal.search.matchCount":
+    "Match {index} of {count, plural, one {# match} other {# matches}}",
+  // The addon stops collecting at its highlight limit, so a count that reached it
+  // is a lower bound, not a number. It gets its own sentence instead of a "+"
+  // glued onto the one above: the branch is "this number could be wrong", and a
+  // user who disproves a plain count stops trusting the counts that were exact.
+  "component.terminal.search.matchCountAtLeast":
+    "Match {index} of at least {count, plural, one {# match} other {# matches}}",
+
   // ------------------------------------------------------------------ page
   "page.conversation.empty.title": "No conversation yet",
   "page.conversation.empty.description": "Start typing to begin",

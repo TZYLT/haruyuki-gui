@@ -48,6 +48,13 @@ const COMPONENT_DIRS = [
   "packages/ui/src/components",
   "packages/ui/src/examples",
   "packages/ui/src/icons",
+  // The terminal panel. Added here in the same change as its first `t()` call,
+  // because until this line existed the whole directory was invisible to I6: a
+  // key the panel asked for but nobody declared, and a key declared for the panel
+  // but no longer read, both reported PASS. That is the exact failure the rule
+  // exists for, so the consumer list is part of the change that introduces the
+  // consumer rather than a follow-up.
+  "packages/ui/src/terminal",
   // The desktop shell renders catalogue keys too, and was outside this scan
   // until the review found it. `apps/desktop/src/renderer/error-page.tsx` calls
   // `t()` for real; a renamed key there would have been a runtime hole that this

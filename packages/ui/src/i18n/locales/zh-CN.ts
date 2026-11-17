@@ -95,6 +95,40 @@ export const zhCN = {
   "component.alert.dismiss": "关闭提示",
   "component.form.required": "此项为必填",
 
+  // ------------------------------------------------------- terminal panel
+  "component.terminal.phaseIdleOffline": "尚未连接到引擎",
+  "component.terminal.phaseIdleReady": "连接已恢复，重新打开即可开始新会话",
+  "component.terminal.phaseStarting": "正在启动终端",
+  "component.terminal.phaseRunning": "运行中",
+  "component.terminal.phaseExited": "已退出，退出码 {code}",
+  // `{detail}` 是引擎原文，不翻译：引擎知道失败的原因，这份文案知道怎么问。
+  "component.terminal.phaseFailed": "终端未能启动：{detail}",
+  "component.terminal.phaseDisconnected": "引擎连接已断开，该终端已结束",
+  "component.terminal.action.reopen": "重新打开",
+  "component.terminal.action.stop": "停止",
+  "component.terminal.action.clear": "清屏",
+  "component.terminal.action.fontSmaller": "缩小终端字号",
+  "component.terminal.action.fontLarger": "放大终端字号",
+  "component.terminal.action.more": "更多操作",
+  "component.terminal.menu.copy": "复制",
+  "component.terminal.menu.paste": "粘贴",
+  "component.terminal.menu.selectAll": "全选",
+  "component.terminal.menu.search": "搜索",
+  "component.terminal.menu.export": "导出",
+  "component.terminal.menu.openExternal": "在系统终端中打开此目录",
+  "component.terminal.paste.confirmTitle": "粘贴 {lines} 行？",
+  "component.terminal.paste.confirmMessage": "终端收到后会逐行执行这 {lines} 行内容。",
+  "component.terminal.a11y.region": "终端",
+
+  // 搜索条。`matchCount` 的英文侧是复数，中文只有 `other` 一支，占位符两侧一致。
+  "component.terminal.search.placeholder": "在滚动缓冲中查找",
+  "component.terminal.search.noMatch": "没有匹配项",
+  "component.terminal.search.prevMatch": "上一个匹配",
+  "component.terminal.search.nextMatch": "下一个匹配",
+  "component.terminal.search.matchCount": "第 {index} 个，共 {count, plural, other {# 个}}",
+  "component.terminal.search.matchCountAtLeast":
+    "第 {index} 个，共 {count, plural, other {# 个}}以上",
+
   // ------------------------------------------------------------------ page
   "page.conversation.empty.title": "还没有对话",
   "page.conversation.empty.description": "开始输入以创建对话",
