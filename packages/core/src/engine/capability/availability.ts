@@ -1,6 +1,7 @@
 /**
  * Capability availability: the only place that answers "may this entry be
- * shown at all?" (`D-03`, `INV-8`).
+ * shown at all? A capability the engine says it does not have is hidden; a
+ * capability nobody has probed is shown.
  *
  * Three states, and the difference between the last two is the point:
  *
@@ -38,8 +39,7 @@ export type CapabilityAvailability =
  *
  * Only four families are gated by a coarse boolean; every other family is
  * always offered and is bounded by `since` alone. `conversation.switch` is the
- * one row that needs a second flag (`runtime_start`), because switch itself
- * starts a runtime.
+ * one row that needs a second flag, because switch itself starts a runtime.
  */
 const FAMILY_FLAG: Readonly<Record<string, string>> = {
   agent: "agent_management",
@@ -49,7 +49,12 @@ const FAMILY_FLAG: Readonly<Record<string, string>> = {
 
 /** Capability-specific overrides, checked before the family flag. */
 const NAME_FLAGS: Readonly<Record<string, readonly string[]>> = {
-  "conversation.switch": ["runtime_start", "conversation_management"],
+  // Switch is gated by conversation management only. Its own runtime flag cannot
+  // be named here: that flag's spelling is also a frame name, and engine code may
+  // not write one. The cost is that an engine advertising conversations but not
+  // runtimes shows switch as available and lets the command fail loudly, which is
+  // the safe direction (hide only what the engine said it lacks).
+  "conversation.switch": ["conversation_management"],
   "subagent.launch": ["launch_subagent"],
 };
 
@@ -168,7 +173,7 @@ export function availabilityOf(
  * Whether a capability should appear in a command surface.
  *
  * 三态映射：`available`（引擎说明支持）/ `unavailable`（引擎说明不支持）/
- * `unknown`（引擎没说）。**`INV-8` 的"缺能力则隐藏"只对 `unavailable` 生效** ——
+ * `unknown`（引擎没说）。**「缺能力则隐藏」只对 `unavailable` 生效** ——
  * 对 `unknown` 隐藏等于替用户做了一个我们不知道的决定。
  *
  * `unknown` stays visible on purpose: hiding on ignorance turns a probed-late

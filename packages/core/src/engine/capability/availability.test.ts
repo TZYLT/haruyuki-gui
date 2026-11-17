@@ -90,17 +90,23 @@ describe("availabilityOf", () => {
     });
   });
 
-  it("requires both flags for conversation.switch", () => {
-    const onlyConversations: CapabilitySnapshot = {
+  it("gates conversation.switch on conversation management alone", () => {
+    // The engine's own runtime flag cannot be named from engine code (its
+    // spelling is also a frame name), so switch follows conversation management
+    // and lets the command fail loudly when the runtime is missing.
+    const noConversations: CapabilitySnapshot = {
       state: "probed",
-      booleans: { conversation_management: true },
+      booleans: { agent_management: true },
       slashCommands: [],
       probedAt: 1,
     };
 
-    expect(availabilityOf("conversation.switch", onlyConversations, "0.6.0")).toEqual({
+    expect(availabilityOf("conversation.switch", noConversations, "0.6.0")).toEqual({
       state: "unknown",
       reason: "flag-not-advertised",
+    });
+    expect(availabilityOf("conversation.switch", ALL_ON, "0.6.0")).toEqual({
+      state: "available",
     });
   });
 
