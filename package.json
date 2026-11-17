@@ -33,7 +33,8 @@
     "desktop:smoke:supervision": "pnpm --filter @haruyuki/desktop smoke:supervision",
     "hooks:install": "node scripts/install-hooks.mjs",
     "record": "node scripts/engine/record.mjs",
-    "b2:demo": "vitest run packages/core/src/engine/client/acceptance-demo --reporter=verbose --no-coverage"
+    "b2:demo": "vitest run packages/core/src/engine/client/acceptance-demo --reporter=verbose --no-coverage",
+    "terminal:probe": "node apps/desktop/scripts/terminal-probe.mjs"
   },
   "devDependencies": {
     "@formatjs/icu-messageformat-parser": "3.5.23",
