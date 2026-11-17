@@ -132,6 +132,8 @@ export const BRIDGE_CHANNEL_NAMES = Object.freeze({
     bulk: "bridge:bulk.frame.deliver",
   }),
   layoutSave: "bridge:control.layout.save",
+  layoutState: "bridge:control.layout.state",
+  commandInvoke: "bridge:control.command.invoke",
   terminalAck: "bridge:stream.terminal.ack",
   terminalNotice: "bridge:stream.terminal.notice",
   appPing: "bridge:control.app.ping",
@@ -168,6 +170,8 @@ export const CHANNEL_ALLOWLIST: readonly string[] = Object.freeze([
   BRIDGE_CHANNEL_NAMES.frameDeliver.stream,
   BRIDGE_CHANNEL_NAMES.frameDeliver.bulk,
   BRIDGE_CHANNEL_NAMES.layoutSave,
+  BRIDGE_CHANNEL_NAMES.layoutState,
+  BRIDGE_CHANNEL_NAMES.commandInvoke,
   BRIDGE_CHANNEL_NAMES.terminalAck,
   BRIDGE_CHANNEL_NAMES.terminalNotice,
   // G1's runtime surface: status, pick, reset, failed push and log. The error
