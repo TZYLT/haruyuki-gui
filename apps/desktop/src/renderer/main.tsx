@@ -15,22 +15,27 @@
  * of truth for a value the main process also needs for the window's background.
  */
 
-import { StrictMode, useEffect, useState, type ReactElement } from "react";
+import { StrictMode, useEffect, useState, useSyncExternalStore, type ReactElement } from "react";
 import { createRoot } from "react-dom/client";
+import type { LayoutDoc, LayoutSnapshotBody, LayoutState } from "@haruyuki/protocol";
 
 import {
+  AppFrame,
   LocaleProvider,
   TERMINAL_STYLESHEET,
   TerminalPanel,
-  connectTerminalFeed,
   applyTheme,
+  connectTerminalFeed,
+  createPageRegistry,
   createTerminalRouter,
+  registerSamplePages,
   type CommandSender,
   type TerminalRouter,
   type TerminalSignal,
   type ThemeAttrs,
 } from "@haruyuki/ui";
-import { SamplePage } from "@haruyuki/ui/examples";
+
+import { DEFAULT_LAYOUT } from "./default-layout.js";
 
 import { CrashPage, parseCrashParams } from "./crash-page.js";
 import { DiagnosticsPanel } from "./diagnostics-panel.js";
@@ -130,6 +135,39 @@ const boot = bootPayload();
 
 // Before the first paint, so the page never flashes the wrong theme.
 applyTheme(boot.theme);
+
+/**
+ * The latest layout the frame should show.
+ *
+ * A tiny external store rather than React state because the value arrives from
+ * the bridge before the frame mounts (and again after every save); a frame that
+ * subscribed through props would need the whole Shell to re-render for a
+ * revision bump.
+ */
+let layoutView: { readonly doc: LayoutDoc; readonly revision: number } = {
+  doc: DEFAULT_LAYOUT,
+  revision: 0,
+};
+const layoutListeners = new Set<() => void>();
+
+/** Replace the view and wake the frame; identical docs only move the revision. */
+function publishLayout(doc: LayoutDoc, revision: number): void {
+  layoutView = { doc, revision };
+  for (const listener of layoutListeners) listener();
+}
+
+/** @param listener called after each layout push @returns unsubscribe */
+function subscribeLayout(listener: () => void): () => void {
+  layoutListeners.add(listener);
+
+  return () => {
+    layoutListeners.delete(listener);
+  };
+}
+
+/** The page registry is fixed for the app's lifetime; samples stand in for real pages. */
+const frameRegistry = createPageRegistry();
+registerSamplePages(frameRegistry);
 
 // The bridge is optional: if the preload failed, the page still renders and the
 // failure is visible in the console instead of becoming a blank window. A
@@ -236,6 +274,11 @@ if (shellBridge !== undefined && terminalRouter !== null) {
     terminal: terminalRouter,
     onNotice: (notice) => notices.publish(notice),
     onReadyError: (error) => console.error("bridge ready failed", error),
+    onLayoutSnapshot: (body: LayoutSnapshotBody) => {
+      const doc = body.items[0];
+
+      if (doc !== undefined) publishLayout(doc, body.revision);
+    },
   });
 }
 
@@ -461,6 +504,41 @@ function isRuntimeLogResult(value: unknown): value is RuntimeLogResult {
  */
 function Shell(): ReactElement {
   const [locale] = useState(boot.locale);
+  const layout = useSyncExternalStore(subscribeLayout, () => layoutView);
+
+  useEffect(() => {
+    if (shellBridge === undefined) return;
+
+    void shellBridge
+      .invoke(BRIDGE_CHANNEL_NAMES.layoutState)
+      .then((value) => {
+        const state = value as LayoutState | undefined;
+
+        if (state !== undefined && state.doc !== undefined)
+          publishLayout(state.doc, state.revision);
+      })
+      .catch((error: unknown) => console.error("layout state failed", error));
+  }, []);
+
+  const saveLayout = (doc: LayoutDoc): void => {
+    if (shellBridge === undefined) return;
+
+    void shellBridge
+      .invoke(BRIDGE_CHANNEL_NAMES.layoutSave, {
+        baseRevision: layoutView.revision,
+        doc,
+      })
+      .then((value) => {
+        const ack = value as { ok?: boolean; revision?: number } | undefined;
+
+        if (ack?.ok === true && typeof ack.revision === "number") {
+          // Keep the document identity: only the revision moved, so the frame
+          // must not re-apply its own save.
+          publishLayout(layoutView.doc, ack.revision);
+        }
+      })
+      .catch((error: unknown) => console.error("layout save failed", error));
+  };
 
   // The document's own `lang` follows the resolved locale: a screen reader picks its
   // voice from this attribute, and a page that says `en` while showing Chinese is read
@@ -484,7 +562,12 @@ function Shell(): ReactElement {
             <DiagnosticsPanel initialOpen />
           ) : (
             <>
-              <SamplePage locale={locale} />
+              <AppFrame
+                registry={frameRegistry}
+                doc={layout.doc}
+                revision={layout.revision}
+                onLayoutChange={saveLayout}
+              />
               {/*
                * The terminal panel, mounted on the default route so a session has a
                * surface. Three of its inputs are honest placeholders, because the
