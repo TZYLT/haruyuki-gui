@@ -151,6 +151,7 @@ const GATE_SELF_TEST_FILES = [
   "scripts/i18n/check.test.ts",
   "scripts/lint/i18n-messages.test.ts",
   "scripts/check-frame.test.ts",
+  "scripts/check-forbidden-literals.test.ts",
 ];
 
 /** Long form of the gate self-test heading; see the segment definition. */
@@ -386,6 +387,10 @@ function buildSegments(options) {
     {
       label: "boundaries",
       command: () => gate("scripts/check-boundaries.mjs", options.verbose),
+    },
+    {
+      label: "literals",
+      command: () => gate("scripts/check-forbidden-literals.mjs", options.verbose),
     },
     {
       label: "gate self-test",

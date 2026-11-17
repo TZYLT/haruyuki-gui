@@ -183,8 +183,16 @@ export function createReconnectAgent(options: ReconnectAgentOptions): ReconnectA
     // here -- but one microtask later, so "reconnecting" is observable. Starting
     // it inline would make the layer jump from ready to replaying within a single
     // tick, and a banner that never renders "reconnecting" may as well not have
-    // that state. A failure is already recorded as a status; rethrowing it would
-    // surface as an unhandled rejection nobody can act on.
+    // that state.
+    //
+    // One microtask means "after the current synchronous block", not "next frame":
+    // a listener subscribed in the same block sees all three states, while a
+    // listener that subscribes later is not promised the first two. That is the
+    // whole guarantee, and it is enough -- rendering subscribers are attached when
+    // the view is created, not when a socket closes.
+    //
+    // A failure is already recorded as a status; rethrowing it would surface as an
+    // unhandled rejection nobody can act on.
     queueMicrotask(() => {
       void recover().catch(() => {});
     });
@@ -210,7 +218,8 @@ export function createReconnectAgent(options: ReconnectAgentOptions): ReconnectA
       machine.retry();
       if (!wasDegraded) return;
       // Deferred for the same reason the close handler defers: the retry has to
-      // be observable as "reconnecting" before the sequence takes over.
+      // be observable as "reconnecting" before the sequence takes over, otherwise
+      // pressing the button looks like nothing happened.
       queueMicrotask(() => {
         void recover().catch(() => {});
       });
