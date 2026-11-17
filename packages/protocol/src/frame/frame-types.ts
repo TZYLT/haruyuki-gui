@@ -77,6 +77,36 @@ export const FRAME_TYPES = {
     since: "C4",
     summary: "authoritative layout snapshot",
   },
+  "delta.message": {
+    ch: "stream",
+    coalescible: "never",
+    since: "C1",
+    summary: "one assistant message increment",
+  },
+  "state.loop": {
+    ch: "control",
+    coalescible: "never",
+    since: "C1",
+    summary: "loop status snapshot",
+  },
+  "state.device": {
+    ch: "control",
+    coalescible: "never",
+    since: "C1",
+    summary: "device status snapshot",
+  },
+  "state.queue": {
+    ch: "control",
+    coalescible: "never",
+    since: "C1",
+    summary: "queue snapshot including removals",
+  },
+  "state.subagents": {
+    ch: "control",
+    coalescible: "never",
+    since: "C1",
+    summary: "subagent state snapshot",
+  },
 } as const satisfies Record<string, FrameTypeSpec>;
 
 /**

@@ -48,6 +48,11 @@ describe("FRAME_TYPES", () => {
       "bulk.page": true,
       "term.output": true,
       "layout.snapshot": true,
+      "delta.message": true,
+      "state.loop": true,
+      "state.device": true,
+      "state.queue": true,
+      "state.subagents": true,
     };
 
     // Runtime: the two sets must agree, which catches a table edited through a
