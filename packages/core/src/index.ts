@@ -23,6 +23,9 @@
  * - `./layout`: the C4 layout store, validator, draft store and transport-neutral
  *   channel (a layout load, docs/36). The document schema itself is in
  *   `@haruyuki/protocol`; this surface is the core half.
+ * - `./merge`: the engine event merger -- ordered delivery, duplicate refusal,
+ *   message assembly, terminal slicing and the diagnostics counters the shells
+ *   and the reconnect path read.
  *
  * The placeholder constant stays: it is the package's self-identity, and removing
  * it would break the "not a barrel" shape this file has to keep (see
@@ -34,6 +37,7 @@ export * from "./bridge/index.js";
 export * from "./engine";
 export * from "./engine/client/index.js";
 export * from "./layout/index.js";
+export * from "./merge/index.js";
 export * from "./port/host-port";
 export * from "./port/headless-host-port";
 export * from "./supervision/index.js";
