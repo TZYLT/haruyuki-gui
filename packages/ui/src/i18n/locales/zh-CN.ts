@@ -128,6 +128,12 @@ export const zhCN = {
   "error.runtimeActual": "实际 sha256",
   "error.runtimeLogPath": "日志目录",
 
+  // -------------------------------------------------------------- reconnect
+  "component.reconnect.reconnecting": "正在重新连接",
+  "component.reconnect.staleApprovals":
+    "{count, plural, =0 {断线期间没有审批失效} other {断线期间有 # 条审批已失效}}",
+  "component.reconnect.olderAvailable": "还有更早的消息",
+
   // ------------------------------------------------------------------ a11y
   "a11y.action.delete": "删除",
 } as const satisfies Record<keyof typeof en, string> & LocaleMessages;

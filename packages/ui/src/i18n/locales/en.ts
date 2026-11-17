@@ -147,6 +147,16 @@ export const en = {
   "error.runtimeActual": "Actual sha256",
   "error.runtimeLogPath": "Log directory",
 
+  // -------------------------------------------------------------- reconnect
+  // Wording states only what is known: a connection is being re-established, a
+  // number of approvals stopped being answerable, older messages exist. Nothing
+  // here promises when, because a reconnect can fail for longer than any sentence
+  // could honestly cover.
+  "component.reconnect.reconnecting": "Reconnecting",
+  "component.reconnect.staleApprovals":
+    "{count, plural, =0 {No approvals expired while offline} one {1 approval expired while offline} other {# approvals expired while offline}}",
+  "component.reconnect.olderAvailable": "Older messages available",
+
   // ------------------------------------------------------------------ a11y
   "a11y.action.delete": "Delete",
 } as const satisfies LocaleMessages;
