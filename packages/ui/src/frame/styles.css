@@ -253,3 +253,12 @@
   font-size: var(--ui-font-size-1, 12px);
   font-weight: 500;
 }
+
+.hz-tab:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: -2px;
+}
+
+.hz-tab__close:focus-visible {
+  outline: 2px solid currentColor;
+}

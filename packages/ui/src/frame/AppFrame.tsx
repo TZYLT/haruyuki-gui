@@ -412,6 +412,36 @@ export function AppFrame(props: AppFrameProps): ReactElement {
     else exitCompact(api);
   }, [compact]);
 
+  // The one global shortcut (`59` section 4.11): cycle the active group's tabs.
+  // It listens in the bubble phase, so a page that consumed Tab first wins.
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (!event.ctrlKey || event.key !== "Tab" || event.defaultPrevented) return;
+
+      const api = apiRef.current;
+
+      if (api === null) return;
+
+      const panels = api.panels.filter((panel) => panel.api.isVisible);
+
+      if (panels.length < 2) return;
+
+      const active = api.activePanel;
+      const current = panels.findIndex((panel) => panel.id === active?.id);
+      const step = event.shiftKey ? -1 : 1;
+      const next = panels[(current + step + panels.length) % panels.length];
+
+      if (next === undefined) return;
+
+      event.preventDefault();
+      next.api.setActive();
+    };
+
+    document.addEventListener("keydown", onKeyDown);
+
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, []);
+
   useEffect(() => {
     const api = apiRef.current;
 
