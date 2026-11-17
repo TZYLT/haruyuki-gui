@@ -14,6 +14,18 @@
 /** Package name, useful in diagnostics and in error messages. */
 export const PACKAGE_NAME = "@haruyuki/ui" as const;
 
+export {
+  CAPABILITY_DESCRIPTORS,
+  CAPABILITY_FAMILIES,
+  COMMAND_DESCRIPTOR_LIST,
+  filterDescriptors,
+} from "./command/descriptors.js";
+export type {
+  CapabilityDescriptor,
+  CapabilityFamily,
+  CapabilityParamSpec,
+  CapabilityScope,
+} from "./command/descriptors.js";
 export * from "./bridge/index.js";
 export * from "./components/index.js";
 export * from "./i18n/index.js";

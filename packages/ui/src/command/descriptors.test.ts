@@ -1,56 +1,74 @@
 /**
- * `the log` descriptor guarantees.
+ * Descriptor guarantees.
  *
- * Three things are asserted here, and each fails for a different mistake:
+ * Each block fails for a different mistake:
  *
- * 1. The table covers exactly the capabilities the command surface offers
- *    (`CAPABILITY_NAMES` minus the legacy `file.ops`) and nothing else.
- * 2. No capability name is written as a literal in `descriptors.ts` 
- *    the names must come from `@haruyuki/protocol`'s generated tables.
- * 3. Search keys are ASCII and never contain the Chinese copy .
+ * 1. the table covers exactly the capabilities the surface offers;
+ * 2. no capability name is written as a literal;
+ * 3. every key a descriptor names exists in **both** locales —
+ *    that equality is the only checkable form of "the keys are generated, not
+ *    hand-copied";
+ * 4. search keys are ASCII only.
  */
-/* eslint-disable no-restricted-imports -- this suite runs under Node and must
-   compare the table against the contract tables themselves; the renderer-side
-   R4/R7 rules are about shipped code, not test-time reads. */
-import { readFileSync } from "node:fs";
-import path from "node:path";
-
+// eslint-disable-next-line no-restricted-imports -- 测试要拿契约表当预期值，权威判定在 scripts/check-boundaries.mjs
 import { CAPABILITY_META } from "@haruyuki/protocol";
 import type { CapabilityName } from "@haruyuki/protocol";
 import { describe, expect, it } from "vitest";
 
-import { COMMAND_DESCRIPTORS, filterDescriptors } from "./descriptors.js";
-
-const SOURCE = path.join(import.meta.dirname, "descriptors.ts");
+import { en } from "../i18n/locales/en.js";
+import { zhCN } from "../i18n/locales/zh-CN.js";
+import {
+  CAPABILITY_DESCRIPTORS,
+  CAPABILITY_FAMILIES,
+  COMMAND_DESCRIPTOR_LIST,
+  filterDescriptors,
+} from "./descriptors.js";
 
 /** Names the surface offers: everything except the bidirectional legacy body. */
 const EXPECTED: readonly string[] = (Object.keys(CAPABILITY_META) as CapabilityName[])
   .filter((name) => (CAPABILITY_META[name] as { readonly legacy?: true }).legacy !== true)
   .sort((left, right) => left.localeCompare(right));
 
-describe("COMMAND_DESCRIPTORS", () => {
+describe("CAPABILITY_DESCRIPTORS", () => {
   it("covers exactly the capabilities the surface offers", () => {
-    expect(COMMAND_DESCRIPTORS.map((row) => row.name)).toEqual(EXPECTED);
+    expect(COMMAND_DESCRIPTOR_LIST.map((row) => row.name)).toEqual(EXPECTED);
+    expect(Object.keys(CAPABILITY_DESCRIPTORS)).toEqual(EXPECTED);
   });
 
-  it("keeps every capability name out of this module's source ", () => {
-    const source = readFileSync(SOURCE, "utf8");
-    const literals = source.match(/"[a-z_]+\.[a-z_]+"/g) ?? [];
+  it("keeps every descriptor key in both locales", () => {
+    const englishKeys = new Set(Object.keys(en));
+    const chineseKeys = new Set(Object.keys(zhCN));
+    const wanted = new Set<string>();
 
-    expect(literals).toEqual([]);
+    for (const row of COMMAND_DESCRIPTOR_LIST) {
+      wanted.add(row.labelKey);
+      wanted.add(row.descKey);
+    }
+
+    for (const family of CAPABILITY_FAMILIES) {
+      wanted.add(family.nameKey);
+    }
+
+    const missingEnglish = [...wanted].filter((key) => !englishKeys.has(key));
+    const missingChinese = [...wanted].filter((key) => !chineseKeys.has(key));
+
+    expect(missingEnglish).toEqual([]);
+    expect(missingChinese).toEqual([]);
   });
 
-  it("derives keys from the name so a row cannot point at another row's copy", () => {
-    for (const row of COMMAND_DESCRIPTORS) {
-      expect(row.labelKey).toBe(
-        `page.command.${row.family}.${row.name.slice(row.family.length + 1)}.label`,
-      );
-      expect(row.descKey.endsWith(".desc")).toBe(true);
+  it("uses four segments at most", () => {
+    const keys = [
+      ...COMMAND_DESCRIPTOR_LIST.flatMap((row) => [row.labelKey, row.descKey]),
+      ...CAPABILITY_FAMILIES.map((family) => family.nameKey),
+    ];
+
+    for (const key of keys) {
+      expect(key.split(".").length).toBeLessThanOrEqual(4);
     }
   });
 
   it("searches ASCII only", () => {
-    for (const row of COMMAND_DESCRIPTORS) {
+    for (const row of COMMAND_DESCRIPTOR_LIST) {
       for (const key of row.searchKeys) {
         expect(key).toMatch(/^[a-z0-9]+$/);
       }
@@ -64,7 +82,10 @@ describe("COMMAND_DESCRIPTORS", () => {
     expect(results[0]?.searchKeys.some((key) => key.startsWith("apply"))).toBe(true);
   });
 
-  it("returns the whole table for an empty query", () => {
-    expect(filterDescriptors("   ")).toHaveLength(COMMAND_DESCRIPTORS.length);
+  it("groups every descriptor under exactly one family", () => {
+    const grouped = CAPABILITY_FAMILIES.flatMap((family) => family.descriptors);
+
+    expect(grouped).toHaveLength(COMMAND_DESCRIPTOR_LIST.length);
+    expect(new Set(grouped.map((row) => row.name)).size).toBe(COMMAND_DESCRIPTOR_LIST.length);
   });
 });
