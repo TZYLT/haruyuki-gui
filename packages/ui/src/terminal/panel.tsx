@@ -44,10 +44,11 @@ import { useCallback, useEffect, useRef, useState, type ReactElement } from "rea
 import { Dialog } from "../components/index.js";
 import { useT } from "../i18n/index.js";
 import { killTerminal, sendInput, spawnTerminal } from "./commands.js";
-import type { CommandSender } from "./commands.js";
+import type { CommandFailure, CommandOutcome, CommandSender } from "./commands.js";
 import { translateKey, translatePaste } from "./exit.js";
 import { createTerminalHost } from "./host.js";
 import type { TerminalHost } from "./host.js";
+import type { TerminalPhase } from "./state.js";
 import { reducePhase } from "./state.js";
 import type { TerminalPanelState, TerminalSignal } from "./state.js";
 import { FONT_MAX, FONT_MIN, TerminalToolbar, toolbarAvailability } from "./toolbar.js";
@@ -105,6 +106,26 @@ export function decisionForStroke(input: {
     metaKey: event?.metaKey === true,
     isComposing: input.isComposing,
   });
+}
+
+/**
+ * A command that was never handed over, and why.
+ *
+ * Only the two reasons that are not about a session: a missing channel and a
+ * missing capability. The third reason, `engine-rejected`, is a failed attempt and
+ * lives in the phase instead.
+ */
+export interface TerminalRefusal {
+  readonly reason: Extract<CommandFailure, "channel-unavailable" | "not-implemented">;
+  /**
+   * Why, when the command layer had something to say. Spelled `string | undefined`
+   * rather than optional because this interface is compiled twice: this package
+   * turns `exactOptionalPropertyTypes` off, while the shell that imports it
+   * inherits it on. An optional property means "may be absent" to one and
+   * "must be absent, not undefined" to the other, so the same object literal
+   * type-checks in one program and fails in the other.
+   */
+  readonly detail: string | undefined;
 }
 
 /** What the panel needs from its host. */
@@ -316,15 +337,87 @@ export function TerminalPanel({
    */
   const composingRef = useRef(false);
 
+  /**
+   * The last command the panel could not carry, in the words the user needs.
+   *
+   * A notice rather than a phase, because two of the three failures are not
+   * failures of a session: an unavailable channel and a missing capability never
+   * reached the engine, so there is no session to fail. Putting them in the phase
+   * would print "the shell could not be started" for a build that cannot start
+   * one yet. It is cleared as soon as a command is carried, so a stale message
+   * cannot describe an attempt that has since succeeded.
+   */
+  const [refusal, setRefusal] = useState<TerminalRefusal | null>(null);
+
+  /**
+   * Route one command's outcome.
+   *
+   * The whole reason this exists: `spawnTerminal` and friends resolve with a
+   * discriminated outcome, and the panel used to discard it with `void`. A
+   * refused spawn then left the phase in `starting` forever -- the panel said
+   * "starting the shell" and meant "waiting for a frame that will never come".
+   *
+   * @param outcome what the command layer reported
+   * @param phase the phase the command was sent from, for the suppressed message
+   */
+  const settleCommand = useCallback(
+    (outcome: CommandOutcome, phase: TerminalPhase) => {
+      switch (outcome.kind) {
+        case "sent":
+          // Handed over, nothing else. The terminal exists only when the engine
+          // pushes the frame that says so, which arrives as a `spawned` signal.
+          setRefusal(null);
+          return;
+
+        case "suppressed":
+          // Typing while the shell starts is ordinary: no session could receive
+          // it, and neither a phase change nor a notice is warranted.
+          void phase;
+          return;
+
+        case "failed":
+          switch (outcome.reason) {
+            case "engine-rejected":
+              // The engine answered and said no. This is a real failure of this
+              // attempt, so it belongs in the phase -- and the text is kept
+              // verbatim, because it is the only clue the user has.
+              dispatch({ kind: "rejected", detail: outcome.detail ?? "" });
+              return;
+
+            case "channel-unavailable":
+              // "Cannot send right now", not "it failed". The shell's readiness
+              // already owns the connected/disconnected transition, and a second
+              // owner would fight it -- so this is a notice. The start it was
+              // announced for is withdrawn, because nothing is in flight.
+              setRefusal({ reason: outcome.reason, detail: outcome.detail });
+              dispatch({ kind: "start-withdrawn" });
+              return;
+
+            case "not-implemented":
+              // A capability this build does not have. Retrying is pointless, so
+              // the notice says so and the optimistic `starting` is withdrawn:
+              // leaving it would keep the panel saying "starting the shell" with
+              // no request behind it.
+              setRefusal({ reason: outcome.reason, detail: outcome.detail });
+              dispatch({ kind: "start-withdrawn" });
+              return;
+          }
+      }
+    },
+    [dispatch],
+  );
+
   /** Send bytes the exit functions have already decided on. */
   const transmit = useCallback(
     (data: string) => {
       // `sendInput` re-checks the phase, so a payload produced one frame before
       // the phase moved cannot reach a dead session. Passing the live phase
       // rather than a captured one is what makes that check meaningful.
-      void sendInput(send, { terminalId, data }, stateRef.current.phase);
+      void sendInput(send, { terminalId, data }, stateRef.current.phase).then((outcome) => {
+        settleCommand(outcome, stateRef.current.phase);
+      });
     },
-    [send, terminalId],
+    [send, settleCommand, terminalId],
   );
 
   /** Ask the engine to open a session, or to open it again. */
@@ -339,15 +432,22 @@ export function TerminalPanel({
       cols: DEFAULT_COLS,
       rows: DEFAULT_ROWS,
       ...(cwd === undefined ? {} : { cwd }),
+    }).then((outcome) => {
+      // The phase moved optimistically above, so a refusal has to move it back:
+      // otherwise a spawn the command layer never carried leaves the panel
+      // claiming a start that is not in flight.
+      settleCommand(outcome, "starting");
     });
-  }, [cwd, dispatch, send, terminalId]);
+  }, [cwd, dispatch, send, settleCommand, terminalId]);
 
   /** End the running process. Not phase-gated here: the engine ignores a kill for
    * a terminal that is already gone, and a close that was skipped is a process
    * that outlives its panel. */
   const stop = useCallback(() => {
-    void killTerminal(send, { terminalId });
-  }, [send, terminalId]);
+    void killTerminal(send, { terminalId }).then((outcome) => {
+      settleCommand(outcome, stateRef.current.phase);
+    });
+  }, [send, settleCommand, terminalId]);
 
   /** Apply a paste the exit function has already ruled on. */
   const applyPaste = useCallback(
@@ -533,6 +633,19 @@ export function TerminalPanel({
         onFontSize={setFontSize}
         onMore={() => setMenuOpen((open) => !open)}
       />
+
+      {/* A command that was never handed over says so here rather than in the
+          phase: there is no session to fail, and the toolbar would otherwise
+          print "the shell could not be started" for a build that cannot start one
+          yet. Announced live, because the user pressed a button and nothing else
+          on screen changes. */}
+      {refusal === null ? null : (
+        <p className="ui-terminal__notice" role="status">
+          {refusal.reason === "not-implemented"
+            ? t("component.terminal.noticeNotImplemented")
+            : t("component.terminal.noticeChannelUnavailable")}
+        </p>
+      )}
 
       {menuOpen && moreItems.length > 0 ? (
         <div className="ui-terminal__menu" role="menu">

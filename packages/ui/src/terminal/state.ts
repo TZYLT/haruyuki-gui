@@ -79,7 +79,31 @@ export type TerminalSignal =
   | { readonly kind: "spawned"; readonly pid: number }
   | { readonly kind: "exited"; readonly exitCode: number; readonly error: string | null }
   | { readonly kind: "engine"; readonly ready: boolean }
-  | { readonly kind: "reopen-allowed" };
+  | { readonly kind: "reopen-allowed" }
+  /**
+   * A command the engine was asked to carry and refused, in its own words.
+   *
+   * Only `engine-rejected` reaches this signal. The command layer has three
+   * failures and the other two are not this one: an unavailable channel and a
+   * missing capability never reached the engine, so they are reported beside the
+   * phase rather than in it -- see the panel's notice line. Sending them here
+   * would print "the shell could not be started" for a build that simply cannot
+   * start one yet, and sent the user looking for a fault that is not there.
+   *
+   * It exists because the phase machine otherwise learns about failure only from
+   * a pushed frame. A spawn the engine refuses is answered on the request itself,
+   * so without this signal the panel would sit in `starting` waiting for a frame
+   * that will never arrive.
+   */
+  | { readonly kind: "rejected"; readonly detail: string }
+  /**
+   * The spawn request never reached the command layer, so the start it announced
+   * is cancelled and the panel returns to `idle`.
+   *
+   * Distinct from {@link TerminalSignal.rejected} on purpose: that one says the
+   * engine answered and refused, this one says the engine was never asked.
+   */
+  | { readonly kind: "start-withdrawn" };
 
 /**
  * The next state for one signal.
@@ -102,6 +126,12 @@ export function reducePhase(state: TerminalPanelState, signal: TerminalSignal): 
     case "engine":
       return applyReadiness(state, signal.ready);
 
+    case "rejected":
+      return rejectCommand(state, signal.detail);
+
+    case "start-withdrawn":
+      return withdrawStart(state);
+
     case "reopen-allowed":
       // Accepted, and intentionally inert. The window it reports is engine-side:
       // a second spawn for a session that is still inside it is coalesced by the
@@ -112,6 +142,68 @@ export function reducePhase(state: TerminalPanelState, signal: TerminalSignal): 
       // one. The same window also covers the kill that a remount sends, so this
       // signal must not be read as "a session died": it says nothing about the
       // session, only that the coalescing window has closed.
+      return state;
+  }
+}
+
+/**
+ * The spawn request was never handed over, so the start it announced is cancelled.
+ *
+ * The phase moved to `starting` before the command was sent, deliberately: a second
+ * click must find the panel already in flight. That optimism has to be undone when
+ * the command layer answers that it could not carry the request -- otherwise the
+ * panel stays in `starting` forever, waiting for a frame that has no reason to
+ * come. Nothing else is touched, because nothing else happened.
+ *
+ * @param state the current state
+ * @returns the idle state, or `state` when no start was in flight
+ */
+function withdrawStart(state: TerminalPanelState): TerminalPanelState {
+  switch (state.phase) {
+    case "starting":
+      return { ...state, phase: "idle", pid: null, exitCode: null, failureDetail: null };
+
+    case "idle":
+    case "running":
+    case "exited":
+    case "failed":
+    case "disconnected":
+      // Either no request was in flight (so there is nothing to withdraw), or the
+      // session already moved on and the request it answers is no longer the one
+      // this state describes.
+      return state;
+  }
+}
+
+/**
+ * A command the engine refused, after it was handed over.
+ *
+ * Distinct from {@link settleSession}'s failure arm, which reads a pushed frame:
+ * this one answers a request, so it can arrive in any phase that could have sent
+ * it. `exited` and `failed` accept it because reopening a finished session is
+ * offered exactly there.
+ *
+ * @param state the current state
+ * @param detail the engine's own text, about to be shown verbatim
+ * @returns the failed state, or `state` when there was no session to fail
+ */
+function rejectCommand(state: TerminalPanelState, detail: string): TerminalPanelState {
+  switch (state.phase) {
+    case "idle":
+    case "starting":
+    case "running":
+    case "exited":
+    case "failed":
+      // The pid and exit code are dropped for the same reason as in
+      // `requestStart`: neither describes the attempt that just failed, and
+      // carrying the previous session's code into a failure banner would report a
+      // result the panel no longer has.
+      return { ...state, phase: "failed", pid: null, exitCode: null, failureDetail: detail };
+
+    case "disconnected":
+      // Nothing could have been handed over: the request path is closed while the
+      // engine is away. Keeping the phase is the honest answer, because "the
+      // engine refused this" is a claim about a conversation that did not happen.
       return state;
   }
 }

@@ -67,6 +67,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { LocaleProvider } from "../i18n/index.js";
+import { en } from "../i18n/locales/en.js";
 import type { CommandSender, TerminalCommand } from "./commands.js";
 import { decisionForStroke, initialPanelState, TerminalPanel } from "./panel.js";
 import { TERMINAL_INPUT_CAPABILITY, translatePaste } from "./exit.js";
@@ -180,6 +181,11 @@ function renderPanel(overrides: Partial<Parameters<typeof TerminalPanel>[0]> = {
   };
 }
 
+/** The phase the panel is currently reporting, from its own attribute. */
+function phaseOf(): string | null {
+  return document.querySelector<HTMLElement>(".ui-terminal")?.getAttribute("data-phase") ?? null;
+}
+
 /** The panel's screen element: the box the terminal paints into. */
 function screenElement(): HTMLElement {
   const element = document.querySelector<HTMLElement>(".ui-terminal__screen");
@@ -272,6 +278,110 @@ describe("TerminalPanel: it mounts the terminal it was given a sheet for", () =>
 
     expect(screenElement().children).toHaveLength(1);
     expect(screenElement().querySelector(".xterm")).not.toBeNull();
+  });
+});
+
+describe("TerminalPanel: a command that never left is not a session that started", () => {
+  /**
+   * Render a panel whose command layer answers with one fixed failure.
+   *
+   * The real outcome value, not a stubbed panel method: "what the sender answers"
+   * and "whether the panel reads the answer" are two different facts, and the
+   * defect this block pins is the second one.
+   *
+   * @param reason the failure the command layer reports
+   * @returns the harness
+   */
+  function refusing(reason: "engine-rejected" | "channel-unavailable" | "not-implemented") {
+    return renderPanel({
+      send: async () => ({
+        ok: false,
+        reason,
+        detail: reason === "engine-rejected" ? "spawn denied" : undefined,
+      }),
+    });
+  }
+
+  it("leaves starting when the command could not be handed over, instead of spinning forever", async () => {
+    // The failure this pins, in full: the panel moves to `starting` optimistically,
+    // the command layer answers `not-implemented`, and a caller that discarded the
+    // answer leaves the panel saying "starting the shell" with nothing in flight.
+    // It reads as a slow shell, and no frame ever arrives to end it.
+    const harness = refusing("not-implemented");
+
+    await userEvent.click(screen.getByRole("button", { name: /reopen|start/i }));
+
+    expect(phaseOf()).not.toBe("starting");
+  });
+
+  it("says the capability is missing rather than that the shell failed, because a retry cannot fix a version", () => {
+    // `not-implemented` never reached the engine, so it is not a session failure.
+    // Reporting it through the phase would print "the shell could not be started"
+    // and send the user looking for a fault that is not there.
+    refusing("not-implemented");
+
+    return userEvent.click(screen.getByRole("button", { name: /reopen|start/i })).then(() => {
+      expect(phaseOf()).toBe("idle");
+      expect(screen.getByRole("status").textContent).toBe(
+        "This is not available in this build yet",
+      );
+    });
+  });
+
+  it("says the channel is unavailable, and leaves the phase alone, because waiting is the answer", () => {
+    // The shell's readiness already owns the connected/disconnected transition. A
+    // second owner would fight it, so this is a notice and not a phase.
+    refusing("channel-unavailable");
+
+    return userEvent.click(screen.getByRole("button", { name: /reopen|start/i })).then(() => {
+      expect(screen.getByRole("status").textContent).toBe("Cannot reach the engine right now");
+      expect(phaseOf()).not.toBe("failed");
+    });
+  });
+
+  it("enters the failed phase when the engine refused, because that attempt really did fail", () => {
+    // The one reason that is a failure of a session, and the only one whose text
+    // the user has to see: it is the engine's own words.
+    refusing("engine-rejected");
+
+    return userEvent.click(screen.getByRole("button", { name: /reopen|start/i })).then(() => {
+      expect(phaseOf()).toBe("failed");
+    });
+  });
+
+  it("clears the notice once a later command is carried, because a stale refusal describes an attempt that has since worked", async () => {
+    let fail = true;
+
+    // One render, one button. The sender refuses the first spawn and accepts the
+    // second, so the panel has to clear what it said without any frame arriving in
+    // between -- a stale refusal is the same class of lie as a stale phase.
+    const harness = renderPanel({
+      send: async (command) => {
+        if (command.name === "terminal.spawn" && fail) {
+          fail = false;
+
+          return { ok: false, reason: "not-implemented" };
+        }
+
+        harness.commands.push(command);
+
+        return { ok: true };
+      },
+    });
+
+    // By the catalogue's own label rather than a pattern: two controls match a
+    // loose name, and picking the first one is how a test ends up driving the
+    // wrong button.
+    const button = screen.getByRole("button", {
+      name: en["component.terminal.action.reopen"],
+    });
+
+    await userEvent.click(button);
+    expect(screen.getByRole("status")).toBeDefined();
+
+    await userEvent.click(button);
+
+    expect(screen.queryByRole("status")).toBeNull();
   });
 });
 

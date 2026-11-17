@@ -124,6 +124,11 @@ export const en = {
   // "the connection came back and you may start again"; one sentence covering
   // both tells a user who just lost a shell that they never had one.
   "component.terminal.phaseIdleOffline": "Not connected to the engine",
+  // Two notices rather than two phases: neither of these is a fact about a
+  // session. The first says the channel is down and a retry may work; the second
+  // says this build does not have the capability and a retry cannot.
+  "component.terminal.noticeChannelUnavailable": "Cannot reach the engine right now",
+  "component.terminal.noticeNotImplemented": "This is not available in this build yet",
   "component.terminal.phaseIdleReady": "Connection restored; reopen to start a new session",
   "component.terminal.phaseStarting": "Starting the shell",
   "component.terminal.phaseRunning": "Running",
