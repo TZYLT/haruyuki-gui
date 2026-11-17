@@ -94,6 +94,9 @@ import {
   saveSettings,
 } from "./settings-io.js";
 import { wireBridge, type BridgeWiring } from "./bridge/wire.js";
+import { createLayoutWiring, type LayoutWiring } from "./layout/wiring.js";
+import { DEFAULT_LAYOUT, PAGE_IDS } from "./layout/catalog.js";
+import type { LayoutSaveRequest } from "@haruyuki/protocol";
 import {
   DEFAULT_SETTINGS,
   isWindowVisible,
@@ -129,6 +132,13 @@ let quitSupervisor: QuitSupervisor | null = null;
 
 /** D3's app-wide host and its `ipcMain` handlers; created once after `whenReady`. */
 let bridge: BridgeWiring | null = null;
+
+/**
+ * The layout subsystem outlives a renderer reload but not the app. It is kept
+ * beside the bridge because the two close in order: the layout flushes its open
+ * save window before the bridge that carries snapshots goes away.
+ */
+let layoutWiring: LayoutWiring | null = null;
 
 /** Parsed settings, loaded once and kept in step with the window. */
 let settings: ShellSettings = DEFAULT_SETTINGS;
@@ -334,6 +344,7 @@ async function createWindow(allowedDevtools: boolean, locale: string): Promise<B
 
   window.once("ready-to-show", () => window.show());
   bridge?.attachWindow(window);
+  layoutWiring?.publish();
 
   window.on("close", () => {
     settings = rememberGeometry(settings, window);
@@ -793,10 +804,38 @@ async function main(): Promise<void> {
     onLog: logSupervision,
   });
 
-  bridge = wireBridge({
+  const bridgeWiring = wireBridge({
     coreVersion: app.getVersion(),
     log: (event, detail) => logger?.info(event, detail),
+    layoutSave: (request) =>
+      layoutWiring === null
+        ? { ok: false, code: "LAYOUT_UNAVAILABLE" }
+        : layoutWiring.channel.handleSave(request as LayoutSaveRequest),
+    layoutState: () => {
+      if (layoutWiring === null) {
+        throw new Error("layout wiring is not ready");
+      }
+
+      return layoutWiring.channel.handleState();
+    },
   });
+  bridge = bridgeWiring;
+
+  try {
+    layoutWiring = await createLayoutWiring({
+      userData,
+      host: bridgeWiring,
+      knownPageIds: PAGE_IDS,
+      defaultDoc: DEFAULT_LAYOUT,
+      log: (code, detail) => logger?.info(code, detail),
+    });
+  } catch (error: unknown) {
+    // A layout that cannot be assembled is a degraded session, not a failed
+    // boot: the window still opens, and the renderer sees LAYOUT_UNAVAILABLE.
+    logger?.warn("layout.wiring.failed", {
+      detail: error instanceof Error ? error.message : String(error),
+    });
+  }
 
   const locale = chooseLocale(settings.locale, app.getLocale());
 
@@ -888,6 +927,8 @@ app.on("window-all-closed", () => {
 // ended -- are the ones most likely to be missing. `will-quit` because it can be
 // cancelled, and an async drain needs to hold the quit open to be worth anything.
 app.on("will-quit", (event) => {
+  void layoutWiring?.close();
+  layoutWiring = null;
   bridge?.dispose();
   bridge = null;
   // The port's cleanup runs first, and only once. It is not awaited here: the drain
