@@ -14,6 +14,13 @@ Two corpora live here:
 `fixtures/engine/fake-server.mjs` and `fixtures/engine/replay.mjs` are code, not
 corpus; the gate does not read them.
 
+`fixtures/engine/recordings/reconnect/` holds the reconnect item's two
+recordings. They sit in a subdirectory on purpose: the seven files at the top
+level are one corpus with published totals (frame counts and distinct types
+asserted by tests), and adding files beside them would silently invalidate those
+numbers. The gate walks subdirectories, so these are checked exactly like the
+rest.
+
 ## Commands
 
 ```bash
