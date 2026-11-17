@@ -110,9 +110,8 @@ describe("availabilityOf", () => {
   });
 
   it("rejects a capability newer than the engine even when advertised", () => {
-    const name = "workspace.tree" as CapabilityName;
-
-    expect(availabilityOf(name, ALL_ON, "0.0.1")).toEqual({
+    // A literal member, not a cast: the cast would have hidden a renamed row.
+    expect(availabilityOf("workspace.tree", ALL_ON, "0.0.1")).toEqual({
       state: "unavailable",
       reason: "engine-too-old",
     });
