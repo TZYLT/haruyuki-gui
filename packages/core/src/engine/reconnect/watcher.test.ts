@@ -123,6 +123,34 @@ describe("transport watch", () => {
     expect(watch.transportOf("agent-b")).toBeNull();
   });
 
+  it("does not cross the wires when two agents reconnect at the same time", () => {
+    // Four transports alive at once: A's old and new, B's old and new. This is
+    // the moment a registry keyed by anything shared would attribute one
+    // agent's close to the other, so the assertion is about identity, not order.
+    const watch = createTransportWatch();
+    const aOld = fakeTransport();
+    const aNew = fakeTransport();
+    const bOld = fakeTransport();
+    const bNew = fakeTransport();
+    const seen: Array<[string, string]> = [];
+    watch.onClose((agentId, reason) => seen.push([agentId, reason]));
+
+    watch.attach("agent-a", aOld.transport);
+    watch.attach("agent-b", bOld.transport);
+    watch.attach("agent-a", aNew.transport);
+    watch.attach("agent-b", bNew.transport);
+
+    aNew.close("a reconnecting");
+    bOld.close("b went away");
+
+    expect(seen).toEqual([
+      ["agent-a", "a reconnecting"],
+      ["agent-b", "b went away"],
+    ]);
+    expect(watch.transportOf("agent-a")).toBeNull();
+    expect(watch.transportOf("agent-b")).toBe(bNew.transport);
+  });
+
   it("unsubscribes a listener that has gone away", () => {
     const watch = createTransportWatch();
     const a = fakeTransport();
