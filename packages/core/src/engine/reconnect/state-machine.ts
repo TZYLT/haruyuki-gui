@@ -106,7 +106,11 @@ export function createStateMachine(options: StateMachineOptions): AgentStateMach
     deadline = clock.now() + windowMs;
     cancelDeadline = clock.setTimer(() => {
       cancelDeadline = null;
-      if (!disposed && state === "reconnecting") {
+      // The window measures "time without a usable connection". Replaying counts:
+      // a resync that never answers leaves the layer no better off than one that
+      // never connected, and a banner stuck on "replaying" is a lie about
+      // progress.
+      if (!disposed && (state === "reconnecting" || state === "replaying")) {
         transition("degraded", cause);
       }
     }, windowMs);
