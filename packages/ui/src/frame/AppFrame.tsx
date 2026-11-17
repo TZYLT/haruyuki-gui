@@ -24,7 +24,16 @@
  * wide but has a panel open beside it should still get the compact treatment.
  */
 
-import { useEffect, useMemo, useRef, useState, type ReactElement } from "react";
+import {
+  Component,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ErrorInfo,
+  type ReactElement,
+  type ReactNode,
+} from "react";
 import {
   DockviewReact,
   type AddPanelOptions,
@@ -45,6 +54,7 @@ import { useT } from "../i18n/index.js";
 
 import { createActivityStore } from "./activity.js";
 import { Banner, type BannerProps } from "./Banner.js";
+import { FallbackFrame } from "./FallbackFrame.js";
 import { FrameHostProvider, type FrameHost } from "./host-context.js";
 import { hiddenTabCount, hideTab as hideTabInDoc } from "./layout/hidden.js";
 import { swapSidePanels } from "./layout/sides.js";
@@ -108,6 +118,8 @@ export function AppFrame(props: AppFrameProps): ReactElement {
   const temporary = useRef(new Set<string>());
   saveRef.current = props.onLayoutChange;
   const [compact, setCompact] = useState(false);
+  const [fallback, setFallback] = useState(false);
+  const fallbackTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [collapsedLocal, setCollapsedLocal] = useState<Record<SideRailSide, boolean>>({
     left: false,
     right: false,
@@ -340,6 +352,12 @@ export function AppFrame(props: AppFrameProps): ReactElement {
 
   const onReady = (event: DockviewReadyEvent): void => {
     apiRef.current = event.api;
+
+    if (fallbackTimer.current !== null) {
+      clearTimeout(fallbackTimer.current);
+      fallbackTimer.current = null;
+    }
+
     applying.current = true;
 
     const { serialized } = toDockview(latest.current, size());
@@ -414,6 +432,21 @@ export function AppFrame(props: AppFrameProps): ReactElement {
 
   // The one global shortcut (`59` section 4.11): cycle the active group's tabs.
   // It listens in the bubble phase, so a page that consumed Tab first wins.
+  // A dock that never calls `onReady` is a capability failure, not a hang:
+  // after five seconds the two-column fallback takes over (`59` section 4.8).
+  useEffect(() => {
+    fallbackTimer.current = setTimeout(() => {
+      if (apiRef.current === null) {
+        console.warn("frame.fallback", "dockview did not become ready within 5000 ms");
+        setFallback(true);
+      }
+    }, 5000);
+
+    return () => {
+      if (fallbackTimer.current !== null) clearTimeout(fallbackTimer.current);
+    };
+  }, []);
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
       if (!event.ctrlKey || event.key !== "Tab" || event.defaultPrevented) return;
@@ -550,6 +583,15 @@ export function AppFrame(props: AppFrameProps): ReactElement {
     );
   }
 
+  if (fallback) {
+    return (
+      <div className="hz-frame hz-frame--fallback">
+        {props.banner === undefined ? null : <Banner {...props.banner} />}
+        <FallbackFrame registry={props.registry} doc={props.doc} />
+      </div>
+    );
+  }
+
   return (
     <div className="hz-frame__stack" ref={frame}>
       {banners.length === 0 ? null : (
@@ -595,32 +637,39 @@ export function AppFrame(props: AppFrameProps): ReactElement {
               onSwap={swapSides}
             />
           )}
-          <DockviewReact
-            className="hz-frame__dock"
-            components={{ __page__: PageHost }}
-            tabComponents={{ __tab__: PageTab }}
-            onReady={onReady}
-            getTabContextMenuItems={contextMenu}
-            watermarkComponent={() => (
-              <div className="hz-frame__empty">
-                <EmptyState
-                  title={t("page.frame.empty.title")}
-                  action={
-                    <Button
-                      onClick={() => {
-                        const first = props.registry.list().find((page) => page.zone === "main");
+          <FrameBoundary
+            onError={() => {
+              console.warn("frame.fallback", "dockview threw while mounting");
+              setFallback(true);
+            }}
+          >
+            <DockviewReact
+              className="hz-frame__dock"
+              components={{ __page__: PageHost }}
+              tabComponents={{ __tab__: PageTab }}
+              onReady={onReady}
+              getTabContextMenuItems={contextMenu}
+              watermarkComponent={() => (
+                <div className="hz-frame__empty">
+                  <EmptyState
+                    title={t("page.frame.empty.title")}
+                    action={
+                      <Button
+                        onClick={() => {
+                          const first = props.registry.list().find((page) => page.zone === "main");
 
-                        if (first !== undefined) openPage(first.id, "main");
-                      }}
-                    >
-                      {t("page.frame.empty.open")}
-                    </Button>
-                  }
-                />
-                <PagePicker onOpen={() => undefined} />
-              </div>
-            )}
-          />
+                          if (first !== undefined) openPage(first.id, "main");
+                        }}
+                      >
+                        {t("page.frame.empty.open")}
+                      </Button>
+                    }
+                  />
+                  <PagePicker onOpen={() => undefined} />
+                </div>
+              )}
+            />
+          </FrameBoundary>
           {compact ? null : (
             <SideRail
               side="right"
@@ -636,4 +685,27 @@ export function AppFrame(props: AppFrameProps): ReactElement {
       </FrameHostProvider>
     </div>
   );
+}
+
+/** Catches a dockview mount failure and hands it to the fallback. */
+class FrameBoundary extends Component<
+  { readonly children: ReactNode; readonly onError: () => void },
+  { readonly failed: boolean }
+> {
+  state = { failed: false };
+
+  static getDerivedStateFromError(): { failed: boolean } {
+    return { failed: true };
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo): void {
+    console.error("dockview mount failed", error, info.componentStack);
+    this.props.onError();
+  }
+
+  render(): ReactNode {
+    if (this.state.failed) return null;
+
+    return this.props.children;
+  }
 }
