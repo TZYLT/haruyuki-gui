@@ -60,7 +60,32 @@ module.exports = {
       to: "runtime/watchdog.cjs",
     },
   ],
+  // Artifact names come from here, and `release.mjs` reads the output directory
+  // rather than assembling these strings -- but a name that the release
+  // checklist and the Release body both quote has to be stable, so it is
+  // written down once, in one place.
+  // `${name}` expands to the scoped package name (`@haruyuki/desktop`), which
+  // is why the first build produced `release/@haruyuki/desktop-...zip` -- a
+  // nested directory in the download. `productName` is the name a user sees.
+  artifactName: "${productName}-${version}-${os}-${arch}.${ext}",
   win: {
-    target: ["dir"],
+    // `dir` stays in the list: G1's exit is "a tree that starts", and the tree
+    // is what the smoke test launches. `zip` is the download.
+    target: ["dir", "zip"],
+  },
+  linux: {
+    // AppImage is the single-file Linux download. It needs no maintainer
+    // scripts and runs without an install step, which matches "download and
+    // start" for a desktop app that has no system integration to set up.
+    //
+    // `desktopName` is not a key in this schema version -- it was rejected by
+    // the validator, and the launch name now lives in `desktop.entry.Name`.
+    target: ["AppImage"],
+    category: "Development",
+    desktop: {
+      entry: {
+        Name: "Haruyuki",
+      },
+    },
   },
 };

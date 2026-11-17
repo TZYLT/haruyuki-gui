@@ -304,6 +304,10 @@ export async function scanArtifacts(releaseDir) {
     // A listing that silently dropped it would make that criterion unjudgeable
     // from the manifest, which is the same defect this item exists to remove.
     if (relative.startsWith("win-unpacked/") || relative.startsWith("linux-unpacked/")) continue;
+    // electron-builder writes its own debug log next to the artifacts. It is
+    // not a download and not a product; listing it would put a file nobody
+    // ships into the manifest that claims what shipped.
+    if (relative.startsWith("builder-")) continue;
     const info = await stat(absolute);
     artifacts.push({ file: relative, bytes: info.size });
   }
