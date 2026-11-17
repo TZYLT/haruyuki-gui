@@ -218,12 +218,11 @@ function toDocNode(
       };
     });
 
-    return {
-      type: "panel",
-      id,
-      tabs,
-      ...(activeView === undefined ? {} : { activeTabId: activeView }),
-    };
+    const panel: LayoutPanel = { type: "panel", id, tabs };
+
+    if (activeView !== undefined) panel.activeTabId = activeView;
+
+    return panel;
   }
 
   const children = (node.data as SerializedNode[]).map((child) =>
@@ -232,12 +231,15 @@ function toDocNode(
   const sizes = (node.data as SerializedNode[]).map((child) => child.size ?? 1);
   const total = sizes.reduce((sum, size) => sum + size, 0);
 
-  return {
+  const split: LayoutNode = {
     type: "split",
     orientation: orientation.toLowerCase() as "horizontal" | "vertical",
     children,
-    ...(total === 0 ? {} : { sizes: sizes.map((size) => size / total) }),
   };
+
+  if (total !== 0) split.sizes = sizes.map((size) => size / total);
+
+  return split;
 }
 
 /** @param node a document node @returns its panels in reading order */
