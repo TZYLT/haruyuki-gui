@@ -133,7 +133,12 @@ export interface ApprovalLedger {
    * produce the same answer, never a doubled count.
    */
   reconcile(reappeared: readonly string[]): ApprovalReconciliation;
-  /** How many approvals are known to be waiting right now. */
+  /**
+   * How many approvals are waiting right now.
+   *
+   * Remembered, minus the ones the last resync stopped pushing: an approval that
+   * is remembered for consistency is not waiting for anybody.
+   */
   pendingCount(): number;
 }
 
