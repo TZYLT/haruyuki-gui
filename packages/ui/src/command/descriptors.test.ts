@@ -21,6 +21,7 @@ import {
   CAPABILITY_DESCRIPTORS,
   CAPABILITY_FAMILIES,
   COMMAND_DESCRIPTOR_LIST,
+  descriptorFor,
   filterDescriptors,
 } from "./descriptors.js";
 
@@ -114,5 +115,15 @@ describe("CAPABILITY_DESCRIPTORS", () => {
 
     expect(grouped).toHaveLength(COMMAND_DESCRIPTOR_LIST.length);
     expect(new Set(grouped.map((row) => row.name)).size).toBe(COMMAND_DESCRIPTOR_LIST.length);
+  });
+
+  it("looks a row up by name without a non-null assertion", () => {
+    expect(descriptorFor("agent.get")?.name).toBe("agent.get");
+    expect(descriptorFor("agent.notAThing" as CapabilityName)).toBeUndefined();
+  });
+
+  it("does not hand out the module's own array to a caller", () => {
+    expect(filterDescriptors("")).not.toBe(COMMAND_DESCRIPTOR_LIST);
+    expect(filterDescriptors("   ")).not.toBe(COMMAND_DESCRIPTOR_LIST);
   });
 });
