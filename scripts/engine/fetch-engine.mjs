@@ -332,6 +332,50 @@ function main() {
       ),
     );
 
+    // `--ignore-scripts` above is right on a platform that has a prebuilt
+    // binary and wrong on one that does not. `node-pty` declares
+    //   "install": "node scripts/prebuild.js || node-gyp rebuild"
+    // and ships prebuilds for win32-x64, win32-arm64, darwin-x64 and
+    // darwin-arm64 only. There the prebuild succeeds and the flag only saves a
+    // compile. On linux-x64 the prebuild has nothing to download, so the
+    // fallback is a source build, and `--ignore-scripts` is what keeps it from
+    // ever running: the next `require("node-pty")` fails with
+    //   Cannot find module './prebuilds/linux-x64//pty.node'
+    // and the engine cannot open a terminal at all.
+    //
+    // Rebuilding afterwards is enough, and here it is the only thing that
+    // works: `pnpm rebuild` wants a pnpm-lock.yaml and this tree is installed
+    // with npm. Measured on linux-x64 with python3/make/g++ present:
+    //   install with the flag    -> build/Release empty
+    //   npm rebuild node-pty     -> build/Release/pty.node, require() fine
+    //   install without the flag -> same file, same outcome
+    //
+    // On a platform that already has a prebuild this rebuild finds nothing to
+    // do and is a no-op. That is harmless on purpose: deciding "is there a
+    // prebuild for me" would mean reading node-pty's prebuilds directory,
+    // whose contents change between versions, and an `if` there would be
+    // easier to get wrong than the unconditional rebuild.
+    timed("rebuild-node-pty", () =>
+      run("npm", ["rebuild", "node-pty"], { cwd: packageDir, timeoutMs: 600_000 }),
+    );
+
+    const ptyBinary = path.join(
+      packageDir,
+      "node_modules",
+      "node-pty",
+      "build",
+      "Release",
+      "pty.node",
+    );
+
+    if (!existsSync(ptyBinary)) {
+      // Not fatal here: whether a missing pty is acceptable depends on the
+      // platform, and the caller knows which one it asked for. Saying so out
+      // loud beats discovering it later, where the symptom is a terminal that
+      // silently refuses to open.
+      log(`warning: node-pty has no built binary at ${ptyBinary}; terminals will not work`);
+    }
+
     if (!existsSync(path.join(packageDir, "node_modules", "ws"))) {
       throw new Error("install finished but node_modules/ws is missing; the probe cannot connect");
     }
