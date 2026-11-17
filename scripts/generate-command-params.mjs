@@ -137,7 +137,17 @@ for (const capability of capabilities) {
 lines.push("} as const satisfies Partial<Record<CapabilityName, readonly CommandParamSpec[]>>;");
 
 const body = lines.join("\n");
-const output = body.endsWith("\n") ? body : `${body}\n`;
+const raw = body.endsWith("\n") ? body : `${body}\n`;
+
+// Format through the same Prettier the pre-commit hook runs, so `--check`
+// compares meaning, not whitespace.
+const prettier = await import("prettier");
+const prettierConfig = (await prettier.resolveConfig(OUTPUT)) ?? {};
+const output = await prettier.format(raw, {
+  ...prettierConfig,
+  parser: "typescript",
+  filepath: OUTPUT,
+});
 
 if (process.argv.includes("--check")) {
   const current = readFileSync(OUTPUT, "utf8");
