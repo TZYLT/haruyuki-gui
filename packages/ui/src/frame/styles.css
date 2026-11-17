@@ -1,0 +1,73 @@
+/* The frame's layout only: colours come from the design tokens that dockview
+   maps through its own CSS variables, so this file deliberately has none. */
+
+.hz-frame {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+}
+
+.hz-frame__dock {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+}
+
+.hz-frame__empty {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-space-4, 16px);
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+}
+
+.hz-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ui-space-2, 8px);
+  min-width: 0;
+  padding: 0 var(--ui-space-2, 8px);
+}
+
+.hz-tab__title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hz-tab__badge {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+}
+
+.hz-tab__close {
+  flex: 0 0 auto;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  padding: 0 var(--ui-space-1, 4px);
+}
+
+.hz-picker {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-space-3, 12px);
+  max-width: 420px;
+}
+
+.hz-picker__group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-space-1, 4px);
+}
+
+.hz-picker__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ui-space-1, 4px);
+}

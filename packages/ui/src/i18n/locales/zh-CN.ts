@@ -149,6 +149,18 @@ export const zhCN = {
   "page.command.notConnected": "引擎未连接",
   "page.command.scopeRequired": "请先选择一个会话",
   "page.command.badPayload": "请求内容无效",
+  "page.frame.empty.title": "还没有打开的页面",
+  "page.frame.empty.open": "打开页面",
+  "page.frame.unknown.title": "未知页面（{id}）",
+  "page.frame.unknown.description":
+    "这个页面由更新版本创建，当前版本无法显示。关闭只是隐藏，不会删除它的布局数据。",
+  "page.frame.error.title": "这个页面出错了",
+  "page.frame.tab.close": "关闭标签页",
+  "page.frame.tab.closeOthers": "关闭其他",
+  "page.frame.tab.closeAll": "关闭全部",
+  "page.frame.picker.title": "打开页面",
+  "page.frame.picker.main": "主区",
+  "page.frame.picker.side": "侧轨",
 
   // ----------------------------------------------------------------- error
   "error.network.unreachable": "无法连接到服务",

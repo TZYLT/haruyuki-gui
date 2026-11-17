@@ -14,6 +14,12 @@
 /** Identifies the frame layer in diagnostics. */
 export const FRAME_LAYER = "frame" as const;
 
+export { AppFrame } from "./AppFrame.js";
+export type { AppFrameProps } from "./AppFrame.js";
+export { createActivityStore, badgeText } from "./activity.js";
+export type { ActivityState, ActivityStore } from "./activity.js";
+export { toDockview, toLayoutDoc, docEquals } from "./layout/map.js";
+export type { DockviewLayout, HiddenTab, SerializedLayout } from "./layout/map.js";
 export { createPageRegistry } from "./registry.js";
 export type {
   FrameCapabilities,

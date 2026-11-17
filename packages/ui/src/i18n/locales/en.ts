@@ -194,6 +194,18 @@ export const en = {
   "page.command.notConnected": "The engine is not connected",
   "page.command.scopeRequired": "Select a conversation first",
   "page.command.badPayload": "The request is invalid",
+  "page.frame.empty.title": "No pages open",
+  "page.frame.empty.open": "Open page",
+  "page.frame.unknown.title": "Unknown page ({id})",
+  "page.frame.unknown.description":
+    "This page was created by a newer version and cannot be shown. Closing it only hides it; its layout data is kept.",
+  "page.frame.error.title": "This page stopped working",
+  "page.frame.tab.close": "Close tab",
+  "page.frame.tab.closeOthers": "Close others",
+  "page.frame.tab.closeAll": "Close all",
+  "page.frame.picker.title": "Open a page",
+  "page.frame.picker.main": "Main area",
+  "page.frame.picker.side": "Side rail",
 
   // ----------------------------------------------------------------- error
   "error.network.unreachable": "The service is unreachable",
