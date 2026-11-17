@@ -18,8 +18,14 @@ corpus; the gate does not read them.
 recordings. They sit in a subdirectory on purpose: the seven files at the top
 level are one corpus with published totals (frame counts and distinct types
 asserted by tests), and adding files beside them would silently invalidate those
-numbers. The gate walks subdirectories, so these are checked exactly like the
-rest.
+numbers.
+
+**Rule: the top level keeps exactly those seven.** A new recording goes into a
+subdirectory of its own. The gate walks subdirectories, so a nested recording is
+checked exactly like the rest; only the seven are the "corpus" whose totals other
+tests quote. If a top-level file is ever added, the six total assertions in the
+client suites and the published corpus numbers have to be updated in the same
+change.
 
 ## Commands
 
