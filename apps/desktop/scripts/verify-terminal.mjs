@@ -18,15 +18,17 @@
  *   no scroll performance, no real font metrics and no clipboard. This script
  *   therefore answers only the two claims that survive without those:
  *
- *     crash-record-retention  after a container resize, the column/row count is recomputed, and
+ *     manual-cleanup-dialog  after a container resize, the column/row count is recomputed, and
  *           the bytes already written are still in the buffer
  *       N terminals coexist: every one echoes its own line and none shows
  *           another's
  *
- *   Scroll smoothness (ambiguous-pid-not-killed), selection and copy  and font-size change
- *   without reflow  are reported as MANUAL, not as PASS. A script that
- *   reported "smooth" would be claiming to know something no headless run can
- *   observe -- jsdom has no compositor to stutter.
+ *   Three claims no headless run can make -- smooth scrolling, selection and
+ *   copy, and a font change that does not reflow -- are reported as MANUAL, not
+ *   as PASS. None of them is among the document's judgements: the first two are
+ *   ergonomics, and the third is a follows from how clearing is defined. A script that reported
+ *   "smooth" would be claiming to know something jsdom cannot observe, because
+ *   it has no compositor to stutter.
  *
  * The size stub, and why it is load-bearing
  *   jsdom performs no layout, so xterm's own cell metrics resolve to 0x0 and
@@ -304,10 +306,10 @@ process.stdout.write(`xterm:  ${require.resolve("@xterm/xterm")}\n`);
 process.stdout.write(`jsdom:  no layout engine (cell metrics stubbed at 10x20)\n\n`);
 
 // ---------------------------------------------------------------------------
-//  a resize recomputes the grid, and keeps the bytes it already had
+// A resize recomputes the grid, and keeps the bytes it already had
 // ---------------------------------------------------------------------------
 
-process.stdout.write("--- crash-record-retention resize recomputes the grid\n");
+process.stdout.write("--- resize recomputes the grid\n");
 
 {
   const container = document.createElement("div");
@@ -626,10 +628,16 @@ process.stdout.write("\n--- measured ceiling\n");
 
 process.stdout.write("\n--- manual, no headless observation exists\n");
 
-manualOnly("ambiguous-pid-not-killed scroll is smooth", "jsdom has no compositor, so nothing can stutter");
-manualOnly("manual-cleanup-dialog selection and copy", "jsdom has no clipboard and no text selection");
 manualOnly(
-  "foreign-shell-pid-kept a font-size change does not reflow existing output",
+  "scroll is smooth (no document judgement; ergonomics)",
+  "jsdom has no compositor, so nothing can stutter",
+);
+manualOnly(
+  "selection and copy (the renderer depends on it; not a judgement of its own)",
+  "jsdom has no clipboard and no text selection",
+);
+manualOnly(
+  "a font-size change does not reflow existing output (follows from how clearing is defined)",
   "jsdom shapes no glyphs, so no reflow happens",
 );
 
@@ -645,12 +653,14 @@ process.stdout.write(
 process.stdout.write(
   `MANUAL  ${manual.length} claims need a real window: ${manual.map((entry) => entry.label).join(", ")}\n`,
 );
-process.stdout.write("jsdom: no layout, no compositor — ambiguous-pid-not-killed/foreign-shell-pid-kept remain manual\n");
+process.stdout.write(
+  "jsdom: no layout, no compositor — smoothness and font reflow remain manual\n",
+);
 
 // The limitation is repeated last on purpose: a reader who scans only the tail of
 // a green run must not conclude the whole item is verified.
 process.stdout.write(
-  "crash-record-retention's layout is stubbed (10x20 cells), so it verifies the recompute, not a browser's placement\n",
+  "the resize layout is stubbed (10x20 cells), so it verifies the recompute, not a browser's placement\n",
 );
 
 process.exitCode = failures === 0 ? 0 : 1;
