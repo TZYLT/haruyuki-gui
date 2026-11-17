@@ -82,6 +82,13 @@ export type PageFetcher = (args: {
  * and decisions live in the controller.
  */
 export interface MessagePager {
+  /**
+   * One page.
+   *
+   * `limit` is validated whatever its source: a per-call value wins over the
+   * configured default, and the winner is what gets checked. A bad default must
+   * not be able to reach the engine just because the caller left the field out.
+   */
   page(args: {
     readonly agentId: string;
     readonly conversationId: string;
