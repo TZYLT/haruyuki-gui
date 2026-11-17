@@ -138,14 +138,7 @@ export const zhCN = {
   "page.conversation.retryLater": "请稍后重试",
   "page.nav.title": "导航",
   "page.conversation.title": "对话",
-  "page.memory.title": "记忆",
   "page.tree.title": "文件",
-  "page.viewer.title": "查看器",
-  "page.context.title": "上下文",
-  "page.concurrency.title": "并发",
-  "page.terminal.title": "终端",
-  "page.settings.title": "设置",
-  "page.topics.title": "话题",
   "page.error.retry": "重试",
 
   // ----------------------------------------------------------------- error

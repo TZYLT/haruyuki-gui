@@ -46,6 +46,7 @@ const LOCALES_DIR = "packages/ui/src/i18n/locales";
 /** Where the code that consumes keys lives. */
 const COMPONENT_DIRS = [
   "packages/ui/src/components",
+  "packages/ui/src/frame",
   "packages/ui/src/examples",
   "packages/ui/src/icons",
   // The terminal panel. Added here in the same change as its first `t()` call,
