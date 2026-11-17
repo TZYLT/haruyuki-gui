@@ -94,8 +94,9 @@ import {
   saveSettings,
 } from "./settings-io.js";
 import { wireBridge, type BridgeWiring } from "./bridge/wire.js";
-import { createLayoutWiring, type LayoutWiring } from "./layout/wiring.js";
-import { DEFAULT_LAYOUT, PAGE_IDS } from "./layout/catalog.js";
+import type { LayoutWiring } from "./layout/wiring.js";
+import type { CommandLifecycle } from "./command/lifecycle.js";
+import { createShellServices } from "./services.js";
 import type { LayoutSaveRequest } from "@haruyuki/protocol";
 import {
   DEFAULT_SETTINGS,
@@ -139,6 +140,9 @@ let bridge: BridgeWiring | null = null;
  * save window before the bridge that carries snapshots goes away.
  */
 let layoutWiring: LayoutWiring | null = null;
+
+/** The command path: IPC plus the service, rebuilt when an engine arrives. */
+let commandLifecycle: CommandLifecycle | null = null;
 
 /** Parsed settings, loaded once and kept in step with the window. */
 let settings: ShellSettings = DEFAULT_SETTINGS;
@@ -821,21 +825,14 @@ async function main(): Promise<void> {
   });
   bridge = bridgeWiring;
 
-  try {
-    layoutWiring = await createLayoutWiring({
-      userData,
-      host: bridgeWiring,
-      knownPageIds: PAGE_IDS,
-      defaultDoc: DEFAULT_LAYOUT,
-      log: (code, detail) => logger?.info(code, detail),
-    });
-  } catch (error: unknown) {
-    // A layout that cannot be assembled is a degraded session, not a failed
-    // boot: the window still opens, and the renderer sees LAYOUT_UNAVAILABLE.
-    logger?.warn("layout.wiring.failed", {
-      detail: error instanceof Error ? error.message : String(error),
-    });
-  }
+  const services = await createShellServices({
+    userData,
+    ipc: ipcMain,
+    host: bridgeWiring,
+    log: (code, detail) => logger?.info(code, detail),
+  });
+  layoutWiring = services.layout;
+  commandLifecycle = services.command;
 
   const locale = chooseLocale(settings.locale, app.getLocale());
 
@@ -894,7 +891,10 @@ async function main(): Promise<void> {
     onCrash: handleEngineCrash,
     quitSupervisor,
     onHost: (host) => {
+      if (host === null) return;
+
       engineHost = host;
+      commandLifecycle?.onHost(host);
     },
   }).catch((error: unknown) => logger?.warn("runtime.startup", { detail: String(error) }));
 
@@ -927,6 +927,8 @@ app.on("window-all-closed", () => {
 // ended -- are the ones most likely to be missing. `will-quit` because it can be
 // cancelled, and an async drain needs to hold the quit open to be worth anything.
 app.on("will-quit", (event) => {
+  commandLifecycle?.dispose();
+  commandLifecycle = null;
   void layoutWiring?.close();
   layoutWiring = null;
   bridge?.dispose();
