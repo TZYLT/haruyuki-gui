@@ -126,6 +126,10 @@ Header fields:
 |---|---|
 | `kind` | `"wire"` |
 | `schemaVersion` | `1`; the only version this gate reads |
+
+This table is the public list of header fields. The gate keeps the same list in
+`KNOWN_HEADER_KEYS` (it prints any field outside it, and warns when a name is
+within two edits of one inside it), so a new field belongs in both places.
 | `engine.version` / `engine.commit` | the engine that produced the frames; compared with the contract pin (warning only) |
 | `scenario` | the scenario name, matching the file name |
 | `redaction` | `"r0"` = not redacted yet (never in the corpus); `"r1"`+ = redacted (current revision: `"r2"`) |
