@@ -171,6 +171,33 @@ Exit codes:
   0 = pass, 1 = violations, 2 = the script or its configuration is broken.
 `;
 
+/**
+ * Header keys the corpus format defines. Everything else is reported, never
+ * rejected.
+ *
+ * A whitelist would reject the next legitimate extension -- a hand-written
+ * fixture's `origin` was exactly that -- while an allowlist that only *prints*
+ * what it does not understand keeps the header extensible and still makes the
+ * unread part visible. A field nobody validates is not a problem until nobody
+ * knows it is there.
+ */
+const READ_HEADER_KEYS = new Set([
+  "kind",
+  "schemaVersion",
+  "engine",
+  "scenario",
+  "redaction",
+  "clock",
+  "recordedAt",
+  // Bridge frames carry their own version and a free-text note; both are
+  // documented in the corpus README, so neither is news to report.
+  "bridgeVersion",
+  "note",
+]);
+
+/** How far a key may drift from a known one before it stops looking like a typo. */
+const NEAR_MISS_DISTANCE = 2;
+
 const rawArgs = process.argv.slice(2);
 
 if (rawArgs.includes("--help") || rawArgs.includes("-h")) {
@@ -338,6 +365,8 @@ function checkFile(context, relative, violations, warnings) {
 
   const kind = checkHeader(relative, header, violations);
 
+  checkHeaderFields(relative, header, warnings);
+
   checkRedactionMarker(relative, header, violations);
   checkContent(relative, 1, header, violations, context);
   checkVersionAlignment(context, relative, header, warnings);
@@ -394,6 +423,93 @@ function checkHeader(relative, header, violations) {
   }
 
   return header.kind;
+}
+
+/**
+ * Report header fields this gate does not read.
+ *
+ * The value is described by type and length, not quoted: the point is to show
+ * that something is there and whether it carries content. A key that is nearly a
+ * known one is a warning rather than a note, because that is what a typo looks
+ * like -- `redaction_` makes the redaction marker read as absent, and the
+ * resulting violation talks about redaction rather than about the spelling.
+ *
+ * @param {string} relative repo-relative fixture path
+ * @param {Record<string, unknown>} header parsed header
+ * @param {string[]} warnings collected diagnostics
+ * @returns {void}
+ */
+function checkHeaderFields(relative, header, warnings) {
+  const unknown = Object.keys(header)
+    .filter((key) => !READ_HEADER_KEYS.has(key))
+    .sort();
+
+  if (unknown.length === 0) {
+    return;
+  }
+
+  const described = unknown.map((key) => `${key} (${describeValue(header[key])})`);
+
+  for (const key of unknown) {
+    const near = [...READ_HEADER_KEYS].find(
+      (known) => editDistance(key.toLowerCase(), known.toLowerCase()) <= NEAR_MISS_DISTANCE,
+    );
+
+    if (near !== undefined) {
+      warnings.push(
+        `WARN ${relative}:1 header-field near "${near}": this gate does not read "${key}" ` +
+          `(${describeValue(header[key])}) -- a near-miss is usually a typo, and the field it ` +
+          `was meant to be is what the checks below read`,
+      );
+
+      return;
+    }
+  }
+
+  warnings.push(
+    `note ${relative}:1 header-field unknown: this gate does not read ${described.join(", ")}`,
+  );
+}
+
+/**
+ * Describe a value by type and size, so a diagnostic shows content without
+ * echoing it.
+ *
+ * @param {unknown} value any header value
+ * @returns {string}
+ */
+function describeValue(value) {
+  if (typeof value === "string") return `string, ${String(value.length)} chars`;
+  if (typeof value === "number") return "number";
+  if (typeof value === "boolean") return "boolean";
+  if (Array.isArray(value)) return `array, ${String(value.length)} items`;
+  if (isObject(value)) return `object, ${String(Object.keys(value).length)} keys`;
+
+  return String(value);
+}
+
+/**
+ * Levenshtein distance, bounded by the caller's threshold use.
+ *
+ * @param {string} left first string
+ * @param {string} right second string
+ * @returns {number}
+ */
+function editDistance(left, right) {
+  let previous = Array.from({ length: right.length + 1 }, (_, index) => index);
+
+  for (let i = 1; i <= left.length; i += 1) {
+    const current = [i];
+
+    for (let j = 1; j <= right.length; j += 1) {
+      const substitution = previous[j - 1] + (left[i - 1] === right[j - 1] ? 0 : 1);
+      current[j] = Math.min(previous[j] + 1, current[j - 1] + 1, substitution);
+    }
+
+    previous = current;
+  }
+
+  return previous[right.length];
 }
 
 /**

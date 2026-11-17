@@ -30,9 +30,12 @@ because the missing piece is a role, not a setting.
 What that file proves is the **counting logic**: which remembered approvals count
 as still waiting, which do not, and that a repeated reconcile or a repeated push
 does not double the number. What it does **not** prove is that the engine really
-re-pushes a waiting approval after a resync -- that behaviour has no recording at
-all, so it rests on the observation that a resync replays state, not on a frame
-anyone captured.
+re-pushes a waiting approval after a resync. **No recording in this corpus shows
+that**, as of the eight files here, so it rests on the observation that a resync
+replays state rather than on a frame anyone captured. If somebody does record a
+real approval replay, this paragraph and the `originReason` field in that file
+both have to change -- otherwise the note keeps claiming a gap that no longer
+exists.
 
 **Rule: the top level keeps exactly those seven.** A new recording goes into a
 subdirectory of its own. The gate walks subdirectories, so a nested recording is

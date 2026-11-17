@@ -37,6 +37,15 @@ function fixedClock(): { now: () => string; calls: () => number } {
   };
 }
 
+/**
+ * Two tests here say "does not accumulate", and they must not share a name.
+ *
+ * They fail in different places: a second reconcile with the same set exercises
+ * settlement (the number must not grow), while one id pushed twice inside a
+ * single reconcile exercises dedupe (counting by id, not by frame). A shared name
+ * would make "which one broke" a question answered by reading every test, so the
+ * names say which mechanism each one pins.
+ */
 describe("createLedger", () => {
   it("records one waiting approval per id and keeps the first stamp", () => {
     const ledger: ApprovalLedger = createLedger();
