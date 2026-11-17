@@ -194,6 +194,10 @@ export const zhCN = {
   "page.topbar.resetConfirm": "重置",
   "page.topbar.cancel": "取消",
 
+  "page.frame.banner.readFailed": "布局读取失败，已使用默认布局。",
+  "page.frame.banner.corrupt": "布局未能恢复，已使用默认布局。",
+  "page.frame.banner.readOnly": "布局来自更新版本，当前版本只读，升级前不会覆盖它。",
+
   // ----------------------------------------------------------------- error
   "error.network.unreachable": "无法连接到服务",
   "error.unexpected": "发生了意外错误",

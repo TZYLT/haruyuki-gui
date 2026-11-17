@@ -241,6 +241,11 @@ export const en = {
   "page.topbar.resetConfirm": "Reset",
   "page.topbar.cancel": "Cancel",
 
+  "page.frame.banner.readFailed": "The layout could not be read; the default layout is in use.",
+  "page.frame.banner.corrupt": "The layout could not be restored; the default layout is in use.",
+  "page.frame.banner.readOnly":
+    "This layout came from a newer version; it is read-only here and will not be overwritten until you upgrade.",
+
   // ----------------------------------------------------------------- error
   "error.network.unreachable": "The service is unreachable",
   "error.unexpected": "An unexpected error occurred",
