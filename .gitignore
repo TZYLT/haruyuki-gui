@@ -12,6 +12,10 @@
 # --- Internal-only material (root-anchored on purpose) ---------------------
 /docs/
 /_research/
+# Internal tooling that hard-codes host names and addresses. The design is in
+# docs/46 (also internal), so the file stays on the operator's machine rather
+# than in the repository the project is published from.
+/scripts/remote-verify.mjs
 
 # --- Dependencies ----------------------------------------------------------
 node_modules/
