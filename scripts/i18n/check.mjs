@@ -88,6 +88,52 @@ const NAMESPACES = new Set(["common", "component", "page", "error", "a11y"]);
 const SHELL_ERROR_TABLE = "apps/desktop/src/shared/shell-error.ts";
 
 /**
+ * Files that build catalogue keys from a table instead of calling `t()` with a
+ * literal. Their keys are generated (`page.command.<familyAction>.label`), so
+ * I6's literal scan cannot see them; the gate expands the declared prefix.
+ *
+ * Named rather than discovered: if the table moves, this gate must say so
+ * instead of turning 152 live keys into 152 `declared but never referenced`
+ * reports -- which is exactly what it did when the command surface landed.
+ */
+const DYNAMIC_KEY_SOURCES = [
+  { file: "packages/ui/src/command/descriptors.ts", prefix: "page.command." },
+];
+
+/** The two characters a template literal opens an interpolation with. */
+const DOLLAR_BRACE = "$" + "{";
+
+/**
+ * Patterns for the keys a declared dynamic source builds.
+ *
+ * A key counts as referenced when it matches the shape the table produces, so
+ * a hand-written key under the same namespace still needs an explicit `t()`.
+ *
+ * @param {string} root absolute posix repo root
+ * @returns {RegExp[]} patterns that count as references
+ */
+function dynamicKeyPatterns(root) {
+  /** @type {RegExp[]} */
+  const patterns = [];
+
+  for (const source of DYNAMIC_KEY_SOURCES) {
+    const absolute = path.join(root, ...source.file.split("/"));
+
+    if (!existsSync(absolute)) {
+      continue;
+    }
+
+    if (!read(absolute).includes(source.prefix + DOLLAR_BRACE)) {
+      continue;
+    }
+
+    patterns.push(new RegExp("^" + source.prefix + "[a-z][A-Za-z0-9]*[.](label|desc|name)$"));
+  }
+
+  return patterns;
+}
+
+/**
  * Read a file as UTF-8.
  *
  * @param {string} absolute absolute path
@@ -450,6 +496,18 @@ function collectViolations(args) {
 
         if (key === undefined) continue;
         if (!referenced.has(key)) referenced.set(key, source.file);
+      }
+    }
+
+    // The command surface builds its keys from a table
+    // (`page.command.<familyAction>.label`), so no literal exists to match.
+    // The declared prefixes are expanded here; a key outside those shapes still
+    // needs an explicit reference, which keeps the rule honest.
+    for (const pattern of dynamicKeyPatterns(args.root)) {
+      for (const key of reference.keys()) {
+        if (pattern.test(key) && !referenced.has(key)) {
+          referenced.set(key, DYNAMIC_KEY_SOURCES[0].file);
+        }
       }
     }
 
