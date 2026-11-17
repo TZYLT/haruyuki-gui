@@ -1,11 +1,11 @@
 /**
  * Watchdog self-check of one hosted engine attempt.
  *
- * Split out of `engine.ts` (E-142), and kept apart from `child-watch.ts` on
+ * Split out of `engine.ts`, and kept apart from `child-watch.ts` on
  * purpose: `child-watch` is *we watch the process*, this is *the engine watches
  * itself*. The two produce different degradations and fail in different ways.
  *
- * Invariants (B1 `no recursive` section 3.4, `R-3`, `B1-Q19`):
+ * Invariants:
  *
  * - The marker is only expected when the spawn spec actually preloads the
  *   watchdog. A spec without it — a caller that deliberately runs without orphan
@@ -47,7 +47,7 @@ export class WatchdogWatch {
    *
    * The marker is only expected when the spawn spec actually preloads the
    * watchdog: the headless host port composes `NODE_OPTIONS=--require
-   * "<abs>/watchdog.cjs"` , and a spec without it - a
+   * "<abs>/watchdog.cjs"`, and a spec without it - a
    * caller that deliberately runs without orphan protection - must not be
    * reported as degraded.
    */
@@ -70,7 +70,7 @@ export class WatchdogWatch {
    *
    * Called once the WebSocket URL is known: the watchdog is preloaded before any
    * engine code runs, so its marker has been written before the engine starts
-   * listening. The short wait only pays off in the degraded case (R-3: the fuse
+   * listening. The short wait only pays off in the degraded case: the fuse
    * disables `--require`, or the path is wrong), where orphan protection is down
    * to the parent process and the host has to be told.
    */

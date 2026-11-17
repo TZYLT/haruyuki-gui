@@ -2,12 +2,12 @@
  * Teardown of one hosted engine attempt: the graceful stop and the failure
  * cleanup.
  *
- * Split out of `engine.ts` (E-142). Both paths do the same four things in a
+ * Split out of `engine.ts`. Both paths do the same four things in a
  * different order, and getting the order wrong is the difference between a clean
  * stop and an orphan or a frame arriving during teardown — so they live together
  * where the order is visible in one place.
  *
- * Invariants (B1 `no recursive` sections 3.3 (c)/(e), 4.2):
+ * Invariants:
  *
  * - **The socket goes first** on the failure path, so no frame can arrive during
  *   teardown. The graceful path closes it politely before the child stops, so no
@@ -16,7 +16,7 @@
  *   cannot be mistaken for a crash.
  * - **The token file is deleted last on the graceful path and before the child
  *   stops on the failure path**: a crash restart must still be able to read it
- *   (`B1-Q06`), and a failed attempt must not leave it behind.
+ *   and a failed attempt must not leave it behind.
  * - Both entry points are shared and idempotent: a callback cannot await, so
  *   `declareFailure` fires the cleanup and a later `stopGraceful` joins it.
  */

@@ -23,14 +23,14 @@
  *   watchdog marker and an untested build/protocol are collected in
  *   `degradations`; none of them turns a usable engine into a failure.
  *
- * What is NOT here (E-142). The four collaborators below used to be private
+ * What is NOT here. The four collaborators below used to be private
  * methods of this class, and they made one file carry five responsibilities:
  * `SocketSession` (the transport), `ChildWatch` (the process),
  * `TokenLifecycle` (the token file), `WatchdogWatch` (the engine's self-check)
  * and `Teardown` (stop and failure cleanup). Each owns its own state and talks to
  * this facade through a narrow host interface, so no private field is exposed and
- * `Engine`'s public surface — frozen by `no recursive` section 3.3 (c) and extended
- * once by `R-062` — is unchanged. What stays here is exactly what the file
+ * `Engine`'s public surface — frozen by the signed facade contract and extended
+ * once since — is unchanged. What stays here is exactly what the file
  * comment claims: the state machine, the entry points, and the ordering
  * guarantees that only a single owner can give.
  *

@@ -1,19 +1,19 @@
 /**
  * Child-process accounting of one hosted engine attempt.
  *
- * Split out of `engine.ts` (E-142): spawning, subscribing, classifying a child
+ * Split out of `engine.ts`: spawning, subscribing, classifying a child
  * fault and recording the exit fact is one responsibility — *we watch the
  * process* — and it is separate from *the engine tells us things* (watchdog) and
  * from *the socket accepted us* (socket session).
  *
- * Invariants this module keeps (B1 `no recursive` section 3.3 (e)/(f), `R-062`):
+ * Invariants this module keeps:
  *
  * - A start-time fault goes through the attempt's `FaultSignal`, so the pending
  *   step fails immediately instead of waiting for its own timeout.
  * - A fault after `ready` is a crash and is handed to the facade, which owns the
  *   single state machine. This module never transitions anything itself.
  * - `lastExit` records, it does not classify: crash detection stays
- *   `state === "failed"` (`R-062`-3/6).
+ *   `state === "failed"` .
  * - The stderr tail is fed by the ONE reader in `spawn.ts`; subscribing here
  *   never creates a second reader .
  */
@@ -165,7 +165,7 @@ export class ChildWatch {
       }),
       onProcessExit(child, (info) => {
         // Record before any stopping decision: a normal stop and a crash both
-        // leave an exit fact, and D4 reads this after `failed` (`R-062`-3/6).
+        // leave an exit fact, and the shell reads this after a failure .
         this.#lastExit = { code: info.code, signal: info.signal };
 
         if (host.isStopping()) {

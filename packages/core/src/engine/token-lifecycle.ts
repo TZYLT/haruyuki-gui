@@ -1,10 +1,10 @@
 /**
  * Token-file lifecycle of one hosted engine attempt.
  *
- * Split out of `engine.ts` (E-142): write, note the ACL, delete once. This is a
+ * Split out of `engine.ts`: write, note the ACL, delete once. This is a
  * complete contract by itself and touches nothing else in the facade.
  *
- * Invariants (B1 `no recursive` section 3.3 (c), `R-5`, `B1-Q06`):
+ * Invariants:
  *
  * - The token CONTENT never leaves this module's file; the facade only ever
  *   passes the PATH to the child.
@@ -13,7 +13,7 @@
  * - Deletion is shared and idempotent. `kill()` starts it without awaiting (the
  *   emergency path must not block), and a later stop still observes completion.
  * - The file is deleted only after the child is gone. Deleting it earlier would
- *   make a crash restart unable to read it (`B1-Q06`).
+ *   make a crash restart unable to read it.
  */
 
 import { tokenAclDegradation } from "./degradations";
@@ -56,7 +56,7 @@ export class TokenLifecycle {
   /**
    * Record a degraded token-file ACL instead of dropping it.
    *
-   * `writeTokenFile` degrades rather than throwing (R-5), which is right - a
+   * `writeTokenFile` degrades rather than throwing, which is right - a
    * usable engine beats no engine - but it also means the file may keep the
    * directory's inherited permissions, and on Windows that can be "Everyone can
    * read". The facade cannot fix that, so it must not lose it either.

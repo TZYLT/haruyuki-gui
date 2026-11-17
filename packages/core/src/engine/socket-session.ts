@@ -1,20 +1,21 @@
 /**
  * WebSocket session of one hosted engine attempt.
  *
- * Split out of `engine.ts` (E-142): connect, adopt, dispatch and drop is a
+ * Split out of `engine.ts` so that file no longer carried five
+ * responsibilities: connect, adopt, dispatch and drop is a
  * closed loop that owns its own listeners, so it can be reasoned about without
  * the facade's process bookkeeping.
  *
  * What stays the facade's business, and deliberately does not move here:
  *
  * - **State meaning.** A closed socket is recorded as `socketState = "closed"`
- *   and reported to nobody. `no recursive-B1` section 3.3 (c) keeps `socketState` a
+ *   and reported to nobody. The signed facade contract keeps `socketState` a
  *   transport fact; what a close *means* (a crash, a reconnect, a user stop) is
- *   decided one layer up. B3 owns reconnect, so this module must not guess.
- * - **Frame semantics.** `onFrame(at)` is frozen by  so this module
+ *   decided one layer up. the reconnect layer owns that, so this module must not guess.
+ * - **Frame semantics.** `onFrame(at)` is frozen by the facade contract, so this module
  *   captures the timestamp once and fans it out unchanged. `handleSocketData`
  *   is a separate listener on purpose: widening `onFrame` would move a frozen
- *   signature (`crash-record-retention`).
+ *   signature.
  * - **The endpoint.** `release` tells the host, because the advertised endpoint
  *   is part of the facade's frozen surface, not of the transport.
  */
@@ -126,8 +127,8 @@ export class SocketSession {
    * Deliver one raw frame to the `onMessage` subscribers.
    *
    * A **separate** listener rather than a widened `#handleMessage`: `onFrame(at)`
-   * is frozen by  so its one-argument signature must not move (`crash-record-retention`).
-   * Binary frames are skipped (the protocol is text, `INV-25`), and each
+   * is frozen, so its one-argument signature must not move.
+   * Binary frames are skipped (the protocol is text), and each
    * subscriber is isolated so one throw cannot stop the next.
    */
   readonly #handleData = (data: Buffer, isBinary: boolean): void => {
