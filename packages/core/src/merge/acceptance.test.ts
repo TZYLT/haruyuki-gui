@@ -27,6 +27,7 @@ import { loadFixture } from "../testing/index.js";
 
 import { asRecord, readString } from "./envelope.js";
 import { createEventMerger } from "./event-merger.js";
+import { MERGE_LIMITS } from "./types.js";
 import type { EventMerger, MergerChange } from "./types.js";
 
 /** The recorded sessions, by scenario name. */
@@ -285,21 +286,40 @@ describe("bounded assembly", () => {
     expect(ids).toEqual(["m-1", "m-2"]);
     expect(lengths).toEqual([10_000, 1]);
   });
+
+  it("stays bounded after a hundred thousand sequenced frames", () => {
+    const merger = createEventMerger({ agentId: "agent-a" });
+
+    for (let seq = 1; seq <= 100_000; seq += 1) {
+      merger.ingest(deltaFrame(seq, 1, "x", `m-${seq}`));
+    }
+
+    expect(merger.stats().orderedFrames).toBe(100_000);
+
+    // Every frame names a new message, so the assembly and open-message tables
+    // have to evict along the way. The turn end can only report the bounded
+    // set, which is what "no table grows without a limit" means here.
+    const closed = merger.ingest(finishedFrame(100_001));
+    const completes = closed.filter((change) => change.kind === "message.complete");
+
+    expect(completes.length).toBeGreaterThan(0);
+    expect(completes.length).toBeLessThanOrEqual(MERGE_LIMITS.assembling);
+  });
 });
 
 describe("unknown event types", () => {
-  it("counts fifty distinct unknown types and produces no changes", () => {
+  it("counts a hundred and seventeen distinct unknown types and produces no changes", () => {
     const merger = createEventMerger({ agentId: "agent-a" });
     const produced: MergerChange[] = [];
 
     expect(() => {
-      for (let index = 0; index < 50; index += 1) {
+      for (let index = 0; index < 117; index += 1) {
         produced.push(...merger.ingest(unorderedFrame({ type: `synthetic_unknown_${index}` })));
       }
     }).not.toThrow();
 
     expect(produced).toHaveLength(0);
-    expect(merger.stats().unknownTypes).toBe(50);
+    expect(merger.stats().unknownTypes).toBe(117);
   });
 });
 
@@ -339,7 +359,7 @@ describe("reset at a connection boundary", () => {
     expect(merger.stats().late).toBe(1);
   });
 
-  it("reports a replay that started before the reset as duplicates, not as late", () => {
+  it("counts a replay that arrives before the reset as duplicates, never as late", () => {
     const merger = createEventMerger({ agentId: "agent-a" });
 
     // The old connection delivered 1..3.
@@ -353,9 +373,19 @@ describe("reset at a connection boundary", () => {
     expect(merger.stats().duplicates).toBe(3);
     expect(merger.stats().late).toBe(0);
     expect(merger.watermark()).toBe(3);
+  });
+
+  it("keeps the duplicate count after a reset because the frames are new, not because the counter was cleared", () => {
+    const merger = createEventMerger({ agentId: "agent-a" });
+
+    feed(merger, [loopFrame(1), loopFrame(2), loopFrame(3)]);
+    feed(merger, [loopFrame(1), loopFrame(2), loopFrame(3)]);
+    expect(merger.stats().duplicates).toBe(3);
 
     // The reset clears the handled numbers as well as the watermark, so the
-    // same frames are new again rather than a second round of duplicates.
+    // same frames are new again. The duplicate counter is cumulative and does
+    // not move: that unchanged number is the evidence that the frames were
+    // delivered again, not that the old handled set survived.
     merger.reset("reconnect-reset");
     feed(merger, [loopFrame(1), loopFrame(2), loopFrame(3)]);
 
