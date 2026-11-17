@@ -35,6 +35,9 @@ export type { GapInput } from "./gaps";
 export { runRecovery } from "./recovery";
 export type { RecoveryOutcome, RecoveryPorts, RecoveryStopReason, SyncOutcome } from "./recovery";
 
+export { createEndpointWatcher } from "./endpoints";
+export type { Endpoint, EndpointWatcher, EndpointWatcherOptions } from "./endpoints";
+
 export { createRestartPort } from "./restart";
 export type {
   RestartEndpoint,
