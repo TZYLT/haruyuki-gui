@@ -5,13 +5,19 @@
  * that skips links instead of resolving them. Both are pinned here.
  */
 
-import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { dereferenceTree, parseArgs, UsageError } from "./release.mjs";
+import {
+  dereferenceTree,
+  parseArgs,
+  scanArtifacts,
+  UsageError,
+  writeChecksums,
+} from "./release.mjs";
 
 let work: string | null = null;
 
@@ -72,5 +78,36 @@ describe("dereferenceTree", () => {
     // Dropping it would leave the lock describing a tree with one file fewer
     // than the one on disk, and that mismatch surfaces at start-up, not here.
     await expect(dereferenceTree(work)).rejects.toThrow(/dangling symlink/);
+  });
+});
+
+describe("scanArtifacts", () => {
+  it("finds what the builder wrote instead of expecting names", async () => {
+    if (work === null) throw new Error("no work directory");
+    await mkdir(path.join(work, "win-unpacked"), { recursive: true });
+    await writeFile(path.join(work, "win-unpacked", "app.exe"), "BINARY");
+    await writeFile(path.join(work, "haruyuki-0.1.0-win-x64.zip"), "ZIPDATA");
+
+    const found = await scanArtifacts(work);
+
+    // The tree is zip content, not something a user downloads.
+    expect(found.map((artifact) => artifact.file)).toEqual(["haruyuki-0.1.0-win-x64.zip"]);
+    expect(found[0]?.bytes).toBe(7);
+  });
+
+  it("returns nothing for a directory that does not exist yet", async () => {
+    expect(await scanArtifacts(path.join(work ?? "", "release"))).toEqual([]);
+  });
+});
+
+describe("writeChecksums", () => {
+  it("writes the GNU format that sha256sum -c reads", async () => {
+    if (work === null) throw new Error("no work directory");
+    await writeFile(path.join(work, "a.zip"), "ZIPDATA");
+
+    const contents = await writeChecksums(work, [{ file: "a.zip", bytes: 7 }]);
+
+    // Two spaces, a bare file name: anything else fails to verify downstream.
+    expect(contents).toMatch(/^[0-9a-f]{64} {2}a\.zip\n$/);
   });
 });

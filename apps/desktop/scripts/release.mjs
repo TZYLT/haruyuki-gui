@@ -28,9 +28,10 @@
  */
 
 import { existsSync } from "node:fs";
-import { readdir, rm } from "node:fs/promises";
+import { readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
@@ -276,6 +277,100 @@ async function roundOne(options) {
   return 0;
 }
 
+/**
+ * Every file electron-builder left in `release/`, found by reading the
+ * directory rather than by assembling expected names.
+ *
+ * Names come from `artifactName` in the builder configuration, so an
+ * implementation that builds them would keep working until somebody renames an
+ * artifact and then quietly emit an empty list. Scanning cannot do that: its
+ * worst case is listing too much, which is visible.
+ *
+ * @returns {Promise<{ file: string, bytes: number }[]>}
+ */
+export async function scanArtifacts(releaseDir) {
+  if (!existsSync(releaseDir)) return [];
+
+  const entries = await readdir(releaseDir, { recursive: true, withFileTypes: true });
+  const artifacts = [];
+
+  for (const entry of entries) {
+    if (!entry.isFile()) continue;
+    const absolute = path.join(entry.parentPath ?? releaseDir, entry.name);
+    const relative = path.relative(releaseDir, absolute).split(path.sep).join("/");
+    // `win-unpacked/` is build output, not something a user downloads. The
+    // shipped files are the archives and the image; the tree is zip content.
+    if (relative.startsWith("win-unpacked/") || relative.startsWith("linux-unpacked/")) continue;
+    const info = await stat(absolute);
+    artifacts.push({ file: relative, bytes: info.size });
+  }
+
+  return artifacts.sort((left, right) => left.file.localeCompare(right.file));
+}
+
+/**
+ * Write `SHA256SUMS` in the GNU format the `sha256sum -c` expects.
+ *
+ * Two spaces between digest and name, bare file names, one line each. The same
+ * bytes go into the release body, so the format is pinned rather than
+ * incidental.
+ *
+ * @param {string} releaseDir
+ * @param {{ file: string, bytes: number }[]} artifacts
+ * @returns {Promise<string>} the file contents
+ */
+export async function writeChecksums(releaseDir, artifacts) {
+  const lines = [];
+  for (const artifact of artifacts) {
+    const digest = createHash("sha256")
+      .update(await readFile(path.join(releaseDir, artifact.file)))
+      .digest("hex");
+    lines.push(`${digest}  ${artifact.file}`);
+  }
+  const contents = `${lines.join("\n")}\n`;
+  await writeFile(path.join(releaseDir, "SHA256SUMS"), contents, "utf8");
+  return contents;
+}
+
+/**
+ * Round 2: package, then describe what was packaged.
+ *
+ * The build and package steps belong to the Windows and Linux work packages and
+ * are not wired here yet. What is wired is the half that can be judged without
+ * them: if artifacts are already sitting in `release/`, they get described
+ * correctly, and when there are none the command says so instead of writing an
+ * empty manifest that reads like success.
+ *
+ * @param {{ targets: ("win32"|"linux")[] }} options
+ * @returns {Promise<number>} exit code
+ */
+async function roundTwo(options) {
+  const releaseDir = path.join(DESKTOP_DIR, "release");
+  const artifacts = await scanArtifacts(releaseDir);
+
+  if (artifacts.length === 0) {
+    process.stdout.write(
+      "\nrelease/ holds no artifacts. The build and package steps belong to W2-WIN\n" +
+        "and W3-LINUX and are not wired yet; run with --skip-bundle to stop after\n" +
+        "round 1, which is a complete claim on its own.\n",
+    );
+    // Not zero: this run promised artifacts by omitting --skip-bundle and did
+    // not produce any. Writing an empty manifest would look like success.
+    return options.targets.length > 0 ? 1 : 3;
+  }
+
+  const checksums = await writeChecksums(releaseDir, artifacts);
+
+  process.stdout.write("\n==> artifacts\n");
+  for (const artifact of artifacts) {
+    process.stdout.write(`  ${artifact.file}  ${artifact.bytes} B\n`);
+  }
+  process.stdout.write(`\nchecksums written to ${path.join(releaseDir, "SHA256SUMS")}\n`);
+  process.stdout.write(`${checksums.split("\n").length - 1} line(s)\n`);
+
+  return 0;
+}
+
 async function main() {
   let options;
   try {
@@ -291,16 +386,10 @@ async function main() {
   const code = await roundOne(options);
   if (code !== 0) return code;
 
-  if (!options.skipBundle) {
-    // Round 2 (W2-WIN, W3-LINUX) appends the build/package/manifest steps here.
-    process.stdout.write(
-      "\nround 2 (build / package / manifest) is not wired yet: pass --skip-bundle,\n" +
-        "or run round 1 alone until those work packages land.\n",
-    );
-    return 2;
-  }
+  if (options.skipBundle) return 0;
 
-  return 0;
+  const manifest = await roundTwo(options);
+  return manifest;
 }
 
 if (process.argv[1] !== undefined && path.resolve(process.argv[1]) === SCRIPT_PATH) {
