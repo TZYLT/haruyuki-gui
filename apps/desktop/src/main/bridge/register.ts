@@ -6,17 +6,32 @@
  * its `ipc` as an argument rather than importing `ipcMain`, so the accept and
  * deny paths are unit-testable without an Electron process.
  *
- * Four handlers, five channels:
+ * Five handlers, six channels:
  *   submit   receives the renderer's control frames and hands the string to the
  *            host, which feeds it to the current session's sender
  *   ack      terminal byte acknowledgement; transport-level, never a frame
  *   layout   C4's write-back; absent implementation is an explicit refusal, not
  *            a silent success
+ *   state    C4's read-back; the same refusal when the wiring is not ready, so
+ *            the renderer can tell "not mounted yet" from an empty document
  *   ping     D1's existing probe; D3 supplies the handler D1 never wrote
  */
 
+import type { LayoutState } from "@haruyuki/protocol";
+
+import { BRIDGE_CHANNEL_NAMES } from "../../shared/bridge.js";
 import { APP_PING, FRAME_SUBMIT, LAYOUT_SAVE, TERMINAL_ACK } from "./channels.js";
 import type { BridgeSessionHost } from "./types.js";
+
+/**
+ * The layout read-back channel.
+ *
+ * Read from the shared table instead of being spelled a second time: the
+ * preload's allowlist and this handler must agree exactly, and two literals are
+ * two chances to drift. (`channels.ts` stays the home of D3's frame pipes; this
+ * channel belongs to C4's read path.)
+ */
+export const LAYOUT_STATE = BRIDGE_CHANNEL_NAMES.layoutState;
 
 /** The explicit refusal when C4's `LayoutChannel` has not been injected. */
 export const LAYOUT_UNAVAILABLE = "LAYOUT_UNAVAILABLE" as const;
@@ -36,6 +51,8 @@ export interface BridgeIpcDeps {
   readonly host: BridgeSessionHost;
   /** C4's `LayoutChannel.handleSave`; absent until C4 lands. */
   readonly layoutSave?: (request: unknown) => Promise<unknown> | unknown;
+  /** C4's `LayoutChannel.handleState`; absent until the layout wiring is ready. */
+  readonly layoutState?: () => LayoutState;
 }
 
 /** The reply every handler returns; `ok:false` is a refusal, never a throw. */
@@ -51,7 +68,7 @@ export interface IpcReply {
  *   time, which is what a reload/teardown path needs
  */
 export function registerBridgeIpc(deps: BridgeIpcDeps): () => void {
-  const { host, ipc, layoutSave } = deps;
+  const { host, ipc, layoutSave, layoutState } = deps;
 
   ipc.handle(FRAME_SUBMIT, (_event, payload) => {
     if (typeof payload !== "string") return { ok: false, code: BAD_PAYLOAD };
@@ -84,6 +101,18 @@ export function registerBridgeIpc(deps: BridgeIpcDeps): () => void {
     }
   });
 
+  ipc.handle(LAYOUT_STATE, () => {
+    if (layoutState === undefined) return { ok: false, code: LAYOUT_UNAVAILABLE };
+
+    try {
+      return layoutState();
+    } catch {
+      // A thrown provider would reject the renderer's invoke() and surface as
+      // an unhandled rejection; a refusal code keeps the call answerable.
+      return { ok: false, code: "LAYOUT_STATE_FAILED" };
+    }
+  });
+
   ipc.handle(APP_PING, () => ({ ok: true }));
 
   let disposed = false;
@@ -93,7 +122,7 @@ export function registerBridgeIpc(deps: BridgeIpcDeps): () => void {
 
     disposed = true;
 
-    for (const channel of [FRAME_SUBMIT, TERMINAL_ACK, LAYOUT_SAVE, APP_PING]) {
+    for (const channel of [FRAME_SUBMIT, TERMINAL_ACK, LAYOUT_SAVE, LAYOUT_STATE, APP_PING]) {
       ipc.removeHandler(channel);
     }
   };

@@ -14,6 +14,7 @@
 import { app, ipcMain, type BrowserWindow } from "electron";
 
 import { FRAME_PROTOCOL_VERSION } from "@haruyuki/protocol";
+import type { Frame, LayoutState } from "@haruyuki/protocol";
 
 import { BRIDGE_VERSION } from "./channels.js";
 import { createBridgeHost } from "./host.js";
@@ -34,6 +35,14 @@ export interface BridgeWiring {
    * rather than a silent default.
    */
   bootParams(): Record<string, string>;
+  /**
+   * The producer-side sink, exactly `BridgeSessionHost.send`.
+   *
+   * Layout and engine-event producers hold this rather than a sender: a reload
+   * replaces the session behind the host, while the host itself outlives the
+   * window that reloaded.
+   */
+  readonly send: (frame: Frame) => void;
   /** Removes the `ipcMain` handlers and closes the host; idempotent. */
   dispose(): void;
 }
@@ -44,9 +53,17 @@ export interface BridgeWiring {
  * One host per app, not per window: a reload replaces the session behind it, and the
  * producers hold the host rather than any sender.
  *
- * @param options the version the accept frame reports and where events are logged
+ * @param options the version the accept frame reports, where events are logged,
+ *   and the optional C4 providers the shell may not have built yet
  */
-export function wireBridge(options: { coreVersion: string; log: BridgeLog }): BridgeWiring {
+export function wireBridge(options: {
+  coreVersion: string;
+  log: BridgeLog;
+  /** C4's write path; absent until the layout wiring is ready. */
+  layoutSave?: (request: unknown) => Promise<unknown> | unknown;
+  /** C4's read path; absent until the layout wiring is ready. */
+  layoutState?: () => LayoutState;
+}): BridgeWiring {
   const host: BridgeSessionHost = createBridgeHost({
     expectedBridgeVersion: BRIDGE_VERSION,
     coreVersion: options.coreVersion,
@@ -55,9 +72,17 @@ export function wireBridge(options: { coreVersion: string; log: BridgeLog }): Br
     log: options.log,
   });
 
-  const disposeIpc = registerBridgeIpc({ ipc: ipcMain, host });
+  // Conditional spreads keep an absent provider absent instead of passing an
+  // explicit `undefined`, which `exactOptionalPropertyTypes` distinguishes.
+  const disposeIpc = registerBridgeIpc({
+    ipc: ipcMain,
+    host,
+    ...(options.layoutSave === undefined ? {} : { layoutSave: options.layoutSave }),
+    ...(options.layoutState === undefined ? {} : { layoutState: options.layoutState }),
+  });
 
   return {
+    send: host.send,
     attachWindow(window) {
       // `did-start-navigation` is the last moment before the new document's scripts
       // can run, so it is the only safe place to swap the generation.
