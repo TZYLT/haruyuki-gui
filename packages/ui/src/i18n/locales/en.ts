@@ -207,6 +207,22 @@ export const en = {
   "page.frame.picker.main": "Main area",
   "page.frame.picker.side": "Side rail",
 
+  "page.topbar.edit": "Edit",
+  "page.topbar.help": "Help",
+  "page.topbar.diagnostics": "Export diagnostics",
+  "page.topbar.settings": "Settings",
+  "page.topbar.updates": "Check for updates",
+  "page.topbar.undo": "Undo",
+  "page.topbar.redo": "Redo",
+  "page.topbar.cut": "Cut",
+  "page.topbar.copy": "Copy",
+  "page.topbar.paste": "Paste",
+  "page.topbar.selectAll": "Select all",
+  "page.topbar.resetLayout": "Reset layout",
+  "page.topbar.about": "About",
+  "page.topbar.aboutTitle": "About Haruyuki",
+  "page.topbar.version": "Version {version}",
+
   // ----------------------------------------------------------------- error
   "error.network.unreachable": "The service is unreachable",
   "error.unexpected": "An unexpected error occurred",

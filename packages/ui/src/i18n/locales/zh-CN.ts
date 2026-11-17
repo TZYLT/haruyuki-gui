@@ -162,6 +162,22 @@ export const zhCN = {
   "page.frame.picker.main": "主区",
   "page.frame.picker.side": "侧轨",
 
+  "page.topbar.edit": "编辑",
+  "page.topbar.help": "帮助",
+  "page.topbar.diagnostics": "导出诊断",
+  "page.topbar.settings": "设置",
+  "page.topbar.updates": "检查更新",
+  "page.topbar.undo": "撤销",
+  "page.topbar.redo": "重做",
+  "page.topbar.cut": "剪切",
+  "page.topbar.copy": "复制",
+  "page.topbar.paste": "粘贴",
+  "page.topbar.selectAll": "全选",
+  "page.topbar.resetLayout": "重置布局",
+  "page.topbar.about": "关于",
+  "page.topbar.aboutTitle": "关于 Haruyuki",
+  "page.topbar.version": "版本 {version}",
+
   // ----------------------------------------------------------------- error
   "error.network.unreachable": "无法连接到服务",
   "error.unexpected": "发生了意外错误",

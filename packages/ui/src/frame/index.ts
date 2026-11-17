@@ -15,7 +15,9 @@
 export const FRAME_LAYER = "frame" as const;
 
 export { AppFrame } from "./AppFrame.js";
+export { TopBar } from "./TopBar.js";
 export type { AppFrameProps } from "./AppFrame.js";
+export type { EditAction, TopBarProps } from "./TopBar.js";
 export { createActivityStore, badgeText } from "./activity.js";
 export type { ActivityState, ActivityStore } from "./activity.js";
 export { toDockview, toLayoutDoc, docEquals } from "./layout/map.js";
