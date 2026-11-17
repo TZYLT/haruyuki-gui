@@ -27,8 +27,8 @@ export type EnvelopeFacts = {
   readonly idempotencyKey: string | null;
   /** `runtime.agent_id`, or `null` when the envelope is absent. */
   readonly runtimeAgentId: string | null;
-  /** `runtime.conversation_id`, or `null`. */
-  readonly conversationId: string | null;
+  /** `runtime.conversation_id`, already defaulted by the caller. */
+  readonly conversationId: string;
   /** `delta.agent_id ?? delta.session_id ?? runtime.agent_id`, or `null`. */
   readonly authorAgentId: string | null;
   /** `msg.subagent_id`, or `null` on the main line. */
