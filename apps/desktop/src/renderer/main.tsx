@@ -24,6 +24,7 @@ import {
   LocaleProvider,
   TERMINAL_STYLESHEET,
   TerminalPanel,
+  TopBar,
   applyTheme,
   connectTerminalFeed,
   createPageRegistry,
@@ -39,7 +40,7 @@ import { DEFAULT_LAYOUT } from "./default-layout.js";
 
 import { CrashPage, parseCrashParams } from "./crash-page.js";
 import { DiagnosticsPanel } from "./diagnostics-panel.js";
-import { BRIDGE_CHANNEL_NAMES } from "../shared/bridge.js";
+import { BRIDGE_CHANNEL_NAMES, DIAGNOSTICS_CHANNELS } from "../shared/bridge.js";
 import { createRendererBridge, type BridgeBoot } from "./bridge.js";
 import { terminalNotices } from "./terminal-notices.js";
 import { createBridgeFrameSource } from "./terminal-frame-source.js";
@@ -562,12 +563,33 @@ function Shell(): ReactElement {
             <DiagnosticsPanel initialOpen />
           ) : (
             <>
-              <AppFrame
-                registry={frameRegistry}
-                doc={layout.doc}
-                revision={layout.revision}
-                onLayoutChange={saveLayout}
-              />
+              <div style={{ display: "flex", flexDirection: "column", height: "100vh" }}>
+                <TopBar
+                  version={boot.bridge.appVersion}
+                  hasSettings={frameRegistry.get("settings") !== undefined}
+                  hasUpdates={false}
+                  onExportDiagnostics={() => {
+                    if (shellBridge === undefined) return;
+
+                    void shellBridge
+                      .invoke(DIAGNOSTICS_CHANNELS.export, {
+                        kind: "open",
+                        sessionAvailable: false,
+                      })
+                      .catch((error: unknown) => console.error("diagnostics open failed", error));
+                  }}
+                  onResetLayout={() => {
+                    publishLayout(DEFAULT_LAYOUT, layoutView.revision);
+                    saveLayout(DEFAULT_LAYOUT);
+                  }}
+                />
+                <AppFrame
+                  registry={frameRegistry}
+                  doc={layout.doc}
+                  revision={layout.revision}
+                  onLayoutChange={saveLayout}
+                />
+              </div>
               {/*
                * The terminal panel, mounted on the default route so a session has a
                * surface. Three of its inputs are honest placeholders, because the
