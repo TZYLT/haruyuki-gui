@@ -24,6 +24,10 @@ import { afterEach, describe, expect, it } from "vitest";
 
 const SCRIPT = path.resolve(process.cwd(), "scripts/check-forbidden-literals.mjs");
 const BUSINESS = "packages/core/src/engine/reconnect";
+const BASELINE = "scripts/forbidden-literals-baseline.json";
+
+/** A baseline that excuses nothing, so every case below is about the rule itself. */
+const EMPTY_BASELINE = JSON.stringify({ files: {} });
 const TRANSPORT = "packages/core/src/engine/client";
 
 const roots: string[] = [];
@@ -51,7 +55,10 @@ function run(root: string) {
 
 describe("forbidden literals gate", () => {
   it("passes a module that names no wire message", () => {
-    const root = makeTree({ [`${BUSINESS}/clean.ts`]: 'export const step = { step: "sync" };\n' });
+    const root = makeTree({
+      [BASELINE]: EMPTY_BASELINE,
+      [`${BUSINESS}/clean.ts`]: 'export const step = { step: "sync" };\n',
+    });
 
     const result = run(root);
 
@@ -60,7 +67,10 @@ describe("forbidden literals gate", () => {
   });
 
   it("rejects a wire message name in a business module", () => {
-    const root = makeTree({ [`${BUSINESS}/bad.ts`]: 'const frame = { type: "agent_list" };\n' });
+    const root = makeTree({
+      [BASELINE]: EMPTY_BASELINE,
+      [`${BUSINESS}/bad.ts`]: 'const frame = { type: "agent_list" };\n',
+    });
 
     const result = run(root);
 
@@ -70,7 +80,10 @@ describe("forbidden literals gate", () => {
   });
 
   it("allows the transport adapter to name wire messages", () => {
-    const root = makeTree({ [`${TRANSPORT}/frames.ts`]: 'const frames = ["agent_list"];\n' });
+    const root = makeTree({
+      [BASELINE]: EMPTY_BASELINE,
+      [`${TRANSPORT}/frames.ts`]: 'const frames = ["agent_list"];\n',
+    });
 
     const result = run(root);
 
@@ -81,6 +94,7 @@ describe("forbidden literals gate", () => {
     // "sync" is a step name here and "input" is a port; a check that flagged them
     // would be answered by renaming the domain, which fixes nothing.
     const root = makeTree({
+      [BASELINE]: EMPTY_BASELINE,
       [`${BUSINESS}/domain.ts`]:
         'export type Step = "sync";\nexport interface Port { input: string }\n',
     });
@@ -92,6 +106,7 @@ describe("forbidden literals gate", () => {
 
   it("rejects an internal document number in a comment and in a string", () => {
     const root = makeTree({
+      [BASELINE]: EMPTY_BASELINE,
       [`${BUSINESS}/refs.ts`]: "/** see docs/47 for why */\nexport const note = 'E-147';\n",
     });
 
@@ -99,6 +114,28 @@ describe("forbidden literals gate", () => {
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("internal-number");
+  });
+
+  it("lets a file keep the violations it was frozen with, and fails the next one", () => {
+    // The point of a baseline rather than a narrower scope: the old lines are
+    // excused, and a new one in the same file is not.
+    const file = `${BUSINESS}/legacy.ts`;
+    const root = makeTree({
+      [BASELINE]: JSON.stringify({ files: { [file]: 1 } }),
+      [file]: "/** see docs/47 for why */\nexport const note = 'docs/18';\n",
+    });
+
+    const result = run(root);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("internal-number");
+    // Exactly one line escapes the allowance, not both.
+    expect(
+      result.stderr
+        .trim()
+        .split("\n")
+        .filter((line) => line.includes("internal-number")),
+    ).toHaveLength(1);
   });
 
   it("prints help and exits zero", () => {

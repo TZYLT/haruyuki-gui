@@ -10,6 +10,13 @@
  * because it is the one place that has to know them; everything above it reaches
  * the same capability through a named port or a discriminated contract.
  *
+ * The rule targets names that come from somewhere else and drag this code along
+ * when they change. `agent_list` is such a name: the engine renames it and this
+ * code breaks. `sync` is not -- this layer has a recovery step called sync, and
+ * the only thing a shared word costs is that a reader must look at the context. So
+ * the two colliding words are exempt for a reason of substance, not because the
+ * collision is inconvenient.
+ *
  * **Internal document numbers.** A comment that says "see docs/47 §5.1" is a
  * reference to a file the reader of this code does not have and cannot resolve.
  * The reason a rule exists survives translation into words; the number does not.
@@ -23,7 +30,7 @@
  * Exit codes: 0 pass, 1 violations, 2 the gate itself is broken.
  */
 
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 const USAGE = `check-forbidden-literals - wire literals and internal document numbers
@@ -31,6 +38,7 @@ const USAGE = `check-forbidden-literals - wire literals and internal document nu
 Usage:
   node scripts/check-forbidden-literals.mjs                scan the default scope
   node scripts/check-forbidden-literals.mjs --root <dir>   scan another tree
+  node scripts/check-forbidden-literals.mjs --update-baseline   rewrite the frozen baseline
   node scripts/check-forbidden-literals.mjs --help         print this text and exit 0
 
 Exit codes:
@@ -73,12 +81,21 @@ const TRANSPORT_SCOPE = ["packages/core/src/engine/client"];
 /**
  * Where these rules are enforced.
  *
- * Scoped to the reconnect layer rather than the whole engine: the rest of the
- * engine predates both rules and carries hundreds of doc-number references, and a
- * gate that is red on arrival gets either ignored or exempted. Widening this is a
- * decision with a clean-up attached, not a one-line change.
+ * The whole engine, not just the layer that already complies. The rule is about
+ * new code, and new code is written wherever the next change happens -- scoping to
+ * one directory would protect the only place that needs no protection and leave
+ * every future file unguarded.
+ *
+ * The existing violations are frozen in a baseline instead: a file may keep
+ * exactly the number it had, and the next one is a failure. That is the difference
+ * between a narrow rule (never checked elsewhere) and a frozen one (checked
+ * everywhere, with the past excused), and only the second survives contact with
+ * new code.
  */
-const SCOPE = ["packages/core/src/engine/reconnect"];
+const SCOPE = ["packages/core/src/engine"];
+
+/** The transport adapter may name wire types; naming them is its job. */
+const BASELINE_PATH = "scripts/forbidden-literals-baseline.json";
 
 const DOC_NUMBER = [
   /\bdocs\/\d+/, // docs/47
@@ -147,16 +164,47 @@ function stringLiterals(line) {
  */
 
 /**
+ * Read the frozen baseline.
+ *
  * @param {string} root absolute root
- * @returns {Violation[]}
+ * @returns {Map<string, number>}
  */
-function collectViolations(root) {
+function readBaseline(root) {
+  const text = readFileSync(path.join(root, BASELINE_PATH), "utf8");
+  const parsed = JSON.parse(text);
+  /** @type {Map<string, number>} */
+  const allowed = new Map();
+
+  for (const [file, count] of Object.entries(parsed.files ?? {})) {
+    allowed.set(file, Number(count));
+  }
+
+  return allowed;
+}
+
+/**
+ * @param {string} root absolute root
+ * @param {boolean} frozen whether the baseline is applied
+ * @returns {{ violations: Violation[], counts: Map<string, number> }}
+ */
+function collectViolations(root, frozen = true) {
   /** @type {Violation[]} */
   const violations = [];
   const files = SCOPE.flatMap((dir) => listSources(root, dir));
   const transport = new Set(TRANSPORT_SCOPE.flatMap((dir) => listSources(root, dir)));
+  const allowed = frozen ? readBaseline(root) : new Map();
+  /** @type {Map<string, number>} */
+  const seen = new Map();
 
   for (const file of files) {
+    const record = (violation) => {
+      const before = seen.get(file) ?? 0;
+      seen.set(file, before + 1);
+      // The baseline excuses exactly as many lines as the file already had. The
+      // next one is the failure this gate exists for.
+      if (before < (allowed.get(file) ?? 0)) return;
+      violations.push(violation);
+    };
     const text = readFileSync(path.join(root, file), "utf8");
     const lines = text.split(/\r?\n/);
 
@@ -165,7 +213,7 @@ function collectViolations(root) {
 
       for (const match of DOC_NUMBER) {
         if (match.test(line)) {
-          violations.push({
+          record({
             file,
             line: lineNumber,
             rule: "internal-number",
@@ -179,7 +227,7 @@ function collectViolations(root) {
 
       for (const { value } of stringLiterals(line)) {
         if (WIRE_LITERALS.has(value)) {
-          violations.push({
+          record({
             file,
             line: lineNumber,
             rule: "wire-literal",
@@ -191,20 +239,44 @@ function collectViolations(root) {
     }
   }
 
-  return violations;
+  for (const [file, count] of [...seen.entries()].sort()) {
+    const granted = allowed.get(file) ?? 0;
+
+    if (count < granted) {
+      console.log(
+        `note ${file}: ${String(count)} violation(s), baseline allows ${String(granted)}; shrink the baseline`,
+      );
+    }
+  }
+
+  return { violations, counts: seen };
 }
 
 /**
  * @param {{ root: string }} args
  * @returns {void}
  */
-function runGate({ root }) {
+function runGate({ root, updateBaseline }) {
   let violations;
+  let counts;
   try {
-    violations = collectViolations(root);
+    ({ violations, counts } = collectViolations(root, !updateBaseline));
   } catch (error) {
     console.error(`ERROR: ${error instanceof Error ? error.message : String(error)}`);
     process.exitCode = 2;
+    return;
+  }
+
+  if (updateBaseline) {
+    const next = {
+      _comment:
+        "Frozen count of existing violations per file, from before this gate existed. A file may keep exactly this many; the next one is a failure. Shrink this file when a file is cleaned up; never grow it without a decision recorded in the change.",
+      files: Object.fromEntries([...counts.entries()].sort()),
+    };
+    writeFileSync(path.join(root, BASELINE_PATH), `${JSON.stringify(next, null, 2)}\n`, "utf8");
+    console.log(
+      `baseline written: ${String(counts.size)} file(s), ${String([...counts.values()].reduce((sum, n) => sum + n, 0))} entr(ies)`,
+    );
     return;
   }
 
@@ -223,9 +295,13 @@ function runGate({ root }) {
 
 const argv = process.argv.slice(2);
 const rootIndex = argv.indexOf("--root");
+const updateBaseline = argv.includes("--update-baseline");
 
 if (argv.includes("--help") || argv.includes("-h")) {
   console.log(USAGE);
 } else {
-  runGate({ root: rootIndex === -1 ? process.cwd() : path.resolve(argv[rootIndex + 1] ?? ".") });
+  runGate({
+    root: rootIndex === -1 ? process.cwd() : path.resolve(argv[rootIndex + 1] ?? "."),
+    updateBaseline,
+  });
 }
