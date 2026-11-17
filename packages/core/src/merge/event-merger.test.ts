@@ -238,12 +238,27 @@ describe("createEventMerger turn lifecycle", () => {
   it("announces a restart before the first piece of the new run", () => {
     const merger = createEventMerger({ agentId: "agent-a" });
 
-    merger.ingest(frame(1, delta(1, "old ")));
-    merger.ingest(frame(2, delta(2, "text")));
+    // The run began mid-message, so the first accepted piece was number two;
+    // an unseen number one is therefore the engine starting over.
+    merger.ingest(frame(1, delta(2, "old ")));
+    merger.ingest(frame(2, delta(3, "text")));
 
     const changes = merger.ingest(frame(3, delta(1, "new ")));
 
     expect(kinds(changes)).toEqual(["message.reset", "message.delta"]);
+  });
+
+  it("does not reset a message when a finished one is pushed again", () => {
+    const merger = createEventMerger({ agentId: "agent-a" });
+
+    merger.ingest(frame(1, delta(1, "done")));
+    merger.ingest(frame(2, finished()));
+
+    const again = merger.ingest(frame(3, delta(1, "done")));
+
+    // Nothing is open any more, so this is a new run that happens to share the
+    // id; no reset may be announced, or the text already on screen would clear.
+    expect(kinds(again)).toEqual(["message.delta"]);
   });
 });
 

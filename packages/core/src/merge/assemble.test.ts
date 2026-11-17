@@ -125,33 +125,54 @@ describe("createAssembler", () => {
     // and a resend of a middle piece is not a restart.
     expect(assembler.push(input({ runSeq: 2, parts: [textPart("B")] }))).toBeNull();
 
+    // The repeated pieces carried different text, which cannot both be the
+    // message: the first is kept and the message is marked as possibly wrong.
     expect(assembler.complete("agent-local-54b313a7", null, "ui-msg-2")).toEqual({
       messageId: "ui-msg-2",
       runId: "local-run-2",
       textLength: 3,
+      incomplete: true,
+    });
+  });
+
+  it("keeps a repeated first piece instead of restarting on it", () => {
+    const assembler = createAssembler();
+
+    assembler.push(input({ runSeq: 1, parts: [textPart("he")] }));
+    assembler.push(input({ runSeq: 2, parts: [textPart("llo")] }));
+
+    // The same piece again is a repeat, not a new run: resetting here would
+    // clear text the user is already reading.
+    expect(assembler.push(input({ runSeq: 1, parts: [textPart("he")] }))).toBeNull();
+
+    expect(assembler.complete("agent-local-54b313a7", null, "ui-msg-2")).toEqual({
+      messageId: "ui-msg-2",
+      runId: "local-run-2",
+      textLength: 5,
       incomplete: false,
     });
   });
 
-  it("restarts the message when sequence one arrives again with text present", () => {
+  it("restarts the message when an unseen first piece arrives after a later one", () => {
     const assembler = createAssembler();
 
-    assembler.push(input({ runSeq: 1, parts: [textPart("Hello")] }));
+    // The stream began mid-message, so the first accepted piece was number two.
     assembler.push(input({ runSeq: 2, parts: [textPart(" world")] }));
+    assembler.push(input({ runSeq: 3, parts: [textPart("!")] }));
 
-    const restarted = assembler.push(input({ runSeq: 1, parts: [textPart("Goodbye")] }));
+    const restarted = assembler.push(input({ runSeq: 1, parts: [textPart("Hello")] }));
 
     expect(restarted?.reset).toBe(true);
     expect(restarted?.first).toBe(true);
-    expect(restarted?.text).toBe("Goodbye");
-    expect(restarted?.parts).toEqual([textPart("Goodbye")]);
+    expect(restarted?.text).toBe("Hello");
+    expect(restarted?.parts).toEqual([textPart("Hello")]);
     expect(restarted?.incomplete).toBe(false);
 
     // The earlier text is gone rather than kept in front of the new run.
     expect(assembler.complete("agent-local-54b313a7", null, "ui-msg-2")).toEqual({
       messageId: "ui-msg-2",
       runId: "local-run-2",
-      textLength: 7,
+      textLength: 5,
       incomplete: false,
     });
   });
@@ -159,10 +180,9 @@ describe("createAssembler", () => {
   it("clears the incomplete mark when the message restarts", () => {
     const assembler = createAssembler();
 
-    assembler.push(input({ runSeq: 1, parts: [textPart("a")] }));
-    assembler.push(input({ runSeq: 3, parts: [textPart("c")] }));
-
-    expect(assembler.push(input({ runSeq: 4 }))?.incomplete).toBe(true);
+    // Started at two: the hole at one is already a mark.
+    assembler.push(input({ runSeq: 2, parts: [textPart("b")] }));
+    expect(assembler.push(input({ runSeq: 3, parts: [textPart("c")] }))?.incomplete).toBe(true);
 
     const restarted = assembler.push(input({ runSeq: 1, parts: [textPart("again")] }));
 

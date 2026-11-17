@@ -118,6 +118,8 @@ type Entry = {
   maxSeq: number;
   /** Whether a hole was seen; sticky until the message restarts. */
   incomplete: boolean;
+  /** Text of every accepted `seq_id`, so a re-pushed piece can be recognised. */
+  seen: Map<number, string>;
   /** The run of the latest accepted delta. */
   runId: string | null;
 };
@@ -194,7 +196,14 @@ export function createAssembler(options: { limit?: number } = {}): Assembler {
     }
   };
 
-  const fresh = (): Entry => ({ text: "", parts: [], maxSeq: -1, incomplete: false, runId: null });
+  const fresh = (): Entry => ({
+    text: "",
+    parts: [],
+    maxSeq: -1,
+    incomplete: false,
+    seen: new Map(),
+    runId: null,
+  });
 
   return {
     push(input) {
@@ -210,26 +219,43 @@ export function createAssembler(options: { limit?: number } = {}): Assembler {
       let entry = held;
       let reset = false;
       let first = entry === undefined;
+      const added = textOf(input.parts);
 
       if (entry === undefined) {
         entry = fresh();
-      } else if (input.runSeq === 1 && entry.text.length > 0) {
-        // The engine started the message over. The text already assembled was
-        // provisional, so it is discarded rather than kept in front of the new
-        // run; keeping it would show the answer twice.
-        entry = fresh();
-        reset = true;
-        first = true;
-      } else if (input.runSeq <= entry.maxSeq) {
-        // Already in the text. Refusing it is the only safe answer: appending a
-        // repeated piece would duplicate a word, and returning text the caller
-        // already has would make the message longer than the engine's answer.
-        touch(key, entry);
+      } else {
+        const seenChunk = entry.seen.get(input.runSeq);
 
-        return null;
+        if (seenChunk !== undefined) {
+          // The same piece again. It is a repeat while the text is identical,
+          // and a contradiction when it differs; neither may be appended, and
+          // differing text is a fact the corner mark should carry.
+          if (seenChunk !== added) {
+            entry.incomplete = true;
+          }
+
+          touch(key, entry);
+
+          return null;
+        }
+
+        if (input.runSeq === 1 && entry.text.length > 0 && entry.maxSeq > 1) {
+          // The message was being assembled from a later piece, so this one is
+          // the engine starting over: the earlier text was partial and cannot
+          // be kept in front of the new run.
+          entry = fresh();
+          reset = true;
+          first = true;
+        } else if (input.runSeq <= entry.maxSeq) {
+          // A piece below the highest one, never accepted. Appending it would
+          // put it after text that came later, so it is dropped and the message
+          // is marked as possibly missing a piece.
+          entry.incomplete = true;
+          touch(key, entry);
+
+          return null;
+        }
       }
-
-      const added = textOf(input.parts);
       // Measured against the highest accepted `seq_id`, so a hole anywhere in
       // the past keeps the message incomplete. A message with nothing accepted
       // yet expects one: that is why the first delta of a message that starts at
@@ -238,6 +264,7 @@ export function createAssembler(options: { limit?: number } = {}): Assembler {
 
       entry.text += added;
       entry.parts.push(...input.parts);
+      entry.seen.set(input.runSeq, added);
       entry.maxSeq = input.runSeq;
       entry.incomplete = entry.incomplete || hole;
       entry.runId = input.runId;
