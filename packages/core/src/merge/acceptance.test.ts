@@ -296,9 +296,14 @@ describe("bounded assembly", () => {
 
     expect(merger.stats().orderedFrames).toBe(100_000);
 
-    // Every frame names a new message, so the assembly and open-message tables
-    // have to evict along the way. The turn end can only report the bounded
-    // set, which is what "no table grows without a limit" means here.
+    // Every frame names a new message, so the open-message table has to evict
+    // along the way. Evictions are counted as they happen, which is what makes
+    // the bound observable before any turn ends: an unbounded table would still
+    // report zero here, because nothing would have been dropped yet.
+    expect(merger.stats().incompleteMessages).toBe(100_000 - MERGE_LIMITS.assembling);
+
+    // The turn end can only report the bounded set, which is the other half of
+    // "no table grows without a limit".
     const closed = merger.ingest(finishedFrame(100_001));
     const completes = closed.filter((change) => change.kind === "message.complete");
 
