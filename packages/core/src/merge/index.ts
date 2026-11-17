@@ -18,6 +18,8 @@ export const MERGE_LAYER = "@haruyuki/core/merge" as const;
 export { readEnvelope, readSeq, readString, asRecord } from "./envelope.js";
 export type { EnvelopeFacts } from "./envelope.js";
 
+export { createEventMerger } from "./event-merger.js";
+
 export { createStats } from "./stats.js";
 export type { CounterName, MergeStatsTracker } from "./stats.js";
 

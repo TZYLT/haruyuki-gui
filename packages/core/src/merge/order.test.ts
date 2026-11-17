@@ -297,6 +297,23 @@ describe("createOrderGate", () => {
     expect(gate.buffered()).toBe(1);
   });
 
+  it("adopts the first number after a reset as the new base", () => {
+    const gate = createOrderGate<string>();
+
+    gate.accept(1, "a");
+    gate.accept(2, "b");
+
+    gate.reset();
+
+    // A reconnected stream may continue at 47 instead of restarting at one; the
+    // first frame after the boundary is the only thing that can say which.
+    const adopted = gate.accept(47, "x");
+
+    expect(released(adopted)).toEqual([47]);
+    expect(gate.watermark()).toBe(47);
+    expect(released(gate.accept(48, "y"))).toEqual([48]);
+  });
+
   it("ignores a number that cannot be ordered at all", () => {
     const gate = createOrderGate<string>();
 

@@ -131,6 +131,19 @@ export function createOrderGate<T>(
   let lateRun = 0;
 
   /**
+   * Whether the next sequenced frame starts a new numbering.
+   *
+   * A connection boundary can continue the stream's numbers or restart them,
+   * and the merger cannot tell which from the value alone. Treating the first
+   * frame after a reset as the new base is the only reading that works for both:
+   * a continuation is accepted at its own number instead of stalling behind
+   * numbers that will never be sent, and a restart begins at one, which is then
+   * the same base. Without this, a reconnected stream that continues at 47 would
+   * wait for 1..46 forever.
+   */
+  let awaitingBase = false;
+
+  /**
    * Release everything the buffer holds contiguously from the watermark on.
    *
    * Stops at the first hole: the frames behind it are still ahead of order and
@@ -164,6 +177,13 @@ export function createOrderGate<T>(
       }
 
       let rebaselined = false;
+
+      if (awaitingBase) {
+        awaitingBase = false;
+        // The frame becomes the base: everything below it belongs to the
+        // generation that just ended.
+        mark = seq - 1;
+      }
 
       if (mark !== null && seq <= mark) {
         if (handled.seen(String(seq))) {
@@ -244,6 +264,7 @@ export function createOrderGate<T>(
       mark = null;
       handled.clear();
       lateRun = 0;
+      awaitingBase = true;
     },
   };
 }
