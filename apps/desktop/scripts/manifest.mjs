@@ -142,8 +142,13 @@ async function main() {
   for (const artifact of scanned) {
     const platform = platformOf(artifact.file);
     // Files that are neither a download nor attributable to a platform (the
-    // builder's own debug output, a stale checksum file) stay out.
+    // builder's own debug output, a stale checksum file) stay out. The two
+    // documents this script writes are outputs, not inputs: listing
+    // SHA256SUMS would make the table describe itself, and listing the
+    // manifest would let a second run hash a different manifest than the one
+    // being described.
     if (platform === null) continue;
+    if (artifact.file === "SHA256SUMS" || artifact.file === "release-manifest.json") continue;
     described.push({
       platform,
       file: artifact.file,

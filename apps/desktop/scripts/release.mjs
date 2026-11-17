@@ -31,7 +31,6 @@ import { existsSync } from "node:fs";
 import { readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
@@ -52,6 +51,7 @@ const USAGE = `usage: node apps/desktop/scripts/release.mjs [options]
   --skip-install   assume node_modules is already in place
   --skip-fetch     reuse ${path.relative(REPO_ROOT, ENGINE_ARTIFACT)}
   --skip-bundle    stop after the runtime tree and its lock (round 1)
+  --linux-not-built=<reason>  why no AppImage was produced; see manifest.mjs
   -h, --help       this text
 
 exit codes
@@ -76,6 +76,9 @@ export function parseArgs(argv) {
     skipInstall: false,
     skipFetch: false,
     skipBundle: false,
+    // Carried through to `manifest.mjs`, which refuses to guess why a platform
+    // has no artifact.
+    linuxNotBuilt: null,
   };
   let sawWin = false;
   let sawLinux = false;
@@ -94,6 +97,8 @@ export function parseArgs(argv) {
       options.skipFetch = true;
     } else if (arg === "--skip-bundle") {
       options.skipBundle = true;
+    } else if (arg.startsWith("--linux-not-built=")) {
+      options.linuxNotBuilt = arg.slice("--linux-not-built=".length);
     } else {
       throw new UsageError(`unknown argument: ${arg}`);
     }
@@ -336,30 +341,6 @@ export async function scanTrees(releaseDir) {
 }
 
 /**
- * Write `SHA256SUMS` in the GNU format the `sha256sum -c` expects.
- *
- * Two spaces between digest and name, bare file names, one line each. The same
- * bytes go into the release body, so the format is pinned rather than
- * incidental.
- *
- * @param {string} releaseDir
- * @param {{ file: string, bytes: number }[]} artifacts
- * @returns {Promise<string>} the file contents
- */
-export async function writeChecksums(releaseDir, artifacts) {
-  const lines = [];
-  for (const artifact of artifacts) {
-    const digest = createHash("sha256")
-      .update(await readFile(path.join(releaseDir, artifact.file)))
-      .digest("hex");
-    lines.push(`${digest}  ${artifact.file}`);
-  }
-  const contents = `${lines.join("\n")}\n`;
-  await writeFile(path.join(releaseDir, "SHA256SUMS"), contents, "utf8");
-  return contents;
-}
-
-/**
  * Round 2: package, then describe what was packaged.
  *
  * The build and package steps belong to the Windows and Linux work packages and
@@ -387,18 +368,28 @@ async function roundTwo(options) {
     return options.targets.length > 0 ? 1 : 3;
   }
 
-  const checksums = await writeChecksums(releaseDir, artifacts);
+  // `manifest.mjs` is the single producer of both hash documents: it hashes the
+  // real artifacts and writes SHA256SUMS and release-manifest.json together.
+  // Writing a checksum file here as well would mean two producers of the same
+  // table, and the second one would describe the first as an artifact.
+  const describable = artifacts.filter((artifact) => !artifact.file.startsWith("builder-"));
 
   if (trees.length > 0) {
     process.stdout.write(`\n==> unpacked trees\n${trees.map((tree) => `  ${tree}/`).join("\n")}\n`);
   }
 
   process.stdout.write("\n==> artifacts\n");
-  for (const artifact of artifacts) {
+  for (const artifact of describable) {
     process.stdout.write(`  ${artifact.file}  ${artifact.bytes} B\n`);
   }
-  process.stdout.write(`\nchecksums written to ${path.join(releaseDir, "SHA256SUMS")}\n`);
-  process.stdout.write(`${checksums.split("\n").length - 1} line(s)\n`);
+
+  // The manifest needs the same reasons this run knows about, and it refuses to
+  // invent one, so the platform states are handed over rather than re-derived.
+  const manifestArgs = ["apps/desktop/scripts/manifest.mjs"];
+  if (options.linuxNotBuilt !== null)
+    manifestArgs.push(`--linux-not-built=${options.linuxNotBuilt}`);
+  const okManifest = step("manifest", () => run(process.execPath, manifestArgs, REPO_ROOT));
+  if (!okManifest) return 1;
 
   return 0;
 }

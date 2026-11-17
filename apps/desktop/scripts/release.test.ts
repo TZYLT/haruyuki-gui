@@ -11,14 +11,7 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import {
-  dereferenceTree,
-  parseArgs,
-  scanArtifacts,
-  scanTrees,
-  UsageError,
-  writeChecksums,
-} from "./release.mjs";
+import { dereferenceTree, parseArgs, scanArtifacts, scanTrees, UsageError } from "./release.mjs";
 
 let work: string | null = null;
 
@@ -98,18 +91,6 @@ describe("scanArtifacts", () => {
 
   it("returns nothing for a directory that does not exist yet", async () => {
     expect(await scanArtifacts(path.join(work ?? "", "release"))).toEqual([]);
-  });
-});
-
-describe("writeChecksums", () => {
-  it("writes the GNU format that sha256sum -c reads", async () => {
-    if (work === null) throw new Error("no work directory");
-    await writeFile(path.join(work, "a.zip"), "ZIPDATA");
-
-    const contents = await writeChecksums(work, [{ file: "a.zip", bytes: 7 }]);
-
-    // Two spaces, a bare file name: anything else fails to verify downstream.
-    expect(contents).toMatch(/^[0-9a-f]{64} {2}a\.zip\n$/);
   });
 });
 
