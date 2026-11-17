@@ -1,8 +1,24 @@
 /**
  * Capability IO for the `slash` family.
  *
- * One row per capability name in this domain, shaped as
- * `{ input; output }`. Rows are filled in by the domain work package; an
- * empty interface here means the domain has not been typed yet.
+ * `slash.exec` runs one entry of the engine's command table and returns its
+ * text output. A local `/compact` also returns the topic preview — the same
+ * `CompactionTopicReport` the compaction family uses, transcribed once.
  */
-export interface SlashIo {}
+
+import type { CompactionTopicReport } from "./engine-domain.js";
+
+export interface SlashExecInput {
+  readonly command_id: string;
+  readonly args?: string;
+}
+
+export interface SlashExecOutput {
+  readonly output: string;
+  /** Present only for a local `/compact` (F-04). */
+  readonly topic_report?: CompactionTopicReport;
+}
+
+export interface SlashIo {
+  readonly "slash.exec": { readonly input: SlashExecInput; readonly output: SlashExecOutput };
+}
