@@ -184,6 +184,7 @@ export const zhCN = {
   "page.frame.sideRail.collapse": "折叠侧轨",
   "page.frame.sideRail.expand": "展开侧轨",
   "page.frame.sideRail.empty": "这一侧还没有页面。",
+  "page.frame.sideRail.swap": "左右互换",
   "page.frame.compact.back": "返回布局",
   "page.frame.banner.hidden": "有 {count} 个标签已隐藏，页面可用后会重新显示。",
   "page.frame.unknown.hide": "关闭（只是隐藏）",

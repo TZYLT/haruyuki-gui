@@ -47,6 +47,7 @@ import { createActivityStore } from "./activity.js";
 import { Banner, type BannerProps } from "./Banner.js";
 import { FrameHostProvider, type FrameHost } from "./host-context.js";
 import { hiddenTabCount, hideTab as hideTabInDoc } from "./layout/hidden.js";
+import { swapSidePanels } from "./layout/sides.js";
 import { docEquals, toDockview, toLayoutDoc } from "./layout/map.js";
 import { PageHost } from "./PageHost.js";
 import { PageTab } from "./PageTab.js";
@@ -301,6 +302,28 @@ export function AppFrame(props: AppFrameProps): ReactElement {
     apiRef.current?.getPanel(tabId)?.api.close();
   };
 
+  /** Swap the side panels as a document change, so the swap survives a restart. */
+  const swapSides = (): void => {
+    const api = apiRef.current;
+
+    if (api === null) return;
+
+    const next = swapSidePanels(latest.current, props.registry);
+
+    if (next === null) return;
+
+    applying.current = true;
+
+    try {
+      api.fromJSON(toDockview(next, size()).serialized as never);
+    } finally {
+      applying.current = false;
+    }
+
+    latest.current = next;
+    saveRef.current(next);
+  };
+
   const host: FrameHost = {
     registry: props.registry,
     activity,
@@ -539,6 +562,7 @@ export function AppFrame(props: AppFrameProps): ReactElement {
               activePageId={activePageId}
               onToggle={toggleSide}
               onOpen={(pageId) => focusOrOpen(pageId, "left")}
+              onSwap={swapSides}
             />
           )}
           <DockviewReact
@@ -575,6 +599,7 @@ export function AppFrame(props: AppFrameProps): ReactElement {
               activePageId={activePageId}
               onToggle={toggleSide}
               onOpen={(pageId) => focusOrOpen(pageId, "right")}
+              onSwap={swapSides}
             />
           )}
         </div>

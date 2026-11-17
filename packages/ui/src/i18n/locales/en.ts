@@ -229,6 +229,7 @@ export const en = {
   "page.frame.sideRail.collapse": "Collapse side rail",
   "page.frame.sideRail.expand": "Expand side rail",
   "page.frame.sideRail.empty": "No pages on this side yet.",
+  "page.frame.sideRail.swap": "Swap side rails",
   "page.frame.compact.back": "Back to the layout",
   "page.frame.banner.hidden":
     "{count} tabs are hidden and will reappear once their pages are available.",

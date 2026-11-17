@@ -38,6 +38,8 @@ export interface SideRailProps {
   /** Collapse/expand request. The caller owns the state. */
   onToggle(side: SideRailSide): void;
   onOpen(pageId: string): void;
+  /** Swap the left and right rails; absent when the frame does not offer it. */
+  onSwap?: () => void;
 }
 
 /**
@@ -53,6 +55,7 @@ export function SideRail({
   activePageId,
   onToggle,
   onOpen,
+  onSwap,
 }: SideRailProps): ReactElement {
   const t = useT();
   const label = side === "left" ? t("page.frame.sideRail.left") : t("page.frame.sideRail.right");
@@ -63,6 +66,16 @@ export function SideRail({
       data-side={side}
       aria-label={label}
     >
+      {onSwap !== undefined && (
+        <button
+          type="button"
+          className="hz-rail__swap"
+          aria-label={t("page.frame.sideRail.swap")}
+          onClick={onSwap}
+        >
+          <Icon name="chevronDown" size={16} />
+        </button>
+      )}
       <button
         type="button"
         className="hz-rail__toggle"
