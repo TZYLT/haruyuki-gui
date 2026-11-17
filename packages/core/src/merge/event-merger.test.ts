@@ -277,6 +277,20 @@ describe("createEventMerger pass-through branches", () => {
     expect(merger.stats().unknownTypes).toBe(1);
   });
 
+  it("passes a late answer through instead of calling its type unknown", () => {
+    const merger = createEventMerger({ agentId: "agent-a" });
+
+    const changes = merger.ingest({
+      type: "sync_response",
+      raw: { type: "sync_response", request_id: "req-late" },
+      at: 1,
+    });
+
+    expect(kinds(changes)).toEqual(["passthrough"]);
+    expect(merger.stats().unknownTypes).toBe(0);
+    expect(merger.stats().passthroughFrames).toBe(1);
+  });
+
   it("passes a known informational event through", () => {
     const merger = createEventMerger({ agentId: "agent-a" });
 

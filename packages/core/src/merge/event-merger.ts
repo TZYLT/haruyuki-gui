@@ -388,6 +388,27 @@ export function createEventMerger(options: EventMergerOptions): EventMerger {
       return out;
     }
 
+    // A response that reaches the merge loop did not match a pending request:
+    // its requester is gone, or the answer came late. It carries nothing the
+    // merger can apply, but it is not an unknown type either, and handing it on
+    // as a passthrough keeps "the engine sent something nobody understood"
+    // separate from "an answer arrived after its caller gave up".
+    if (type.endsWith("_response") || type === "input_accepted") {
+      counters.count("passthroughFrames");
+      out.push({
+        authorAgentId: facts.authorAgentId,
+        runtimeAgentId: facts.runtimeAgentId ?? "",
+        subagentId: facts.subagentId,
+        conversationId: facts.conversationId,
+        at: facts.at,
+        kind: "passthrough",
+        type,
+        raw,
+      });
+
+      return out;
+    }
+
     if (PASSTHROUGH_TYPES.has(type)) {
       counters.count("passthroughFrames");
       out.push({
