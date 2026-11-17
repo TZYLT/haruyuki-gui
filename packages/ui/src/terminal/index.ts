@@ -59,6 +59,13 @@ export { createTerminalSink } from "./sink.js";
 
 export { signalFromFrame, signalFromLifecycle } from "./frames.js";
 
+// The feed is what makes the two translators reachable: it is the only production
+// path from a delivered frame to `reducePhase`, and `connectTerminalFeed` is the
+// one place the three-way hookup happens.
+export { connectTerminalFeed, createTerminalFeed } from "./feed.js";
+export type { FeedResult, TerminalFeed, TerminalFeedOptions, TerminalFrameSource } from "./feed.js";
+export type { TerminalFrame, TerminalLifecycleEvent } from "./frames.js";
+
 export { createTerminalSearch, positionMessage } from "./search.js";
 export type { SearchPosition, TerminalSearch } from "./search.js";
 

@@ -22,9 +22,11 @@ import {
   LocaleProvider,
   TERMINAL_STYLESHEET,
   TerminalPanel,
+  connectTerminalFeed,
   applyTheme,
   createTerminalRouter,
   type CommandSender,
+  type TerminalSignal,
   type ThemeAttrs,
 } from "@haruyuki/ui";
 import { SamplePage } from "@haruyuki/ui/examples";
@@ -34,6 +36,7 @@ import { DiagnosticsPanel } from "./diagnostics-panel.js";
 import { BRIDGE_CHANNEL_NAMES } from "../shared/bridge.js";
 import { createRendererBridge, type BridgeBoot } from "./bridge.js";
 import { terminalNotices } from "./terminal-notices.js";
+import { createBridgeFrameSource } from "./terminal-frame-source.js";
 import { ErrorBoundary, RendererErrorPage } from "./error-page.js";
 import { RuntimeErrorPage } from "./runtime-error.js";
 import {
@@ -169,6 +172,37 @@ async function sendUnavailable(command: {
 
 /** Bound to the panel's contract, so the stub's shape is checked at the call site. */
 const send: CommandSender = sendUnavailable;
+
+/**
+ * Hand the panel the frames it cannot poll for.
+ *
+ * Until this existed the panel's subscription had one implementation: the one its
+ * test wrote. A terminal therefore reached `running` only in that test, and the
+ * comment above the panel's effect -- "engine frames are the only evidence a
+ * session exists, so the panel subscribes" -- described a behaviour the shipped
+ * code did not have. The chain is now: a deliver channel fires, the adapter reads
+ * `{ t, body }`, the feed translates it with `signalFromFrame`, and the panel's own
+ * `dispatch` reduces it.
+ *
+ * No lifecycle half: `bridge.ready` is a frame this renderer sends (c2s), so there
+ * is no readiness event to subscribe to, and `engineReady` above is `false` for
+ * the same reason. That gap is recorded rather than papered over with a callback
+ * that cannot fire.
+ *
+ * @param receive the panel's dispatch, called once per translated signal
+ * @returns a function that unsubscribes
+ */
+function subscribeToFrames(receive: (signal: TerminalSignal) => void): () => void {
+  // Absent when the preload failed. The panel then has no frames and stays idle,
+  // which is the truth -- the same reason the whole bridge block above is guarded.
+  if (shellBridge === undefined) return () => {};
+
+  const connected = connectTerminalFeed(createBridgeFrameSource(shellBridge), { receive });
+
+  return () => {
+    connected.dispose();
+  };
+}
 
 if (shellBridge !== undefined) {
   const terminalRouter = createTerminalRouter({
@@ -466,6 +500,7 @@ function Shell(): ReactElement {
                 css={TERMINAL_STYLESHEET}
                 send={send}
                 engineReady={false}
+                subscribe={subscribeToFrames}
               />
               {/*
                * Mounted hidden on the default route so the menu's `open` message has a

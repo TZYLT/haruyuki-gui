@@ -260,9 +260,16 @@ export function TerminalPanel({
     ...initialPhase,
   });
 
-  // Engine frames are the only evidence a session exists, so the panel subscribes
-  // rather than polling. Every frame takes the same road as a local intent: into
-  // the pure reducer, which decides whether it means anything.
+  // The panel subscribes because engine frames are the only evidence a session
+  // exists. The subscription is live end to end (the host's frame source -> the
+  // feed's translation -> this reducer), but nothing emits those frames yet: the
+  // command channel that would make an engine start belongs to the engine side, so
+  // a `terminal_spawned` frame cannot arrive until it lands. The chain is wired and
+  // unfed, and both halves of that sentence matter -- a reader who sees only the
+  // first would take a running subscription for a running terminal.
+  //
+  // Every frame takes the same road as a local intent: into the pure reducer, which
+  // decides whether it means anything.
   useEffect(() => {
     if (subscribe === undefined) return;
 
