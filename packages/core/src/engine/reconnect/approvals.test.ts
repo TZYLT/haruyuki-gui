@@ -83,7 +83,7 @@ describe("createLedger", () => {
     expect(result.stale[0]).toBe(second);
   });
 
-  it("reports exactly one stale approval however many times it reconciles", () => {
+  it("does not accumulate across a second replay", () => {
     const ledger = createLedger();
     ledger.notePending(approval("req-1"));
     ledger.notePending(approval("req-2"));
@@ -104,7 +104,7 @@ describe("createLedger", () => {
     expect(ledger.pendingCount()).toBe(1);
   });
 
-  it("counts an id the engine pushed twice as one approval", () => {
+  it("counts an id once even when pushed twice", () => {
     const ledger = createLedger();
     ledger.notePending(approval("req-1"));
 

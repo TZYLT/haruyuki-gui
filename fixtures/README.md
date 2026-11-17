@@ -27,6 +27,13 @@ approved — and the recorder is a bare websocket client with no toolset, so the
 engine never asks it for permission. There is no recorder flag that changes that,
 because the missing piece is a role, not a setting.
 
+What that file proves is the **counting logic**: which remembered approvals count
+as still waiting, which do not, and that a repeated reconcile or a repeated push
+does not double the number. What it does **not** prove is that the engine really
+re-pushes a waiting approval after a resync -- that behaviour has no recording at
+all, so it rests on the observation that a resync replays state, not on a frame
+anyone captured.
+
 **Rule: the top level keeps exactly those seven.** A new recording goes into a
 subdirectory of its own. The gate walks subdirectories, so a nested recording is
 checked exactly like the rest; only the seven are the "corpus" whose totals other
