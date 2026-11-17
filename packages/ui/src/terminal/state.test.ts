@@ -44,6 +44,25 @@ const PHASES: readonly TerminalPhase[] = [
   "disconnected",
 ];
 
+describe("coverage", () => {
+  it("covers every phase the state machine defines, because a list that drives loops cannot notice its own shrinking", () => {
+    expect(PHASES.length).toBe(EXPECTED_PHASE_COUNT);
+  });
+});
+
+/**
+ * The count this suite intends to cover, asserted below.
+ *
+ * `PHASES` drives loops, and a list that drives loops has a failure mode no
+ * assertion inside those loops can catch: delete a member and every case passes,
+ * having tested less. It is not hypothetical -- adding a seventh phase to
+ * `TerminalPhase` breaks the build in two files and leaves this suite at 55/55,
+ * because nothing here notices the missing member. So the length is asserted
+ * against a number written down on purpose: growing the union means editing this
+ * line, which is the moment to ask whether every case below still applies.
+ */
+const EXPECTED_PHASE_COUNT = 6;
+
 /** The signals that do not depend on a value. */
 const STATE_ONLY_SIGNALS = {
   spawnRequested: { kind: "spawn-requested" },

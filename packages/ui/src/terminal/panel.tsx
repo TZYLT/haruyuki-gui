@@ -260,6 +260,21 @@ export function TerminalPanel({
   /**
    * Whether the terminal's own right-click menu is open.
    *
+   * Why this menu lives in this file and not in `toolbar.tsx`
+   *   The two look like the same kind of thing -- a set of actions -- and they are
+   *   not. The toolbar is *standing*: it is always on screen, it describes what
+   *   can be done to the session, and every one of its items is gated on the
+   *   phase. This menu is *contextual*: it opens where the pointer is, it
+   *   describes what can be done to a *selection*, and its items are gated on
+   *   whether a selection exists rather than on the phase. Moving it next to the
+   *   toolbar would invite the next reader to "unify" them, and the unification
+   *   would have to pick one gating rule for both -- which is wrong for whichever
+   *   one it was not picked for.
+   *
+   *   It also depends on this component's host instance (`getSelection`,
+   *   `selectAll`, the clipboard read), which the toolbar never sees. A menu that
+   *   had to be handed the emulator to work is not a toolbar item.
+   *
    * The panel supplies this menu rather than the browser's, because three of its
    * four items are things only this component can do: the selection lives in
    * xterm, and a copy has to reach the clipboard a paste is read from.

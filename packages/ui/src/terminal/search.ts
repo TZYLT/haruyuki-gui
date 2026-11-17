@@ -218,6 +218,17 @@ export type SearchPositionMessage =
  *   counts that were exact. The hedge therefore has to be in the sentence, where
  *   it cannot be forgotten by a caller.
  *
+ * How each key reaches the i18n gate
+ *   The gate finds a reference by matching `t("key")`, `labelKey=` or `key:`
+ *   followed immediately by the quoted name. Two of the three arms below are
+ *   written that way, and the capped pair is not: `key: position.capped ? "..."
+ *   : "..."` puts an expression between the label and the quote, so the gate
+ *   cannot see either name from here. The panel renders the returned `key` through
+ *   `t(...)`, and that call is what resolves them -- which is why the bar is the
+ *   consumer and this function is only the map. A future refactor that returns a
+ *   key without anything rendering it would make the gate right, and the missing
+ *   sentence the visible symptom.
+ *
  * @param position the current position
  * @returns the message key and its values, or `null` for "show nothing"
  */
@@ -229,15 +240,22 @@ export function positionMessage(position: SearchPosition): SearchPositionMessage
     case "none":
       return { key: "component.terminal.search.noMatch", values: {} };
 
-    case "at":
+    case "at": {
       // One-based for display. The zero-based index stays in the state, because
       // that is what the addon and any keyboard stepping use.
-      return {
-        key: position.capped
-          ? "component.terminal.search.matchCountAtLeast"
-          : "component.terminal.search.matchCount",
-        values: { index: position.index + 1, count: position.count },
-      };
+      const values = { index: position.index + 1, count: position.count };
+
+      // Two separate statements rather than one conditional `key:`. Not for style:
+      // the i18n gate finds a reference as `key:` followed immediately by the
+      // quoted name, and a ternary puts an expression in between, which would make
+      // `matchCountAtLeast` invisible to it -- a declared key that the gate reports
+      // as unused, and a sentence that a future reader cannot trace to a renderer.
+      if (position.capped) {
+        return { key: "component.terminal.search.matchCountAtLeast", values };
+      }
+
+      return { key: "component.terminal.search.matchCount", values };
+    }
 
     case "unanchored":
       // The addon found matches but selected none, so there is no "which one"

@@ -37,7 +37,22 @@
  *   - a spawn failure is recognised by the presence of `error`, not by its text.
  */
 
-/** The panel's visible situation. Copy belongs to the message catalogue, not here. */
+/**
+ * The panel's visible situation. Copy belongs to the message catalogue, not here.
+ *
+ * Adding a phase breaks the build, measured by adding a throwaway seventh member
+ * and running `tsc`: six errors, four of them in *this* file (the phase functions
+ * below switch without a `default`) and two in `toolbar.tsx` (the availability
+ * table and the copy switch). So the person adding a phase is told in their own
+ * file first, and has to answer "may reopen, stop and clear be pressed in it?"
+ * before it can exist. That is the design, not a defect to be silenced with a
+ * `default`.
+ *
+ * `state.test.ts` stays green through that change (55/55), because its `PHASES`
+ * list only drives loops: it would not notice the new member until somebody added
+ * it there too. The compile errors are what cover that gap, and they arrive
+ * before a test would.
+ */
 export type TerminalPhase =
   | "idle" // nothing running: the engine is not ready, or the panel has not mounted yet
   | "starting" // the spawn request is out, `terminal_spawned` has not arrived

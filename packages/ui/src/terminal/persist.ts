@@ -47,6 +47,23 @@ import type { Terminal } from "@xterm/xterm";
  * A measured large capture (three thousand lines) was 0.57 MB, so this is several
  * times the realistic worst case. It is a limit, not a target: anything past it
  * came from a terminal whose output is not text.
+ *
+ * One thing about this number is measured and one thing is not, and the
+ * difference matters to whoever reads this next:
+ *
+ *   - measured: a 40x10 terminal fed five megabytes serializes to about four
+ *     kilobytes, because the rows that do not fit the grid are gone. The cap is
+ *     therefore reached by buffer *contents*, not by how much was written.
+ *   - not measured: no capture in this package's test environment has actually
+ *     reached four megabytes. Two hundred columns by two thousand scrollback
+ *     lines, filled, produced 338 KB; going further than that times the parser
+ *     out before it can be observed. So the comparison in
+ *     {@link captureSnapshot} is exercised with a stubbed addon, and the byte
+ *     arithmetic is what is verified -- not the behaviour of a genuine
+ *     four-megabyte terminal.
+ *
+ * A boundary nobody knows is unverified will be treated as verified, so this is
+ * written here rather than only in the test that stubs it.
  */
 export const MAX_SNAPSHOT_BYTES = 4 * 1024 * 1024;
 
