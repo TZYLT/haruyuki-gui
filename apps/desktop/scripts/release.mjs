@@ -363,6 +363,38 @@ function step(label, body) {
 }
 
 /**
+ * Like `step`, but reports the exit code so a caller can tell a skip from a
+ * failure.
+ *
+ * A judgement that has nothing to judge is not a pass, and it is also not a
+ * failure: collapsing it into either one makes the run say something it did not
+ * check. The status is printed the same way so the log stays readable.
+ *
+ * @param {string} label
+ * @param {() => { status: number|null, stdout?: string, stderr?: string }} body
+ * @returns {number | null} the exit code
+ */
+function stepCounted(label, body) {
+  const started = Date.now();
+  process.stdout.write(`\n==> ${label}\n`);
+  const result = body();
+  const seconds = ((Date.now() - started) / 1000).toFixed(1);
+  const code = result.status;
+  if (code === 0) {
+    process.stdout.write(`<== ${label} ok (${seconds}s)\n`);
+    return 0;
+  }
+  if (code === SKIP) {
+    process.stdout.write(`<== ${label} SKIPPED (${seconds}s)\n`);
+    return SKIP;
+  }
+  process.stdout.write(`<== ${label} FAILED (${seconds}s, exit ${String(code)})\n`);
+  const noise = `${result.stdout ?? ""}${result.stderr ?? ""}`.trim();
+  if (noise.length > 0) process.stdout.write(`${noise}\n`);
+  return code ?? 1;
+}
+
+/**
  * @param {string[]} command
  * @param {string} cwd
  * @param {NodeJS.ProcessEnv} [env]
@@ -806,7 +838,44 @@ async function roundTwo(options) {
   const okManifest = step("manifest", () => run(process.execPath, args, REPO_ROOT));
   if (!okManifest) return 1;
 
+  // The download is started, not just described. Everything above checks that
+  // the files exist and agree with their documents; none of it can tell whether
+  // the thing runs, and a package that cannot start passes all of them. This
+  // step is what makes "the build succeeded" mean something a user would
+  // recognise. It is skipped with a distinct code when there is no archive to
+  // start - and a skip is not a pass.
+  const startCode = stepCounted("packaged start", () =>
+    run(
+      process.execPath,
+      ["apps/desktop/scripts/verify-packaged-start.mjs", ...startArgs(options)],
+      REPO_ROOT,
+    ),
+  );
+  if (startCode === SKIP) {
+    process.stdout.write(`==> packaged start skipped: no archive for the requested targets\n`);
+  } else if (startCode !== 0) {
+    return 1;
+  }
+
   return 0;
+}
+
+/** The exit code the packaged-start judgement reserves for "nothing to judge". */
+const SKIP = 3;
+
+/**
+ * Which archive the start judgement should open.
+ *
+ * The judgement finds archives itself; this narrows it to the platform this run
+ * actually built, so a leftover package for another platform cannot answer for
+ * this one.
+ *
+ * @param {{ targets: string[] }} options
+ * @returns {string[]}
+ */
+function startArgs(options) {
+  const images = options.targets.map((target) => (target === "win32" ? "win" : "linux"));
+  return [`--images=${images.join(",")}`];
 }
 
 /**

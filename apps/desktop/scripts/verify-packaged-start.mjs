@@ -333,6 +333,82 @@ function launch(exe, port) {
   };
 }
 
+/**
+ * The events the packaged application logged, oldest first.
+ *
+ * @param {string} logDir
+ * @returns {Promise<{event: string, detail?: unknown}[]>}
+ */
+async function readEvents(logDir) {
+  if (!existsSync(logDir)) return [];
+  /** @type {{event: string, detail?: unknown}[]} */
+  const events = [];
+  for (const file of await readdir(logDir)) {
+    if (!file.endsWith(".jsonl")) continue;
+    const text = await readFile(path.join(logDir, file), "utf8");
+    for (const line of text.split("\n")) {
+      if (line.trim().length === 0) continue;
+      try {
+        const parsed = JSON.parse(line);
+        if (typeof parsed?.event === "string") events.push(parsed);
+      } catch {
+        // A line that is not complete yet is not an event; the next read gets it.
+      }
+    }
+  }
+  return events;
+}
+
+/**
+ * Wait until the engine has reported, or the budget runs out.
+ *
+ * @param {string} logDir
+ * @param {number} budgetMs
+ * @returns {Promise<{event: string, detail?: unknown}[]>}
+ */
+async function waitForEvents(logDir, budgetMs) {
+  const started = Date.now();
+  let events = await readEvents(logDir);
+  while (Date.now() - started < budgetMs) {
+    if (events.some((entry) => entry.event === "supervision.engine.bootstrap")) return events;
+    await sleep(1000);
+    events = await readEvents(logDir);
+  }
+  return events;
+}
+
+/**
+ * What the log says about the engine, as a complaint or nothing.
+ *
+ * Three claims, and the third is why this is not the same as "the window
+ * appeared": a renderer that draws while the engine never starts is a shell
+ * that cannot answer anything. The watchdog is separate again - it is what
+ * survives the engine dying, so a run that reports it inactive has a shell
+ * one crash away from silence.
+ *
+ * @param {{event: string, detail?: unknown}[]} events
+ * @returns {string | null}
+ */
+function engineComplaint(events) {
+  const boot = events.find((entry) => entry.event === "shell.boot");
+  if (boot === undefined) return "the application logged no boot line at all";
+  if (/** @type {{packaged?: boolean}} */ (boot.detail ?? {}).packaged !== true) {
+    return "the application did not report itself as packaged";
+  }
+
+  const engine = events.find((entry) => entry.event === "supervision.engine.bootstrap");
+  if (engine === undefined) return "the engine never reported a bootstrap";
+  const detail = /** @type {{state?: string, watchdog?: string}} */ (engine.detail ?? {});
+  if (detail.state !== "started") return `the engine bootstrap state is ${String(detail.state)}`;
+  if (detail.watchdog !== "active") {
+    // `unknown` means the watchdog was never injected, which is a different
+    // failure from one that started and stopped.
+    return `the watchdog is ${String(detail.watchdog)}, not active`;
+  }
+
+  return null;
+}
+
 /** The packaged archives on disk, newest first. */
 async function archives() {
   if (!existsSync(RELEASE_DIR)) return [];
@@ -469,8 +545,24 @@ async function main() {
 
   if (exe !== null) {
     const port = 9411;
+    const logDir = path.join(process.env["APPDATA"] ?? os.homedir(), "Haruyuki", "logs");
+    // The application writes its own account of the run. Clearing it first is
+    // what makes every line afterwards attributable to this launch; reading a
+    // log that a previous run wrote is how a failure gets reported as a pass.
+    await rm(logDir, { recursive: true, force: true });
+
     const app = launch(exe, port);
     await judge("the packaged application renders its window", () => app.verdict());
+
+    // Judged before stopping: the engine bootstrap happens about ten seconds
+    // after the window appears - the shell draws first and starts the engine
+    // behind it - so a verdict taken after the process is gone would be about a
+    // run that never got the chance to report.
+    await judge("the packaged engine starts and its watchdog runs", async () => {
+      const events = await waitForEvents(logDir, STARTUP_BUDGET_MS);
+      return engineComplaint(events);
+    });
+
     app.stop();
   }
 
