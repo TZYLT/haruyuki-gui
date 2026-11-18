@@ -55,12 +55,30 @@ const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const DESKTOP_DIR = path.resolve(path.dirname(SCRIPT_PATH), "..");
 const RELEASE_DIR = path.join(DESKTOP_DIR, "release");
 
-/** Strings that only exist on the machine that produced the package. */
+// Strings that only exist on the machine that produced the package.
+//
+// Deliberately narrow. A generic "any drive letter" rule looks stricter and is
+// worse: it matches the documentation and test fixtures, which contain example
+// paths like `C:\Users\ana\proj\a.ts` on purpose, and a judgement that fires on
+// its own examples gets switched off. What actually shipped the defect was the
+// checkout's own absolute path, so that is what is looked for - plus this
+// machine's own home directory, which is a real path rather than an example.
 const BUILD_MACHINE_MARKERS = [
   { label: "the worktree name", pattern: /haruyuki-wt/ },
-  { label: "a Windows drive path", pattern: /[A-Za-z]:\\{1,2}(?:Projects|Users|haruyuki)/ },
-  { label: "the build machine's user directory", pattern: /C:\\{1,2}Users\\{1,2}/ },
+  { label: "the build machine's checkout", pattern: /[A-Za-z]:\\{1,2}Projects\\{1,2}/ },
 ];
+
+/** This machine's home directory, when it is long enough not to be a false match. */
+function homeMarker() {
+  const home = os.homedir().replaceAll("\\", "\\\\");
+  if (home.length < 8) return null;
+  return { label: "this machine's home directory", pattern: new RegExp(escapeRegExp(home)) };
+}
+
+/** @param {string} value */
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
 /** How long to wait for a rendered window before calling it a failure. */
 const STARTUP_BUDGET_MS = 90_000;
@@ -337,8 +355,11 @@ async function main() {
     const texts = await archiveTexts(staging);
     if (texts.length === 0) return "no script or archive files were extracted to search";
 
+    const home = homeMarker();
+    const markers = home === null ? BUILD_MACHINE_MARKERS : [...BUILD_MACHINE_MARKERS, home];
+
     for (const { file, text } of texts) {
-      for (const marker of BUILD_MACHINE_MARKERS) {
+      for (const marker of markers) {
         if (marker.pattern.test(text)) {
           return `${path.relative(staging, file)} embeds ${marker.label}`;
         }
