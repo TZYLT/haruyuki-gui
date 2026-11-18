@@ -184,6 +184,66 @@ function evaluate(wsUrl, expression) {
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 
 /**
+ * Does `version` satisfy `range`? Enough of the semver range grammar for a
+ * dependency declared as `^x.y.z`, `~x.y.z`, `x.y.z` or `>=x.y.z`.
+ *
+ * Hand-rolled because this script already has no dependencies (it runs before
+ * anything is installed), and the alternative is pulling a resolver in for one
+ * comparison. Anything it does not understand returns null, which the caller
+ * reports as "cannot judge" rather than as a pass.
+ *
+ * @param {string} version
+ * @param {string} range
+ * @returns {boolean | null}
+ */
+function satisfies(version, range) {
+  const parse = (value) => {
+    const match = /^v?(\d+)\.(\d+)\.(\d+)/.exec(value.trim());
+    return match === null
+      ? null
+      : { major: Number(match[1]), minor: Number(match[2]), patch: Number(match[3]) };
+  };
+
+  const have = parse(version);
+  if (have === null) return null;
+  const trimmed = range.trim();
+
+  const caret = /^\^(\d+\.\d+\.\d+)$/.exec(trimmed);
+  if (caret !== null) {
+    const floor = parse(caret[1]);
+    if (floor === null) return null;
+    // `^0.y.z` pinning is subtly different, but nothing here declares one, so
+    // the comparison refuses rather than guessing if it ever appears.
+    if (floor.major === 0) return null;
+    const atLeast = compare(have, floor) >= 0;
+    return atLeast && have.major === floor.major;
+  }
+
+  const tilde = /^~(\d+\.\d+\.\d+)$/.exec(trimmed);
+  if (tilde !== null) {
+    const floor = parse(tilde[1]);
+    if (floor === null) return null;
+    return compare(have, floor) >= 0 && have.major === floor.major && have.minor === floor.minor;
+  }
+
+  const atLeastRange = /^>=\s*(\d+\.\d+\.\d+)$/.exec(trimmed);
+  if (atLeastRange !== null) {
+    const floor = parse(atLeastRange[1]);
+    return floor === null ? null : compare(have, floor) >= 0;
+  }
+
+  const exact = parse(trimmed);
+  return exact === null ? null : compare(have, exact) === 0;
+}
+
+/** @param {{major: number, minor: number, patch: number}} a @param {{major: number, minor: number, patch: number}} b */
+function compare(a, b) {
+  if (a.major !== b.major) return a.major - b.major;
+  if (a.minor !== b.minor) return a.minor - b.minor;
+  return a.patch - b.patch;
+}
+
+/**
  * Start the extracted executable and wait for a rendered window.
  *
  * @param {string} exe
@@ -373,6 +433,38 @@ async function main() {
     if (bundle === null) return "the engine bundle is not in the package";
     const beside = path.join(path.dirname(bundle), "node_modules");
     return existsSync(beside) ? null : `${path.relative(staging, beside)} is missing`;
+  });
+
+  // The anchor resolves the websocket client from the engine tree, so the
+  // client that actually loads is the one shipped there - not the one this
+  // repository pins for its own build. One copy, and the version has to satisfy
+  // what the engine declares, or the desktop shell is running a client nobody
+  // chose. Comparing the two versions for equality would be the wrong check:
+  // the engine's range is a range, and a newer patch inside it is correct.
+  await judge("the client the anchor resolves satisfies the engine's own range", async () => {
+    const bundle = await findByName(staging, "haruyuki.js");
+    if (bundle === null) return "the engine bundle is not in the package";
+
+    // The engine tree is wherever its bundle is; its own manifest sits beside it,
+    // and a manifest found anywhere else belongs to some transitive package.
+    const engineDir = path.dirname(bundle);
+    const enginePackage = path.join(engineDir, "package.json");
+    if (!existsSync(enginePackage)) return `${path.relative(staging, enginePackage)} is missing`;
+
+    const engineJson = JSON.parse(await readFile(enginePackage, "utf8"));
+    const declared = engineJson?.dependencies?.ws ?? engineJson?.optionalDependencies?.ws;
+    if (typeof declared !== "string")
+      return "the shipped engine does not declare a websocket client";
+
+    const resolved = path.join(engineDir, "node_modules", "ws", "package.json");
+    if (!existsSync(resolved)) return `${path.relative(staging, resolved)} is missing`;
+
+    const installed = JSON.parse(await readFile(resolved, "utf8")).version;
+    if (typeof installed !== "string") return "the shipped client has no version";
+
+    return satisfies(installed, declared) === true
+      ? null
+      : `shipped ${installed} does not satisfy the engine's ${declared}`;
   });
 
   if (exe !== null) {
