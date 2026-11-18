@@ -83,6 +83,21 @@ export const DIAGNOSTICS_CHANNELS = {
 } as const;
 
 /**
+ * The about window's three channels: check for an update, read the read-only
+ * facts, open one of the three legal documents shipped in the package.
+ *
+ * Named here, next to the rest, because the allowlist below is the one list the
+ * preload compares against. `update.check` has a registrar already; the two
+ * `about.*` names are allowed ahead of their handlers so the allowlist is
+ * written once rather than twice. An allowed name with no handler is a rejected
+ * `invoke`, which is loud -- unlike a name missing from this list, which is
+ * indistinguishable from a channel nobody answers.
+ */
+export const UPDATE_CHECK_CHANNEL = "bridge:control.update.check" as const;
+export const ABOUT_INFO_CHANNEL = "bridge:control.about.info" as const;
+export const ABOUT_OPEN_CHANNEL = "bridge:control.about.open" as const;
+
+/**
  * The channel a dropped file is reported on.
  *
  * Declared here rather than in `preload/drop.ts` because two sides need the same
@@ -173,6 +188,12 @@ export const CHANNEL_ALLOWLIST: readonly string[] = Object.freeze([
   // G1's runtime surface: status, pick, reset, failed push and log. The error
   // page is the only consumer; the engine controller answers.
   ...RUNTIME_CHANNELS,
+  // The about window's three. `update.check` is registered by
+  // `main/update-check.ts`; `about.info`/`about.open` are allowed ahead of their
+  // handlers for the reason given where they are declared.
+  UPDATE_CHECK_CHANNEL,
+  ABOUT_INFO_CHANNEL,
+  ABOUT_OPEN_CHANNEL,
 ]);
 
 /**

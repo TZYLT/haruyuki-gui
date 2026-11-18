@@ -82,6 +82,7 @@ import { showCrashPage, crashVersions } from "./crash/wiring.js";
 import { crashDirFor, readCrashRecords, type CrashRecord } from "./crash/records.js";
 import { runShellCleanup } from "./diagnostics/cleanup.js";
 import { registerMainDiagnosticsIpc } from "./diagnostics/main-ipc.js";
+import { registerUpdateIpc } from "./update-check.js";
 import { getSessionDiagnosticsSource } from "./diagnostics/session.js";
 import { runBootSupervision, type StaleCandidate } from "./supervision/boot.js";
 import { startRuntimeShell } from "./runtime/shell.js";
@@ -840,6 +841,17 @@ async function main(): Promise<void> {
         onLog: logSupervision,
       });
     },
+  });
+
+  // The about window's update button. Registered here rather than inside the
+  // window's own module because the version it reports is the running app's, and
+  // this process is the one that knows it. Nothing in this call reaches the
+  // network: the handler only answers when the renderer invokes it, which is
+  // what keeps a launch from spending the query quota nobody asked for.
+  registerUpdateIpc({
+    ipc: ipcMain,
+    current: () => app.getVersion(),
+    ...(logger === null ? {} : { logger }),
   });
 
   // Window first; the runtime layer verifies the lock and hands D4 the bundle.

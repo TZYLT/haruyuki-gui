@@ -203,6 +203,12 @@ describe("allowlist", () => {
       "bridge:control.runtime.reset",
       "bridge:control.runtime.failed",
       "bridge:control.runtime.log",
+      // The about window's three: the update check, the read-only facts and the
+      // three legal documents. Listed here rather than assumed, for the reason
+      // above -- this assertion is where a channel addition is declared.
+      "bridge:control.update.check",
+      "bridge:control.about.info",
+      "bridge:control.about.open",
     ]);
     expect(new Set(CHANNEL_ALLOWLIST).size).toBe(CHANNEL_ALLOWLIST.length);
   });
