@@ -23,22 +23,36 @@ import { createRoot } from "react-dom/client";
 
 import { AppFrame, LocaleProvider } from "@haruyuki/ui";
 
+import { applyElementLocale } from "../shared/i18n.js";
 import { createRegistry } from "./registry.js";
 import { applyShellTheme } from "./theme.js";
 import { useBridgeNotice, useLayout, webviewTransport } from "./transport.js";
 
 /**
- * The locale this panel renders in.
+ * The locale this panel renders in comes from the document.
  *
- * A constant on purpose: the extension host has not told this webview anything
- * yet, so guessing from the window or a query parameter would invent a second
- * source of truth for a value a later work package pushes down. When it does,
- * only this constant is replaced by a prop.
+ * The extension host writes the editor's language tag onto the document root
+ * when it produces the HTML, which is the one moment the panel's language is
+ * decided: a panel reload is produced from the same place, so there is nothing
+ * to poll and no message to keep in sync. Resolution and the `lang` mirror live
+ * in `../shared/i18n.js`, shared with the host side so both spell a locale the
+ * same way.
  */
-const WEBVIEW_LOCALE = "en";
 
 /** The id the HTML template has to provide, and the only thing it provides. */
 export const WEBVIEW_ROOT_ID = "root";
+
+/** What the tree needs from the document it is drawn into. */
+export interface WebviewAppProps {
+  /**
+   * The document's language tag.
+   *
+   * The raw tag the host wrote (`zh-cn`) or the resolved locale the mount
+   * mirrored onto it (`zh-CN`); resolution is idempotent, so the provider may
+   * be handed either and both sides still read one table.
+   */
+  readonly locale: string;
+}
 
 /**
  * The frame, wired to the layout store.
@@ -55,15 +69,16 @@ export const WEBVIEW_ROOT_ID = "root";
  * wired in this build, so a change is not persisted -- see `transport.ts` for
  * why that is stated rather than approximated.
  *
+ * @param props the document's locale tag
  * @returns the frame inside its locale provider
  */
-export function WebviewApp(): ReactElement {
+export function WebviewApp({ locale }: WebviewAppProps): ReactElement {
   const layout = useLayout();
   const banner = useBridgeNotice();
   const registry = createRegistry();
 
   return (
-    <LocaleProvider locale={WEBVIEW_LOCALE}>
+    <LocaleProvider locale={locale}>
       <AppFrame
         registry={registry}
         doc={layout.doc}
@@ -80,15 +95,22 @@ export function WebviewApp(): ReactElement {
 /**
  * Mount the application into a container.
  *
+ * The locale is read once, from the document the container belongs to, and the
+ * resolved value is mirrored onto `lang` before the tree renders: the attribute
+ * has to describe the language the components behind it are drawn in, and the
+ * host writes the editor's raw tag rather than a resolved one.
+ *
  * @param container the element the tree is drawn into
  * @returns a function that unmounts the tree
  */
 export function mountWebview(container: HTMLElement): () => void {
+  const documentElement = container.ownerDocument.documentElement;
+  const locale = applyElementLocale(documentElement);
   const root = createRoot(container);
 
   root.render(
     <StrictMode>
-      <WebviewApp />
+      <WebviewApp locale={locale} />
     </StrictMode>,
   );
 
