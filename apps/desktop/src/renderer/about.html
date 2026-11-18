@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>About Haruyuki</title>
+  </head>
+  <body>
+    <!-- The about window mounts here. A second `app://` document, so the shell's
+         page and this one are separate loads under the same origin and the same
+         CSP. Like the shell's, it carries no inline script: the CSP forbids it
+         and everything visible comes from the bundle. -->
+    <div id="root"></div>
+    <script type="module" src="./about.tsx"></script>
+  </body>
+</html>

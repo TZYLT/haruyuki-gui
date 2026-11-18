@@ -34,7 +34,14 @@ export default defineConfig({
     // rather than guessed at from a browser-support matrix.
     target: "chrome156",
     rollupOptions: {
-      input: path.resolve(import.meta.dirname, "src/renderer/index.html"),
+      // Two documents, two entries: the shell's page and the about window's.
+      // Separate entries rather than one page with a route, because the two are
+      // loaded into different windows and either must work with the other closed.
+      // Both are ordinary bundler inputs, so they share nothing but chunks.
+      input: {
+        index: path.resolve(import.meta.dirname, "src/renderer/index.html"),
+        about: path.resolve(import.meta.dirname, "src/renderer/about.html"),
+      },
       output: {
         entryFileNames: "assets/[name]-[hash].js",
         chunkFileNames: "assets/[name]-[hash].js",

@@ -50,6 +50,56 @@ export const en = {
   "common.crash.watchdogNotActive":
     "The engine watchdog was not confirmed active ({state}); see the diagnostics bundle.",
 
+  // ----------------------------------------------------------------- about
+  // The about window's own copy. The five update results are five sentences
+  // rather than one sentence and a flag, because "there is no newer version",
+  // "GitHub refused" and "GitHub could not be reached" are three different
+  // answers and a user who reads any of them as the first is being misled.
+  //
+  // `rateLimitHint` is a line of its own: the first sentence says the check
+  // failed, and the second says why the reader cannot fix it by retrying now.
+  "common.about.title": "About Haruyuki",
+  "common.about.version": "Software version",
+  "common.about.engine": "Engine",
+  "common.about.engineVersion": "Engine version",
+  "common.about.engineSource": "Engine source",
+  "common.about.sourceBundled": "Bundled with the application",
+  "common.about.sourceExternal": "Chosen by you",
+  "common.about.sourcePath": "Found on PATH",
+  "common.about.lastResult": "Last verification",
+  "common.about.lastResultOk": "Passed",
+  "common.about.lastResultEntryMismatch": "Entry hash mismatch",
+  "common.about.lastResultTreeMismatch": "Tree hash mismatch",
+  "common.about.lastResultMissing": "Not checked",
+  "common.about.lastResultUnknown": "Not checked",
+  "common.about.license": "License",
+  "common.about.licenseLine": "Released under the Apache License 2.0.",
+  "common.about.openLicense": "Open LICENSE",
+  "common.about.openNotice": "Open NOTICE",
+  "common.about.openThirdParty": "Open THIRD-PARTY",
+  "common.about.repo": "Repository",
+  "common.about.repoUrl": "Address",
+  "common.about.issue": "Report an issue",
+  "common.about.environment": "Environment",
+  "common.about.platform": "System",
+  "common.about.arch": "Architecture",
+  "common.about.electron": "Electron",
+  "common.about.node": "Node",
+  "common.about.checkUpdate": "Check for updates",
+  "common.about.update.checking": "Checking…",
+  "common.about.update.available": "Version v{latest} is available (current v{current})",
+  "common.about.update.upToDate": "You are up to date (v{current})",
+  "common.about.update.openPage": "Open the download page",
+  "common.about.update.failedRateLimit": "Check failed: the update quota is exhausted",
+  "common.about.update.rateLimitHint":
+    "Unauthenticated requests are limited to 60 per hour per egress IP; try again later",
+  "common.about.update.failedNetwork": "Check failed: GitHub could not be reached",
+  "common.about.update.noRelease": "This software has not been released through any channel yet",
+  "common.about.openFailed": "The file could not be opened: {detail}",
+  "common.about.unavailable": "Not available",
+  "common.about.bridgeUnavailable":
+    "The application bridge is unavailable, so this window cannot show the facts it needs.",
+
   // ------------------------------------------------------------ diagnostics
   // The panel's own vocabulary. The two option labels carry their scope and risk
   // in the same sentence rather than in a tooltip: what a checkbox includes is
@@ -103,6 +153,9 @@ export const en = {
   "common.menu.cleanupDone": "Ended {count} leftover engine process(es).",
   "common.menu.cleanupFailed": "Some leftover processes could not be ended.",
   "common.menu.openLogsFailed": "The logs folder could not be opened.",
+  // The one way into the about window. "Check for updates" is the button inside
+  // that window (`common.about.checkUpdate`), not a second menu item.
+  "common.menu.about": "About Haruyuki",
 
   // ------------------------------------------------------------- component
   "component.input.placeholder": "Enter a value",

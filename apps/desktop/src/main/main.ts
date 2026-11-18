@@ -83,6 +83,7 @@ import { crashDirFor, readCrashRecords, type CrashRecord } from "./crash/records
 import { runShellCleanup } from "./diagnostics/cleanup.js";
 import { registerMainDiagnosticsIpc } from "./diagnostics/main-ipc.js";
 import { registerUpdateIpc } from "./update-check.js";
+import { installAbout } from "./about-wiring.js";
 import { getSessionDiagnosticsSource } from "./diagnostics/session.js";
 import { runBootSupervision, type StaleCandidate } from "./supervision/boot.js";
 import { startRuntimeShell } from "./runtime/shell.js";
@@ -801,6 +802,20 @@ async function main(): Promise<void> {
 
   const locale = chooseLocale(settings.locale, app.getLocale());
 
+  // The about surface: two channels and one window that opens on a menu click.
+  // Installed before the menu because the menu's two build-entry items take its
+  // `open` callback; registering it here also means a click can never reach a
+  // channel that does not exist yet.
+  const about = installAbout({
+    here: HERE,
+    ipcMain,
+    locale: () => locale,
+    theme: () => ({ mode: settings.theme, contrast: settings.contrast }),
+    devtoolsAllowed,
+    liveBundlePath: () => engineHost?.bundlePath ?? null,
+    ...(logger === null ? {} : { logger }),
+  });
+
   installApplicationMenu({
     app,
     dialog,
@@ -813,6 +828,7 @@ async function main(): Promise<void> {
       staleCandidates = next;
     },
     sessionAvailable: () => getSessionDiagnosticsSource() !== null,
+    openAbout: about.open,
     logger,
   });
 

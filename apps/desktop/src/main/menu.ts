@@ -10,10 +10,12 @@
  *   The Help menu is the shell's one application-specific menu (P10). It offers
  *   the two actions the signed requirement names -- export a diagnostics bundle
  *   and the manual path for a leftover engine that boot supervision refused to
- *   kill on its own. A third item is not added here: the signed menu has two,
- *   and "open logs" / "restart" are not part of that surface (`32` section 4.1).
- *   Those actions exist elsewhere (the log path is in the failure page, restart
- *   is on the crash page), so nothing here is a placeholder.
+ *   kill on its own -- and, behind a separator, one way into the about window.
+ *   That is one item, not two: the window carries its own "Check for updates"
+ *   button, and a second entry here would change the signed surface (see
+ *   `helpSubmenu`). "open logs" and "restart" are still not part of this
+ *   surface (`32` section 4.1); the log path is in the failure page and restart
+ *   is on the crash page.
  *
  *   Everything else stays role-based. Electron resolves `role` to the platform's own
  *   accelerator and localised label. Hand-written `CmdOrCtrl+R` strings would be
@@ -63,6 +65,14 @@ export interface MenuContext {
   readonly onExportDiagnostics?: () => void;
   /** Opens the stale-engine confirmation dialog; absent disables the item. */
   readonly onCleanupStale?: () => void;
+  /**
+   * Opens the about window; absent disables both items.
+   *
+   * One callback for two items because the two lead to the same window: "what am
+   * I running" and "is there a newer one" are the same question asked twice, and
+   * a second entry point that opened a second window would answer it twice too.
+   */
+  readonly onAbout?: () => void;
 }
 
 /**
@@ -86,6 +96,7 @@ export interface MenuLabels {
   readonly cleanupFailed: string;
   readonly openLogsFailed: string;
   readonly close: string;
+  readonly about: string;
 }
 
 /**
@@ -115,6 +126,7 @@ export function menuLabels(locale: Locale): MenuLabels {
     cleanupFailed: t("common.menu.cleanupFailed"),
     openLogsFailed: t("common.menu.openLogsFailed"),
     close: t("common.diagnostics.close"),
+    about: t("common.menu.about"),
   };
 }
 
@@ -147,6 +159,15 @@ function helpSubmenu(context: MenuContext, labels: MenuLabels): MenuItemConstruc
         context.onCleanupStale?.();
       },
     },
+    // The last item, behind its own separator: everything above is about a
+    // problem with this run, and this one is about the build itself.
+    //
+    // One item, not two. "Check for updates" is a button *inside* the window
+    // this opens, not a second entry in the menu: the signed surface says the
+    // Help menu offers one way in, and adding a second would change a visible
+    // behaviour that a person had to sign.
+    { type: "separator" },
+    action(labels.about, context.onAbout),
   ];
 }
 

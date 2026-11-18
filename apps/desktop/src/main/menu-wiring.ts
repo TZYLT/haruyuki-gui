@@ -63,6 +63,8 @@ export interface ApplicationMenuDeps {
   readonly setStaleCandidates: (next: readonly StaleCandidate[]) => void;
   /** Whether a session source is registered, read at click time. */
   readonly sessionAvailable: () => boolean;
+  /** Opens the about window; the Help menu's two build-entry items call it. */
+  readonly openAbout?: () => void;
   readonly logger?: Logger;
 }
 
@@ -227,6 +229,10 @@ export function installApplicationMenu(deps: ApplicationMenuDeps): { rebuild(): 
       onCleanupStale: () => {
         void cleanupStale(deps, rebuild);
       },
+      // Absent in a test, and absent in a build where the about window could not
+      // be wired: the two items then render disabled instead of throwing at the
+      // click. That is the same rule the other two actions follow.
+      ...(deps.openAbout === undefined ? {} : { onAbout: deps.openAbout }),
     });
 
     Menu.setApplicationMenu(Menu.buildFromTemplate(template));

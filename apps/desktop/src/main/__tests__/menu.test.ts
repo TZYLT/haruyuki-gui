@@ -104,12 +104,26 @@ describe("the devtools gate", () => {
 });
 
 describe("the Help menu", () => {
-  it("comes last and offers the two signed actions in order", () => {
+  it("offers exactly the three signed actions, in order", () => {
+    // Whole `toEqual`, not a length and not a `toContain`: an array that grew a
+    // fourth item passes a length check written as `toHaveLength(3)` only if
+    // somebody remembers to update it, and a `for` loop over a longer array
+    // silently runs past a missing expectation. Comparing the full list makes a
+    // new, removed or reordered item a failure here.
     const labels = helpSubmenu(PRODUCTION)
       .filter((item) => item.type !== "separator")
       .map((item) => item.label);
 
-    expect(labels).toEqual(["Export Diagnostics…", "Clean Up Leftover Engines…"]);
+    expect(labels).toEqual(["Export Diagnostics…", "Clean Up Leftover Engines…", "About Haruyuki"]);
+  });
+
+  it("has no second entry point to the about window", () => {
+    // "Check for updates" lives inside the window this item opens. A menu entry
+    // for it would change a surface a user signed, so it is asserted absent by
+    // name rather than by counting.
+    const labels = helpSubmenu(PRODUCTION).map((item) => item.label);
+
+    expect(labels).not.toContain("Check for Updates…");
   });
 
   it("puts the cleanup action behind a separator", () => {
@@ -118,13 +132,31 @@ describe("the Help menu", () => {
     const separator = items.findIndex((item) => item.type === "separator");
 
     expect(separator).toBe(1);
-    expect(items).toHaveLength(3);
+  });
+
+  it("puts the about item behind a separator of its own", () => {
+    // Everything above the second separator is about a problem with this run;
+    // the item below describes the build. Mixing them would put "clean up a
+    // leftover process" and "what version am I running" in one list.
+    const items = helpSubmenu(PRODUCTION);
+    const separators = items.reduce<number[]>(
+      (found, item, index) => (item.type === "separator" ? [...found, index] : found),
+      [],
+    );
+
+    expect(separators).toEqual([1, 3]);
+    // Three actions and the two separators that group them.
+    expect(items).toHaveLength(5);
   });
 
   it("disables every action whose callback is absent", () => {
     const actions = helpSubmenu(PRODUCTION).filter((item) => item.type !== "separator");
 
-    expect(actions).toHaveLength(2);
+    expect(actions.map((item) => item.label)).toEqual([
+      "Export Diagnostics…",
+      "Clean Up Leftover Engines…",
+      "About Haruyuki",
+    ]);
     expect(actions.every((item) => item.enabled === false)).toBe(true);
   });
 
@@ -134,8 +166,10 @@ describe("the Help menu", () => {
       staleCount: 1,
       onExportDiagnostics: () => undefined,
       onCleanupStale: () => undefined,
+      onAbout: () => undefined,
     }).filter((item) => item.type !== "separator");
 
+    expect(actions).toHaveLength(3);
     expect(actions.every((item) => item.enabled === true)).toBe(true);
   });
 
@@ -146,6 +180,7 @@ describe("the Help menu", () => {
       staleCount: 1,
       onExportDiagnostics: () => calls.push("export"),
       onCleanupStale: () => calls.push("cleanup"),
+      onAbout: () => calls.push("about"),
     });
 
     for (const item of items) {
@@ -153,32 +188,53 @@ describe("the Help menu", () => {
       clickItem(item);
     }
 
-    expect(calls).toEqual(["export", "cleanup"]);
+    expect(calls).toEqual(["export", "cleanup", "about"]);
+  });
+
+  it("calls the about callback from the about item, and only it", () => {
+    // Named rather than positional: the assertion is "this labelled item opens
+    // the window", so reordering the submenu must not move the check onto a
+    // different item and still pass.
+    const calls: string[] = [];
+    const items = helpSubmenu({
+      ...PRODUCTION,
+      onExportDiagnostics: () => calls.push("export"),
+      onCleanupStale: () => calls.push("cleanup"),
+      onAbout: () => calls.push("about"),
+    });
+    const about = items.find((item) => item.label === "About Haruyuki");
+
+    expect(about).toBeDefined();
+    expect(about?.enabled).toBe(true);
+
+    if (about !== undefined) clickItem(about);
+
+    expect(calls).toEqual(["about"]);
   });
 
   it("disables cleanup when there are no candidates", () => {
     const items = helpSubmenu({ ...PRODUCTION, onCleanupStale: () => undefined });
-    const cleanup = items.at(-1);
+    const cleanup = items.find((item) => item.label === "Clean Up Leftover Engines…");
 
-    expect(cleanup?.label).toBe("Clean Up Leftover Engines…");
     expect(cleanup?.enabled).toBe(false);
   });
 
   it("shows the candidate count in the cleanup label", () => {
-    const cleanup = helpSubmenu({
+    const items = helpSubmenu({
       ...PRODUCTION,
       staleCount: 3,
       onCleanupStale: () => undefined,
-    }).at(-1);
+    });
+    const cleanup = items.find((item) => item.label === "Clean Up Leftover Engines (3)…");
 
-    expect(cleanup?.label).toBe("Clean Up Leftover Engines (3)…");
     expect(cleanup?.enabled).toBe(true);
   });
 
   it("keeps cleanup disabled at a count with no listener", () => {
     // The count alone is not consent: without the dialog callback there is no
     // safe path from a click to a kill, so the item must stay greyed.
-    const cleanup = helpSubmenu({ ...PRODUCTION, staleCount: 2 }).at(-1);
+    const items = helpSubmenu({ ...PRODUCTION, staleCount: 2 });
+    const cleanup = items.find((item) => item.label === "Clean Up Leftover Engines (2)…");
 
     expect(cleanup?.enabled).toBe(false);
   });
@@ -190,6 +246,14 @@ describe("the Help menu", () => {
     expect(titles).toContain("帮助");
     expect(chinese[0]?.label).toBe("导出诊断…");
     expect(chinese[2]?.label).toBe("清理遗留引擎…");
+    expect(chinese[4]?.label).toBe("关于 Haruyuki");
+    // The whole Chinese action list too, so a translation that slipped into the
+    // wrong item is a failure rather than a passing spot check.
+    expect(chinese.filter((item) => item.type !== "separator").map((item) => item.label)).toEqual([
+      "导出诊断…",
+      "清理遗留引擎…",
+      "关于 Haruyuki",
+    ]);
   });
 });
 
