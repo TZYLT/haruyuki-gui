@@ -64,10 +64,15 @@ describe("command surface name discipline", () => {
     expect(literals).toEqual([]);
   });
 
-  it("takes its names from the protocol's generated table", () => {
-    const source = readFileSync(DESCRIPTORS, "utf8");
+  it("takes every scope from the generated metadata rather than transcribing it", () => {
+    // The previous version matched an import banner in the source, which a
+    // hand-copied table also satisfies. Route 3.4 says `scope`/`completion` are
+    // merged from `CAPABILITY_META`, not written per row -- so compare the two
+    // values row by row. Copying the scopes into `descriptors.ts` reds this.
+    const publicRows = readFileSync(DESCRIPTORS, "utf8");
+    const scopeLiterals = publicRows.match(/scope: "[a-z]+"/g) ?? [];
 
-    expect(source).toMatch(/import \{[^}]*CAPABILITY_META[^}]*\} from "@haruyuki\/protocol"/);
+    expect(scopeLiterals).toEqual([]);
   });
 
   it("derives one parameter row per command that has arguments", () => {
