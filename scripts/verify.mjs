@@ -55,7 +55,7 @@ import { fileURLToPath } from "node:url";
 import { fail, toPosix } from "./lib/gate-cli.mjs";
 import { runCommand } from "./lib/verify-command.mjs";
 import { hooksInstalled } from "./lib/verify-hooks.mjs";
-import { shellTypecheckSegments } from "./lib/verify-shells.mjs";
+import { shellBuildSegments, shellTypecheckSegments } from "./lib/verify-shells.mjs";
 
 /** Indentation of every replayed child line and hint line. */
 const OUTPUT_INDENT = "    ";
@@ -387,6 +387,7 @@ function buildSegments(options) {
       command: () => ({ command: "pnpm", args: ["typecheck"] }),
     },
     ...shellTypecheckSegments(options.root),
+    ...shellBuildSegments(options.root),
     {
       label: "lint",
       command: () => ({ command: "pnpm", args: ["exec", "eslint", "."] }),
