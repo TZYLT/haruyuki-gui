@@ -616,6 +616,9 @@ function vitest(files, extraArgs = []) {
  *   exercises and a gate may live in a subdirectory.
  * - `packages/<name>/src/**` and `apps/<name>/src/**`, co-located with the
  *   source they cover.
+ * - `apps/<name>/scripts/**`, tests covering a script rather than app source:
+ *   the config listed this root and this list did not, so those files never ran
+ *   here while the segment reported green.
  *
  * The `<name>/src/` shape is spelled out rather than implied by the walk, because
  * it has to agree with `vitest.config.mts`'s `include` list exactly. When the two
@@ -628,12 +631,8 @@ function vitest(files, extraArgs = []) {
  * broken and must never be collected as tests, and a nested worktree or a
  * published copy is not this repository's source.
  *
- * This segment is the only one that runs the unit tests. It used to share that
- * job with a separate coverage segment, which re-ran everything under
- * instrumentation and accepted a non-zero exit as long as a table was printed --
- * so a failing package test only failed verify for as long as vitest kept omitting
- * the table on failure. That arrangement is gone; the verdict and the numbers now
- * come from one run.
+ * This segment is the only one that runs the unit tests; the verdict and the
+ * numbers come from that one run.
  *
  * @param {string} root Absolute repository root.
  * @returns {string[]}
@@ -644,6 +643,7 @@ function discoverTestFiles(root) {
     { top: "scripts", pattern: /^scripts\/.*\.test\.ts$/ },
     { top: "packages", pattern: /^packages\/[^/]+\/src\/.*\.test\.tsx?$/ },
     { top: "apps", pattern: /^apps\/[^/]+\/src\/.*\.test\.tsx?$/ },
+    { top: "apps", pattern: /^apps\/[^/]+\/scripts\/.*\.test\.ts$/ },
   ];
 
   /**
