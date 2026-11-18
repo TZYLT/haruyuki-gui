@@ -19,6 +19,7 @@ import {
   parseHashTable,
   parseUploadedFiles,
   platformOf,
+  platformStates,
   releaseNotes,
 } from "./manifest.mjs";
 
@@ -245,5 +246,81 @@ describe("buildDocuments", () => {
     expect(() => buildDocuments(facts({ packageJson: { version: "" } }))).toThrow(
       ManifestInconsistency,
     );
+  });
+});
+
+describe("platformStates", () => {
+  const BOTH = ["win32", "linux"];
+  const builtInOf = (platform: string) => `${platform}@host`;
+
+  it("records a platform this run was not asked for as skipped, not as missing", () => {
+    // Asked to build Windows only. The other platform was never attempted, so
+    // "this machine cannot build Linux" would be a claim about a machine that
+    // was never asked the question.
+    const { states, unstated } = platformStates({
+      produced: ["win32"],
+      targets: ["win32"],
+      linuxNotBuilt: null,
+      builtInOf,
+    });
+
+    expect(states.win32).toEqual({ state: "built", builtIn: "win32@host" });
+    expect(states.linux).toEqual({ state: "skipped", reason: "not-required" });
+    // Nothing is missing here: a skipped platform is an answer, so the caller
+    // must not turn this run into a failure.
+    expect(unstated).toEqual([]);
+  });
+
+  it("still calls a requested platform with no artifact unstated, so the run fails", () => {
+    // The teeth: "asked for both, produced one" is not a choice, and must not
+    // be reported as if it were.
+    const { states, unstated } = platformStates({
+      produced: ["win32"],
+      targets: BOTH,
+      linuxNotBuilt: null,
+      builtInOf,
+    });
+
+    expect(states.linux).toEqual({ state: "not-built", reason: "unstated" });
+    expect(unstated).toEqual(["linux"]);
+  });
+
+  it("keeps a stated reason when the requested platform was attempted and impossible", () => {
+    const { states, unstated } = platformStates({
+      produced: ["win32"],
+      targets: BOTH,
+      linuxNotBuilt: "docker-unavailable",
+      builtInOf,
+    });
+
+    expect(states.linux).toEqual({ state: "not-built", reason: "docker-unavailable" });
+    expect(unstated).toEqual([]);
+  });
+
+  it("does not let a reason excuse a platform nobody asked for", () => {
+    // A reason describes an attempt. With no attempt there is nothing to explain,
+    // and recording `not-built` here would say the box is incapable.
+    const { states, unstated } = platformStates({
+      produced: ["win32"],
+      targets: ["win32"],
+      linuxNotBuilt: "docker-unavailable",
+      builtInOf,
+    });
+
+    expect(states.linux).toEqual({ state: "skipped", reason: "not-required" });
+    expect(unstated).toEqual([]);
+  });
+
+  it("says built for an artifact that exists even if it was not asked for", () => {
+    // The file is the authority on what it is: a leftover package is described
+    // as built, because a reader downloading it would get it.
+    const { states } = platformStates({
+      produced: BOTH,
+      targets: ["win32"],
+      linuxNotBuilt: null,
+      builtInOf,
+    });
+
+    expect(states.linux).toEqual({ state: "built", builtIn: "linux@host" });
   });
 });

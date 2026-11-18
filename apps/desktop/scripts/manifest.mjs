@@ -14,10 +14,11 @@
  * decide, and that decision is the one thing it was meant to save them.
  *
  * Usage:
- *   node apps/desktop/scripts/manifest.mjs [--dirty] [--linux-not-built=<reason>]
+ *   node apps/desktop/scripts/manifest.mjs [--dirty] [--targets=win32,linux] [--linux-not-built=<reason>]
  *
  * Exit codes:
  *   0  a manifest was written and both hash tables agree
+ *   1  a platform this run was asked for has no artifact and no reason was given
  *   2  the inputs cannot describe a build (no artifacts, bad reason)
  */
 
@@ -28,7 +29,11 @@ import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { scanArtifacts, scanTrees } from "./release.mjs";
+import {
+  NOT_BUILT_REASONS as NOT_BUILT_REASON_LIST,
+  scanArtifacts,
+  scanTrees,
+} from "./release.mjs";
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const DESKTOP_DIR = path.resolve(path.dirname(SCRIPT_PATH), "..");
@@ -37,8 +42,11 @@ const RELEASE_DIR = path.join(DESKTOP_DIR, "release");
 const MANIFEST_FILE = path.join(RELEASE_DIR, "release-manifest.json");
 const CHECKSUMS_FILE = path.join(RELEASE_DIR, "SHA256SUMS");
 
+/** Every platform this item knows how to build a package for. */
+const PLATFORMS = ["win32", "linux"];
+
 /** The only acceptable ways a platform can be absent, and why each exists. */
-const NOT_BUILT_REASONS = new Set(["docker-unavailable", "machine-offline", "toolchain-missing"]);
+const NOT_BUILT_REASONS = new Set(NOT_BUILT_REASON_LIST);
 
 /** Linux images are recorded by digest, not by tag, so the build is repeatable. */
 const LINUX_IMAGE_DIGEST =
@@ -376,17 +384,82 @@ export function releaseNotes({ productName, version, artifacts, platforms }) {
   ].join("\n");
 }
 
+/**
+ * What each platform's entry should say, from what was produced and what was
+ * asked for.
+ *
+ * The three-way split is the whole point, and the two absences are not
+ * interchangeable: `skipped` means this run never tried ("nobody asked for
+ * Linux"), `not-built` means it was asked for and this machine could not do it.
+ * Recording the first as the second says "this box cannot build Linux" about a
+ * run that was told not to - and the same confusion in the other direction makes
+ * a real missing capability look like a choice.
+ *
+ * A platform that was asked for, produced nothing and carries no reason is
+ * `unstated`, which the caller turns into a non-zero exit: inventing
+ * `toolchain-missing` would be a claim about the machine that nothing checked.
+ *
+ * @param {{
+ *   produced: string[],
+ *   targets: string[],
+ *   linuxNotBuilt: string | null,
+ *   builtInOf: (platform: string) => string,
+ * }} input
+ * @returns {{states: Record<string, {state: string, builtIn?: string, reason?: string}>, unstated: string[]}}
+ */
+export function platformStates({ produced, targets, linuxNotBuilt, builtInOf }) {
+  const states = {};
+  const unstated = [];
+
+  for (const platform of PLATFORMS) {
+    if (produced.includes(platform)) {
+      states[platform] = { state: "built", builtIn: builtInOf(platform) };
+      continue;
+    }
+    if (!targets.includes(platform)) {
+      // Not attempted, by request. Not a capability question at all.
+      states[platform] = { state: "skipped", reason: "not-required" };
+      continue;
+    }
+    if (platform === "linux" && linuxNotBuilt !== null) {
+      states[platform] = { state: "not-built", reason: linuxNotBuilt };
+      continue;
+    }
+    states[platform] = { state: "not-built", reason: "unstated" };
+    unstated.push(platform);
+  }
+
+  return { states, unstated };
+}
+
 /** @param {string[]} argv */
 function parseArgs(argv) {
-  const options = { dirty: false, linuxNotBuilt: null };
+  const options = { dirty: false, linuxNotBuilt: null, targets: [...PLATFORMS] };
 
   for (const arg of argv) {
     if (arg === "--dirty") options.dirty = true;
     else if (arg.startsWith("--linux-not-built=")) {
       options.linuxNotBuilt = arg.slice("--linux-not-built=".length);
+    } else if (arg.startsWith("--targets=")) {
+      const listed = arg
+        .slice("--targets=".length)
+        .split(",")
+        .map((name) => name.trim())
+        .filter((name) => name.length > 0);
+      const unknown = listed.filter((name) => !PLATFORMS.includes(name));
+      if (listed.length === 0 || unknown.length > 0) {
+        process.stderr.write(
+          `--targets= must be a comma-separated list drawn from ${PLATFORMS.join(", ")}; ` +
+            `got ${JSON.stringify(arg.slice("--targets=".length))}\n`,
+        );
+        process.exit(2);
+      }
+      options.targets = listed;
     } else if (arg === "-h" || arg === "--help") {
       process.stdout.write(
-        "usage: node apps/desktop/scripts/manifest.mjs [--dirty] [--linux-not-built=<reason>]\n" +
+        "usage: node apps/desktop/scripts/manifest.mjs [--dirty] [--targets=win32,linux] " +
+          "[--linux-not-built=<reason>]\n" +
+          `targets: ${PLATFORMS.join(", ")} (default: all of them)\n` +
           `reasons: ${[...NOT_BUILT_REASONS].join(", ")}\n`,
       );
       process.exit(0);
@@ -464,30 +537,18 @@ async function describeBuild(options) {
   const rootJson = JSON.parse(await readFile(path.join(REPO_ROOT, "package.json"), "utf8"));
 
   /** @type {Record<string, {state: string, builtIn?: string, reason?: string}>} */
-  const platforms = {};
-  for (const platform of ["win32", "linux"]) {
-    const produced = described.some((artifact) => artifact.platform === platform);
-    if (produced) {
-      platforms[platform] = {
-        state: "built",
-        builtIn:
-          platform === "win32"
-            ? `win32-x64@${process.env["COMPUTERNAME"] ?? "unknown-host"}`
-            : LINUX_IMAGE_DIGEST,
-      };
-    } else if (platform === "linux" && options.linuxNotBuilt !== null) {
-      platforms[platform] = { state: "not-built", reason: options.linuxNotBuilt };
-    } else if (platform === "linux" && options.linuxNotBuilt === null) {
-      // No Linux artifact and nobody said why. The honest entry is "unknown
-      // reason", not an invented one: `toolchain-missing` would be a claim
-      // about this machine that this script never checked, and `skipped` would
-      // turn a missing capability into a decision. Exit non-zero below so the
-      // caller has to say which it was.
-      platforms[platform] = { state: "not-built", reason: "unstated" };
-    } else {
-      platforms[platform] = { state: "not-built", reason: "toolchain-missing" };
-    }
-  }
+  const produced = PLATFORMS.filter((platform) =>
+    described.some((artifact) => artifact.platform === platform),
+  );
+  const { states: platforms, unstated } = platformStates({
+    produced,
+    targets: options.targets,
+    linuxNotBuilt: options.linuxNotBuilt,
+    builtInOf: (platform) =>
+      platform === "win32"
+        ? `win32-x64@${process.env["COMPUTERNAME"] ?? "unknown-host"}`
+        : LINUX_IMAGE_DIGEST,
+  });
 
   const lockFile = path.join(DESKTOP_DIR, "runtime-lock.json");
   const lockSha = existsSync(lockFile) ? await sha256Of(lockFile) : null;
@@ -545,12 +606,14 @@ async function describeBuild(options) {
   process.stdout.write(`\nupload\n`);
   for (const line of manifest.uploadSteps) process.stdout.write(`  ${line}\n`);
 
-  const unstated = Object.entries(platforms).filter(([, value]) => value.reason === "unstated");
+  // A platform this run was asked for, produced nothing and carries no reason.
+  // Only the requested ones can land here: a platform nobody asked for is
+  // `skipped`, which is an answer, not a gap.
   if (unstated.length > 0) {
     process.stderr.write(
-      `\nno artifact for ${unstated.map(([name]) => name).join(", ")} and no reason given.\n` +
+      `\nno artifact for ${unstated.join(", ")} and no reason given, although this run asked for it.\n` +
         `Pass --linux-not-built=<docker-unavailable|machine-offline|toolchain-missing> to say why,\n` +
-        `or build that platform. A manifest that invents a reason is worse than none.\n`,
+        `or drop that platform from --targets. A manifest that invents a reason is worse than none.\n`,
     );
     return 1;
   }

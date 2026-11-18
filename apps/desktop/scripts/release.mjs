@@ -50,6 +50,15 @@ const ENGINE_ARTIFACT = path.join(REPO_ROOT, "_research", "engine-0.6.0");
 /** Files that are not part of the shipped engine and must not reach the lock. */
 const NOT_SHIPPED = new Set([".bin"]);
 
+/**
+ * The only reasons a platform may be absent for, and the single list of them.
+ *
+ * `manifest.mjs` imports this rather than keeping its own copy: the two scripts
+ * gate the same exit code on the same values, and two lists would drift the day
+ * somebody adds a reason to one of them.
+ */
+export const NOT_BUILT_REASONS = ["docker-unavailable", "machine-offline", "toolchain-missing"];
+
 const USAGE = `usage: node apps/desktop/scripts/release.mjs [options]
 
   --win-only       package Windows only (zip + win-unpacked)
@@ -80,8 +89,15 @@ exit codes
  * natural reading of "both given" is "do both", which is exactly what giving
  * neither means, so the flag pair would only exist to look like control.
  *
+ * `--linux-not-built=` says why no AppImage came out, which is only a statement
+ * about a platform this run was asked for. Saying it while asking Windows not to
+ * touch Linux is two assertions about one platform - `skipped, not-required` and
+ * `not-built, <reason>` - and a manifest can only carry one of them. Dropping
+ * either would leave the document saying something nobody decided, so the pair is
+ * refused before any step rather than resolved by precedence.
+ *
  * @param {string[]} argv
- * @returns {{ targets: ("win32"|"linux")[], skipInstall: boolean, skipFetch: boolean, skipBundle: boolean }}
+ * @returns {{ targets: ("win32"|"linux")[], skipInstall: boolean, skipFetch: boolean, skipBundle: boolean, linuxNotBuilt: string|null }}
  */
 export function parseArgs(argv) {
   const options = {
@@ -122,6 +138,27 @@ export function parseArgs(argv) {
   }
   if (sawWin) options.targets = ["win32"];
   if (sawLinux) options.targets = ["linux"];
+
+  // Checked after the flags are resolved, so the answer is about the platforms
+  // this run will actually attempt rather than about the order they were typed.
+  if (options.linuxNotBuilt !== null && !options.targets.includes("linux")) {
+    throw new UsageError(
+      `--linux-not-built=${options.linuxNotBuilt} says why Linux has no artifact, ` +
+        `but --win-only says Linux was never asked of this run. ` +
+        `Drop one of the two: a manifest cannot report that platform as both ` +
+        `skipped (not-required) and not-built (${options.linuxNotBuilt}).`,
+    );
+  }
+
+  // The reason becomes a field of the manifest, so it is checked here - before
+  // any step - rather than after a multi-minute build has already happened.
+  if (options.linuxNotBuilt !== null && !NOT_BUILT_REASONS.includes(options.linuxNotBuilt)) {
+    throw new UsageError(
+      `--linux-not-built=<reason> must be one of ${NOT_BUILT_REASONS.join(", ")}; ` +
+        `got ${JSON.stringify(options.linuxNotBuilt)}. ` +
+        `"the image was built but will not start" is a failure, not a missing capability.`,
+    );
+  }
 
   return options;
 }
@@ -520,10 +557,12 @@ export async function scanArtifacts(releaseDir) {
     // A listing that silently dropped it would make that criterion unjudgeable
     // from the manifest, which is the same defect this item exists to remove.
     if (relative.startsWith("win-unpacked/") || relative.startsWith("linux-unpacked/")) continue;
-    // electron-builder writes its own debug log next to the artifacts. It is
-    // not a download and not a product; listing it would put a file nobody
-    // ships into the manifest that claims what shipped.
-    if (relative.startsWith("builder-")) continue;
+    // Files that are this pipeline's own output rather than its product. They
+    // describe a build; they are never part of one. A second run in the same
+    // directory finds yesterday's copies, and listing them would present stale
+    // hashes as if they described what just shipped - while the manifest is
+    // written after this list is read, so its output cannot be its input.
+    if (isWrittenDocument(relative)) continue;
     const info = await stat(absolute);
     artifacts.push({ file: relative, bytes: info.size });
   }
@@ -563,6 +602,41 @@ export async function scanTrees(releaseDir) {
  * @param {{ targets: ("win32"|"linux")[] }} options
  * @returns {Promise<number>} exit code
  */
+/** Files that are neither a download nor attributable to a platform. */
+const NOT_ARTIFACTS = new Set(["builder-debug.yml", "SHA256SUMS", "release-manifest.json"]);
+
+/**
+ * Is this file one of the builds's outputs rather than something it produced?
+ *
+ * The builder's own log and the two documents `manifest.mjs` writes are named
+ * here so one list decides for both the printed summary and the manifest: they
+ * are, by definition, never part of what a downloader receives from the
+ * artifact list.
+ *
+ * @param {string} file
+ * @returns {boolean}
+ */
+export function isWrittenDocument(file) {
+  return file.startsWith("builder-") || NOT_ARTIFACTS.has(file);
+}
+
+/**
+ * The arguments `manifest.mjs` is called with, from what this run decided.
+ *
+ * The requested targets have to travel: without them the manifest cannot tell
+ * "nobody asked for Linux" from "Linux was asked for and did not happen", and
+ * it treats the first as the second - reporting a request-only run as if this
+ * machine were incapable, and failing the whole command over it.
+ *
+ * @param {{ targets: string[], linuxNotBuilt: string | null }} options
+ * @returns {string[]}
+ */
+export function manifestArgs(options) {
+  const args = [`--targets=${options.targets.join(",")}`];
+  if (options.linuxNotBuilt !== null) args.push(`--linux-not-built=${options.linuxNotBuilt}`);
+  return args;
+}
+
 async function roundTwo(options) {
   const releaseDir = path.join(DESKTOP_DIR, "release");
 
@@ -604,24 +678,21 @@ async function roundTwo(options) {
   // `manifest.mjs` is the single producer of both hash documents: it hashes the
   // real artifacts and writes SHA256SUMS and release-manifest.json together.
   // Writing a checksum file here as well would mean two producers of the same
-  // table, and the second one would describe the first as an artifact.
-  const describable = artifacts.filter((artifact) => !artifact.file.startsWith("builder-"));
-
+  // table, and the second one would describe the first as an artifact - which
+  // is why `scanArtifacts` never returns them.
   if (trees.length > 0) {
     process.stdout.write(`\n==> unpacked trees\n${trees.map((tree) => `  ${tree}/`).join("\n")}\n`);
   }
 
   process.stdout.write("\n==> artifacts\n");
-  for (const artifact of describable) {
+  for (const artifact of artifacts) {
     process.stdout.write(`  ${artifact.file}  ${artifact.bytes} B\n`);
   }
 
   // The manifest needs the same reasons this run knows about, and it refuses to
   // invent one, so the platform states are handed over rather than re-derived.
-  const manifestArgs = ["apps/desktop/scripts/manifest.mjs"];
-  if (options.linuxNotBuilt !== null)
-    manifestArgs.push(`--linux-not-built=${options.linuxNotBuilt}`);
-  const okManifest = step("manifest", () => run(process.execPath, manifestArgs, REPO_ROOT));
+  const args = ["apps/desktop/scripts/manifest.mjs", ...manifestArgs(options)];
+  const okManifest = step("manifest", () => run(process.execPath, args, REPO_ROOT));
   if (!okManifest) return 1;
 
   return 0;

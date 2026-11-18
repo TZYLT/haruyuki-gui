@@ -15,10 +15,13 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { platformStates } from "./manifest.mjs";
 import {
   dereferenceTree,
   ERROR_PREFIX,
+  isWrittenDocument,
   localTagExists,
+  manifestArgs,
   parseArgs,
   previousBuildNote,
   readAppVersion,
@@ -53,6 +56,43 @@ describe("parseArgs", () => {
 
   it("refuses the pair instead of guessing, because both means the same as neither", () => {
     expect(() => parseArgs(["--win-only", "--linux-only"])).toThrow(UsageError);
+  });
+
+  it("refuses a reason for a platform this run was told not to build", () => {
+    // Two assertions about one platform: `skipped, not-required` from the flag
+    // and `not-built, <reason>` from the option. A manifest can only carry one,
+    // so whichever lost would be a decision nobody made.
+    expect(() => parseArgs(["--win-only", "--linux-not-built=docker-unavailable"])).toThrow(
+      UsageError,
+    );
+    // The refusal has to say which two flags collided, and name them.
+    try {
+      parseArgs(["--win-only", "--linux-not-built=docker-unavailable"]);
+    } catch (error) {
+      expect(String(error)).toContain("--linux-not-built");
+      expect(String(error)).toContain("--win-only");
+    }
+  });
+
+  it("accepts a reason alongside the platform it is about", () => {
+    // Requested and impossible is a legitimate answer, and the reason is how it
+    // gets stated. Refusing this pair would break the only way to report it.
+    const options = parseArgs(["--linux-only", "--linux-not-built=docker-unavailable"]);
+    expect(options.targets).toEqual(["linux"]);
+    expect(options.linuxNotBuilt).toBe("docker-unavailable");
+  });
+
+  it("accepts a reason when both platforms are asked for, because neither is excluded", () => {
+    const options = parseArgs(["--linux-not-built=machine-offline"]);
+    expect(options.targets).toEqual(["win32", "linux"]);
+    expect(options.linuxNotBuilt).toBe("machine-offline");
+  });
+
+  it("refuses a reason outside the enum before any step runs", () => {
+    // It becomes a field of the manifest, so an invented value would be published
+    // as if it were a known cause.
+    expect(() => parseArgs(["--linux-not-built=it-just-did-not-work"])).toThrow(UsageError);
+    expect(() => parseArgs(["--linux-not-built="])).toThrow(UsageError);
   });
 
   it("refuses an unknown flag rather than ignoring it", () => {
@@ -108,6 +148,23 @@ describe("scanArtifacts", () => {
 
   it("returns nothing for a directory that does not exist yet", async () => {
     expect(await scanArtifacts(path.join(work ?? "", "release"))).toEqual([]);
+  });
+
+  it("does not list the documents a previous run left as artifacts of this one", async () => {
+    if (work === null) throw new Error("no work directory");
+    // A second run in the same directory. `SHA256SUMS` and the manifest are
+    // this pipeline's own output, written after this list is read: listing
+    // yesterday's copies would present stale hashes as the description of what
+    // just shipped. The seed is explicit because "it looked right when I ran it
+    // once" is exactly how a plausible artifact list goes wrong unnoticed.
+    await writeFile(path.join(work, "SHA256SUMS"), `${"a".repeat(64)}  old.zip\n`);
+    await writeFile(path.join(work, "release-manifest.json"), '{"appVersion":"0.0.9"}');
+    await writeFile(path.join(work, "Haruyuki-0.1.0-win-x64.zip"), "ZIPDATA");
+    await writeFile(path.join(work, "builder-debug.yml"), "debug log");
+
+    const found = await scanArtifacts(work);
+
+    expect(found.map((artifact) => artifact.file)).toEqual(["Haruyuki-0.1.0-win-x64.zip"]);
   });
 });
 
@@ -487,5 +544,78 @@ describe("roundOne", () => {
     // and this is the only branch that proves the line is actually written.
     expect(lines.join("")).not.toContain(ERROR_PREFIX.usage);
     expect(lines.join("")).not.toContain(ERROR_PREFIX.tagTaken);
+  });
+});
+
+describe("isWrittenDocument", () => {
+  it("keeps this build's own outputs out of the artifact list", () => {
+    // A second run in the same directory finds yesterday's SHA256SUMS and
+    // manifest. Listing them as artifacts presents stale hashes as if they
+    // described what just shipped, and the manifest is written after this list
+    // is printed - so its own output cannot be one of its inputs.
+    expect(isWrittenDocument("SHA256SUMS")).toBe(true);
+    expect(isWrittenDocument("release-manifest.json")).toBe(true);
+    expect(isWrittenDocument("builder-debug.yml")).toBe(true);
+  });
+
+  it("keeps the packages themselves in it", () => {
+    expect(isWrittenDocument("Haruyuki-0.1.0-win-x64.zip")).toBe(false);
+    expect(isWrittenDocument("Haruyuki-0.1.0-linux-x86_64.AppImage")).toBe(false);
+  });
+});
+
+describe("manifestArgs", () => {
+  it("carries what this run was asked to build into the manifest", () => {
+    // The manifest decides between "skipped" and "not-built" from this list
+    // alone. Losing it makes a Windows-only run describe itself as a machine
+    // that could not build Linux, and the manifest then exits non-zero over a
+    // platform nobody requested.
+    expect(manifestArgs({ targets: ["win32"], linuxNotBuilt: null })).toEqual(["--targets=win32"]);
+    expect(manifestArgs({ targets: ["win32", "linux"], linuxNotBuilt: null })).toEqual([
+      "--targets=win32,linux",
+    ]);
+  });
+
+  it("passes the stated reason through for a platform that was attempted", () => {
+    expect(
+      manifestArgs({ targets: ["win32", "linux"], linuxNotBuilt: "docker-unavailable" }),
+    ).toEqual(["--targets=win32,linux", "--linux-not-built=docker-unavailable"]);
+  });
+
+  it("never drops the requested targets, whichever flags the run added", () => {
+    // A second switch that quietly replaced the whole list would reintroduce
+    // the defect the targets list exists to prevent.
+    for (const options of [
+      { targets: ["win32"], linuxNotBuilt: null },
+      { targets: ["win32"], linuxNotBuilt: "machine-offline" },
+      { targets: ["linux"], linuxNotBuilt: "toolchain-missing" },
+    ]) {
+      expect(manifestArgs(options).some((arg) => arg.startsWith("--targets="))).toBe(true);
+    }
+  });
+
+  it("makes a windows-only run skipped on Linux, not incapable of it", () => {
+    // The whole chain the defect lived in: what the user typed, through what
+    // the orchestration passes on, into the platform states the manifest
+    // writes. Judged end to end because each link can look right on its own -
+    // the flags parse fine, the arguments look plausible, and the run still
+    // reports a request-only build as a broken machine.
+    const options = parseArgs(["--win-only"]);
+    const passed = manifestArgs(options);
+    const targetsArg = passed.find((arg) => arg.startsWith("--targets="));
+    expect(targetsArg).toBeDefined();
+    const targets = String(targetsArg).slice("--targets=".length).split(",");
+
+    const { states, unstated } = platformStates({
+      produced: ["win32"],
+      targets,
+      linuxNotBuilt: options.linuxNotBuilt,
+      builtInOf: (platform) => `${platform}@host`,
+    });
+
+    expect(states.linux).toEqual({ state: "skipped", reason: "not-required" });
+    // Nothing was asked for and nothing is missing, so the manifest must not
+    // turn this run into a failure.
+    expect(unstated).toEqual([]);
   });
 });
