@@ -2,25 +2,12 @@
  * The in-flight turn table: one record per turn, from the change that starts it
  * to the change that closes it.
  *
- * Three measured facts decide the key, and each one rules out the obvious
- * alternative:
- *
- * 1. **A turn has no `turnId` while it streams.** Only the terminal frame
- *    carries one, so a table keyed on `turnId` would hold one turn twice: a
- *    record without an id while it runs, and a second record with an id once it
- *    ends.
- * 2. **One turn can span several runs.** In an approval the turn starts in one
- *    run, pauses on `requires_approval`, and continues in a new run after a
- *    person answers; exactly one `end_turn` closes it. A table keyed on `runId`
- *    would file the continuation as a second turn.
- * 3. **`runId` repeats.** The number is counted per instance from zero, so three
- *    different conversations have each used `local-run-1`, and two of them at
- *    the same time. A key that is not scoped to its conversation would let them
- *    overwrite one another.
- *
- * The key is therefore `<conversationId>#<ordinal>`: that conversation's own,
- * increasing turn number. It never changes over the life of a turn, including
- * when the terminal frame fills in `turnId`, `usage` and `incomplete`.
+ * The vocabulary the table speaks - the record, the signal, the counters a
+ * diagnostic reads and the closed set of stop reasons - lives in
+ * `turns-types.ts`. How a turn is named lives in `turns-ref.ts`, and the two
+ * bounded convenience indexes - which turn owns a message, which turn a run ran
+ * in - live in `turns-notes.ts`. What stays here is the state machine: opening,
+ * attributing, closing, backfilling, and the bound that keeps the table finite.
  *
  * Two rules shape everything else:
  *
@@ -38,195 +25,50 @@
  * diagnostic reading instead of silent.
  */
 
-import type { TurnEntity } from "@haruyuki/protocol";
-
 import type { MergerChange, UsageSnapshot } from "../merge/types.js";
 
-/** How many turn records the table keeps when the caller names no bound. */
-export const TURN_TABLE_LIMIT = 512;
+import { createNoteBook, type NoteBook } from "./turns-notes.js";
+import {
+  createOrdinalAllocator,
+  highestOrdinalOf,
+  lineKeyOf,
+  ordinalOf,
+  TURN_REF_SEPARATOR,
+} from "./turns-ref.js";
+import {
+  isKnownStopReason,
+  PAUSES_THE_TURN,
+  STOPS_THE_TURN,
+  TURN_MESSAGE_NOTE_LIMIT,
+  TURN_ORDINAL_LIMIT,
+  TURN_RUN_NOTE_LIMIT,
+  TURN_TABLE_LIMIT,
+  type TurnContentUpdate,
+  type TurnRecord,
+  type TurnSignal,
+  type TurnTable,
+  type TurnTableOptions,
+  type TurnTableStats,
+} from "./turns-types.js";
 
-/** How many conversations keep a running ordinal when the caller names no bound. */
-export const TURN_ORDINAL_LIMIT = 4096;
-
-/** Separates a conversation id from its ordinal inside a turn ref. */
-const TURN_REF_SEPARATOR = "#";
-
-/** Separates a conversation id from the agent line inside it in an internal key. */
-const LINE_SEPARATOR = "\u0000";
-
-/**
- * The stop reasons that end a turn, taken from the engine's own closed set.
- *
- * It is every value of the engine's `StopReasonType` except one, and the shape
- * is deliberate: an explicit list, not "anything that is not a pause", because
- * the list is a statement about the engine and a negative test is not. The
- * recording only ever showed two of these, so the rest are here because the
- * engine declares them, and a reason added upstream without this list growing
- * still lands on the {@link isKnownStopReason} branch rather than leaking.
- */
-const STOPS_THE_TURN: ReadonlySet<string> = new Set([
-  "end_turn",
-  "error",
-  "llm_api_error",
-  "invalid_llm_response",
-  "invalid_tool_call",
-  "max_steps",
-  "max_tokens_exceeded",
-  "no_tool_call",
-  "tool_rule",
-  "cancelled",
-  "insufficient_credits",
-  "context_window_overflow_in_system_prompt",
-]);
-
-/**
- * The one reason that does not end a turn.
- *
- * The tool call is waiting for a person; after the answer the engine continues
- * the same turn under a new run, so closing here would file the continuation as
- * a second turn.
- */
-const PAUSES_THE_TURN = "requires_approval";
-
-/**
- * Whether a stop reason is one this module was written against.
- *
- * @param stopReason the reason a change named
- */
-function isKnownStopReason(stopReason: string): boolean {
-  return STOPS_THE_TURN.has(stopReason) || stopReason === PAUSES_THE_TURN;
-}
-
-/**
- * Which line a turn belongs to.
- *
- * The distinction has to be visible on the record and not only in a counter: an
- * unread badge counts the main agent's turns only, while a subagent's turn is a
- * real turn that opens and closes like any other but is not the reader's
- * business. This module does not count unread itself; it makes the distinction
- * readable, and {@link isCountedTurn} states the rule in one place.
- */
-export type AgentKind = "main" | "subagent";
-
-/**
- * One turn.
- *
- * The shape is the protocol's `TurnEntity` plus the one field that layer does
- * not carry yet: which agent line produced the turn. Everything the protocol
- * declares about a turn - the stable ref, the nullable `turnId`, the open flag,
- * the usage filled in by the terminal frame - is exactly what this table keeps.
- */
-export type TurnRecord = TurnEntity & { readonly agentKind: AgentKind };
-
-/** What one ingested change did to the table. */
-export type TurnEffect = "opened" | "attributed" | "backfilled" | "closed" | "ignored";
-
-/** What one ingested change did, and to which turn. */
-export type TurnSignal = {
-  /** The change's kind, echoed for the caller's own logging. */
-  readonly kind: string;
-  readonly effect: TurnEffect;
-  /** The record it touched, or `null` when it touched none. */
-  readonly turnRef: string | null;
-};
-
-/**
- * One content update for a conversation's in-flight turn.
- *
- * The same three fields the session store's `ingestContent` takes: which message
- * the blocks belong to, the blocks to insert or replace, and the block ids to
- * drop. The block's own shape belongs to the block layer, so the only thing read
- * here is its id, under either of the two names a producer uses.
- */
-export type TurnContentUpdate = {
-  readonly messageId: string;
-  readonly upserts: readonly Readonly<Record<string, unknown>>[];
-  readonly removes: readonly string[];
-};
-
-/** Read-only counters for diagnostics. Nothing here is rendered. */
-export type TurnTableStats = {
-  /** Records currently held, open and closed together. */
-  readonly turns: number;
-  readonly open: number;
-  readonly closed: number;
-  /** Distinct conversations that still hold at least one record. */
-  readonly conversations: number;
-  /** Turns this table started. */
-  readonly opened: number;
-  /** Changes filed against a record. */
-  readonly attributed: number;
-  /** Changes that arrived with no record to belong to; counted, then skipped. */
-  readonly unmatched: number;
-  /** Inputs that could not be read at all; counted, then skipped. */
-  readonly dropped: number;
-  /** Terminal frames that filled an existing record. */
-  readonly backfilled: number;
-  /** Terminal frames that had no record to fill; nothing was created for them. */
-  readonly lateCompletions: number;
-  /**
-   * Turns closed by `end_turn` while their `turnId` was still absent: the
-   * terminal frame was lost. A non-zero reading is the reason a turn shows a
-   * close time but no id.
-   */
-  readonly closedWithoutTerminal: number;
-  /** `requires_approval` pauses seen; the turn stays open across them. */
-  readonly paused: number;
-  /**
-   * Close signals whose stop reason this table does not know.
-   *
-   * A reason outside the engine's known list still closes the turn - see
-   * {@link STOPS_THE_TURN} - and is counted here, because the asymmetry matters:
-   * an open turn that never closes leaks a record and makes the next change join
-   * a turn that already ended, while closing a turn that had not ended yet is
-   * recoverable. This counter is the only trace that a newer engine taught us a
-   * word we did not know.
-   */
-  readonly unknownStopReason: number;
-  /** Records evicted to stay inside the bound. */
-  readonly evicted: number;
-  /** Close signals per line, which is what an unread count needs. */
-  readonly endTurns: Readonly<{ main: number; subagent: number }>;
-};
-
-/** Bounds for the table. */
-export type TurnTableOptions = {
-  /** Maximum records kept; the oldest closed one is evicted first. */
-  readonly limit?: number;
-  /** Maximum conversations whose ordinal is remembered. */
-  readonly ordinals?: number;
-};
-
-/** The table a session store keeps for its conversations. */
-export interface TurnTable {
-  /** Take one merged change. Synchronous, never throws, never creates a throwaway record. */
-  ingest(change: MergerChange): TurnSignal;
-  /** Attach one content update to the conversation's in-flight turn. Never throws. */
-  ingestContent(conversationId: string, update: TurnContentUpdate): TurnSignal;
-  /** One record by its ref, or `null`. */
-  get(turnRef: string): TurnRecord | null;
-  /** The main agent's in-flight turn of one conversation, or `null`. */
-  openTurn(conversationId: string): TurnRecord | null;
-  /** The in-flight turn of one agent line, or `null`. */
-  openTurnOf(conversationId: string, subagentId: string | null): TurnRecord | null;
-  /** Records in the order they started; all of them, or one conversation's. */
-  turns(conversationId?: string): readonly TurnRecord[];
-  /** A copy of the counters; later changes do not alter it. */
-  stats(): TurnTableStats;
-}
-
-/**
- * Whether a closed turn counts toward an unread badge.
- *
- * Only the main agent's turns are the reader's; a subagent's turn is noise from
- * the conversation's point of view. The rule lives here, as a predicate, so a
- * caller does not have to know that `agentKind` is the field that says it.
- *
- * @param turn one record from a table
- */
-export function isCountedTurn(turn: TurnRecord): boolean {
-  return turn.agentKind === "main";
-}
+// The public vocabulary is re-stated here so consumers keep importing this
+// module for every name it always exported. The table below is a local
+// declaration, so this is a defining module, not a pure forwarding one.
+export {
+  isCountedTurn,
+  TURN_MESSAGE_NOTE_LIMIT,
+  TURN_ORDINAL_LIMIT,
+  TURN_RUN_NOTE_LIMIT,
+  TURN_TABLE_LIMIT,
+  type AgentKind,
+  type TurnContentUpdate,
+  type TurnEffect,
+  type TurnRecord,
+  type TurnSignal,
+  type TurnTable,
+  type TurnTableOptions,
+  type TurnTableStats,
+} from "./turns-types.js";
 
 /** A non-empty string, or `null`. */
 function readString(value: unknown): string | null {
@@ -288,18 +130,21 @@ function readBound(value: unknown, fallback: number): number {
 export function createTurnTable(options: TurnTableOptions = {}): TurnTable {
   const bound = readBound(options.limit, TURN_TABLE_LIMIT);
   const ordinalBound = readBound(options.ordinals, TURN_ORDINAL_LIMIT);
+  const messageNoteBound = readBound(options.messageNotes, TURN_MESSAGE_NOTE_LIMIT);
+  const runNoteBound = readBound(options.runNotes, TURN_RUN_NOTE_LIMIT);
 
   /** Records by turn ref, in the order they started. */
   const records = new Map<string, TurnRecord>();
 
   /** Which agent line each record belongs to, so two lines never share a slot. */
   const lines = new Map<string, string>();
-
   /** The in-flight record of each agent line: line key -> turn ref. */
   const slots = new Map<string, string>();
 
-  /** The last ordinal handed out per conversation, so it only ever increases. */
-  const ordinals = new Map<string, number>();
+  /** This conversation's running turn number, so it only ever increases. */
+  const allocateOrdinal = createOrdinalAllocator(ordinalBound, (conversationId) =>
+    highestOrdinalOf(records.keys(), conversationId),
+  );
 
   const counts = {
     opened: 0,
@@ -312,61 +157,26 @@ export function createTurnTable(options: TurnTableOptions = {}): TurnTable {
     paused: 0,
     unknownStopReason: 0,
     evicted: 0,
+    messageNotesExpired: 0,
+    runNotesExpired: 0,
     endMain: 0,
     endSubagent: 0,
   };
 
-  const lineKeyOf = (conversationId: string, subagentId: string | null): string =>
-    `${conversationId}${LINE_SEPARATOR}${subagentId ?? ""}`;
-
   /**
-   * The highest ordinal any record of this conversation still holds.
+   * Which turn each message belongs to, keyed by conversation and message.
    *
-   * Kept as a fallback under the ordinal map: a conversation whose counter was
-   * evicted must not restart at one while its own records are still there, or
-   * two different turns would share a ref.
+   * A note, not a copy: the value is the ref the record already has, so this
+   * cannot disagree with the table about who owns what - it can only forget.
    */
-  const highestOrdinalInTable = (conversationId: string): number => {
-    const prefix = `${conversationId}${TURN_REF_SEPARATOR}`;
-    let highest = 0;
+  const messageNotes = createNoteBook(messageNoteBound, () => {
+    counts.messageNotesExpired += 1;
+  });
 
-    for (const turnRef of records.keys()) {
-      if (!turnRef.startsWith(prefix)) {
-        continue;
-      }
-
-      const ordinal = Number.parseInt(turnRef.slice(prefix.length), 10);
-
-      if (Number.isSafeInteger(ordinal) && ordinal > highest) {
-        highest = ordinal;
-      }
-    }
-
-    return highest;
-  };
-
-  /** Hand out this conversation's next ordinal; the map is refreshed, so it evicts least recent first. */
-  const allocateOrdinal = (conversationId: string): number => {
-    const last = Math.max(ordinals.get(conversationId) ?? 0, highestOrdinalInTable(conversationId));
-    const next = last + 1;
-
-    // Delete before set: `Map#set` on a present key keeps the old position, so
-    // the refreshed entry would otherwise stay the next eviction candidate.
-    ordinals.delete(conversationId);
-    ordinals.set(conversationId, next);
-
-    while (ordinals.size > ordinalBound) {
-      const oldest = ordinals.keys().next();
-
-      if (oldest.done === true) {
-        break;
-      }
-
-      ordinals.delete(oldest.value);
-    }
-
-    return next;
-  };
+  /** Which turn each run belongs to, keyed by conversation and run. */
+  const runNotes = createNoteBook(runNoteBound, () => {
+    counts.runNotesExpired += 1;
+  });
 
   /** Store a record; a replacement keeps its original position. */
   const keep = (record: TurnRecord): TurnRecord => {
@@ -388,7 +198,27 @@ export function createTurnTable(options: TurnTableOptions = {}): TurnTable {
       slots.delete(lineKey);
     }
 
+    // The notes outlive their record on purpose: a closed turn is exactly the
+    // one a block layer still asks about while the screen catches up. A note
+    // whose record is gone is dropped by the lookup, not here.
     counts.evicted += 1;
+  };
+
+  /**
+   * The record a note points at, or `null`.
+   *
+   * A note whose record has been evicted answers `null` instead of handing back
+   * a ref nobody can resolve. That is the one place where the note and the table
+   * are reconciled, so no caller has to check twice.
+   */
+  const recordOfNote = (
+    notes: NoteBook,
+    conversationId: string,
+    subjectId: string,
+  ): TurnRecord | null => {
+    const turnRef = notes.refOf(conversationId, subjectId);
+
+    return turnRef === undefined ? null : (records.get(turnRef) ?? null);
   };
 
   /**
@@ -492,6 +322,13 @@ export function createTurnTable(options: TurnTableOptions = {}): TurnTable {
     lines.set(turnRef, lineKey);
     slots.set(lineKey, turnRef);
     counts.opened += 1;
+
+    // The run that opened the turn is noted here; the run a continuation uses is
+    // noted by the change that carries it. Both point at this same ref.
+    if (runId !== null) {
+      runNotes.note(conversationId, runId, turnRef);
+    }
+
     enforceBound();
 
     return { record: frozen, created: true };
@@ -600,6 +437,18 @@ export function createTurnTable(options: TurnTableOptions = {}): TurnTable {
         case "message.complete":
         case "message.reset": {
           const opened = ensureOpen(conversationId, subagentId, at, runId);
+          const messageId = readString(fieldOf(change, "messageId"));
+
+          // One turn holds several messages, and every one of them is noted
+          // against the same ref: a block layer asking about any of them must
+          // land on this turn, not on a neighbour.
+          if (messageId !== null) {
+            messageNotes.note(conversationId, messageId, opened.record.turnRef);
+          }
+
+          if (runId !== null) {
+            runNotes.note(conversationId, runId, opened.record.turnRef);
+          }
 
           counts.attributed += 1;
 
@@ -658,7 +507,7 @@ export function createTurnTable(options: TurnTableOptions = {}): TurnTable {
           }
 
           if (stopReason !== null && !isKnownStopReason(stopReason)) {
-            // A reason this module never heard of. Closing is the lesser error
+            // A reason this layer never heard of. Closing is the lesser error
             // by a wide margin: an open turn that nothing will close leaks a
             // record and makes the next change join a turn that already ended,
             // while a close that came one change too early is recoverable. The
@@ -751,7 +600,7 @@ export function createTurnTable(options: TurnTableOptions = {}): TurnTable {
       }
     },
 
-    ingestContent(conversationId, update) {
+    ingestContent(conversationId, update: TurnContentUpdate) {
       const conversation = readString(conversationId);
 
       if (conversation === null) {
@@ -764,7 +613,7 @@ export function createTurnTable(options: TurnTableOptions = {}): TurnTable {
 
       if (open === null) {
         // A block for a turn that never opened: its opening change was lost, and
-        // this module has no arrival time to start a turn with. Inventing a start
+        // this layer has no arrival time to start a turn with. Inventing a start
         // time would put a turn in the table that may not have existed, so the
         // update is counted and skipped instead.
         counts.unmatched += 1;
@@ -819,7 +668,52 @@ export function createTurnTable(options: TurnTableOptions = {}): TurnTable {
         : all.filter((record) => record.conversationId === conversationId);
     },
 
-    stats() {
+    turnOfMessage(conversationId, messageId) {
+      const conversation = readString(conversationId);
+      const message = readString(messageId);
+
+      if (conversation === null || message === null) {
+        return null;
+      }
+
+      return recordOfNote(messageNotes, conversation, message);
+    },
+
+    turnOfRun(conversationId, runId) {
+      const conversation = readString(conversationId);
+      const run = readString(runId);
+
+      if (conversation === null || run === null) {
+        return null;
+      }
+
+      const noted = recordOfNote(runNotes, conversation, run);
+
+      // The note already points at the newest turn this conversation ran under
+      // that id, because every later note overwrites the earlier one.
+      if (noted !== null) {
+        return noted;
+      }
+
+      // Without a note - an evicted one, or a run noted by nobody - fall back to
+      // reading the table itself, newest first: the same answer, from the record
+      // rather than from the index.
+      let newest: TurnRecord | null = null;
+
+      for (const record of records.values()) {
+        if (record.conversationId !== conversation || record.runId !== run) {
+          continue;
+        }
+
+        if (newest === null || ordinalOf(record.turnRef) >= ordinalOf(newest.turnRef)) {
+          newest = record;
+        }
+      }
+
+      return newest;
+    },
+
+    stats(): TurnTableStats {
       const all = [...records.values()];
       const open = all.filter((record) => record.open).length;
       const conversations = new Set(all.map((record) => record.conversationId)).size;
@@ -839,6 +733,10 @@ export function createTurnTable(options: TurnTableOptions = {}): TurnTable {
         paused: counts.paused,
         unknownStopReason: counts.unknownStopReason,
         evicted: counts.evicted,
+        messageNotes: messageNotes.size(),
+        messageNotesExpired: counts.messageNotesExpired,
+        runNotes: runNotes.size(),
+        runNotesExpired: counts.runNotesExpired,
         endTurns: Object.freeze({ main: counts.endMain, subagent: counts.endSubagent }),
       });
     },

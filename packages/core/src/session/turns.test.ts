@@ -24,9 +24,14 @@ type Base = {
   readonly at: number;
   readonly subagentId: string | null;
   readonly runId: string | null;
+  readonly messageId: string;
 };
 
-const base = (at: number, conversationId = "c-1", subagentId: string | null = null): Base => ({
+const base = (
+  at: number,
+  conversationId = "c-1",
+  subagentId: string | null = null,
+): Omit<Base, "messageId"> => ({
   conversationId,
   at,
   subagentId,
@@ -37,9 +42,11 @@ const base = (at: number, conversationId = "c-1", subagentId: string | null = nu
 function delta(at: number, runId: string | null, overrides: Partial<Base> = {}): MergerChange {
   return {
     ...base(at),
+    // Before the overrides: a caller that names another message must win, or
+    // every message in a test would silently be the same one.
+    messageId: "m-1",
     ...overrides,
     kind: "message.delta",
-    messageId: "m-1",
     runId,
     runSeq: 1,
     text: "hello",
@@ -442,5 +449,109 @@ describe("the table is bounded and counts what it cannot place", () => {
   it("names its default bound so a caller can reason about it", () => {
     expect(TURN_TABLE_LIMIT).toBeGreaterThan(0);
     expect(createTurnTable().stats()).toMatchObject({ turns: 0, open: 0, evicted: 0 });
+  });
+});
+
+describe("a caller can ask which turn owns a message or a run", () => {
+  it("answers with the turn the message opened", () => {
+    const table = createTurnTable();
+
+    table.ingest(delta(1, "local-run-1", { messageId: "m-1" }));
+
+    // The block layer knows the message, not the turn: this is the only way it
+    // can ask, because a turn does not declare which messages it holds.
+    expect(table.turnOfMessage("c-1", "m-1")?.turnRef).toBe("c-1#1");
+    expect(table.turnOfMessage("c-1", "m-1")?.open).toBe(true);
+  });
+
+  it("answers with the same turn for every further message of that turn", () => {
+    const table = createTurnTable();
+
+    table.ingest(delta(1, "local-run-1", { messageId: "m-1" }));
+    table.ingest(delta(2, "local-run-1", { messageId: "m-1" }));
+    table.ingest(delta(3, "local-run-1", { messageId: "m-2" }));
+
+    // One turn holds several messages; all of them must point at it, or the
+    // second message's blocks would hang on a turn of their own.
+    expect(table.turnOfMessage("c-1", "m-1")?.turnRef).toBe("c-1#1");
+    expect(table.turnOfMessage("c-1", "m-2")?.turnRef).toBe("c-1#1");
+    expect(table.turns()).toHaveLength(1);
+  });
+
+  it("keeps two conversations apart when they use the same message id", () => {
+    const table = createTurnTable();
+
+    table.ingest(delta(1, "local-run-1", { conversationId: "c-1", messageId: "m-1" }));
+    table.ingest(delta(2, "local-run-1", { conversationId: "c-2", messageId: "m-1" }));
+
+    expect(table.turnOfMessage("c-1", "m-1")?.turnRef).toBe("c-1#1");
+    expect(table.turnOfMessage("c-2", "m-1")?.turnRef).toBe("c-2#1");
+  });
+
+  it("expires the oldest note at the bound and says so", () => {
+    const table = createTurnTable({ messageNotes: 2 });
+
+    table.ingest(delta(1, "local-run-1", { messageId: "m-1" }));
+    table.ingest(delta(2, "local-run-1", { messageId: "m-2" }));
+    table.ingest(delta(3, "local-run-1", { messageId: "m-3" }));
+
+    // The turn holds all three messages, but only the two newest notes survive.
+    expect(table.turns()).toHaveLength(1);
+    expect(table.turnOfMessage("c-1", "m-1")).toBeNull();
+    expect(table.turnOfMessage("c-1", "m-2")?.turnRef).toBe("c-1#1");
+    expect(table.turnOfMessage("c-1", "m-3")?.turnRef).toBe("c-1#1");
+    expect(table.stats().messageNotes).toBe(2);
+    expect(table.stats().messageNotesExpired).toBe(1);
+  });
+
+  it("returns null for a message it never saw, without throwing or opening a turn", () => {
+    const table = createTurnTable();
+
+    expect(table.turnOfMessage("c-1", "m-never")).toBeNull();
+    expect(table.turnOfMessage("", "m-1")).toBeNull();
+    expect(table.turns()).toHaveLength(0);
+    expect(table.stats().opened).toBe(0);
+  });
+
+  it("answers a run with the newest turn that ran under it", () => {
+    const table = createTurnTable();
+
+    // One conversation has reused this run id for three different turns.
+    for (let index = 0; index < 3; index += 1) {
+      table.ingest(delta(index * 2 + 1, "local-run-1", { messageId: `m-${index}` }));
+      table.ingest(stopped(index * 2 + 2, "end_turn", "local-run-1"));
+    }
+
+    // The older turns are closed; the newest is the one a caller can still act on.
+    expect(table.turnOfRun("c-1", "local-run-1")?.turnRef).toBe("c-1#3");
+    expect(table.turns()).toHaveLength(3);
+  });
+
+  it("expires a run note too, and still answers from the table itself", () => {
+    const table = createTurnTable({ runNotes: 1 });
+
+    table.ingest(delta(1, "local-run-1", { messageId: "m-1" }));
+    table.ingest(stopped(2, "end_turn", "local-run-1"));
+    table.ingest(delta(3, "local-run-2", { messageId: "m-2" }));
+
+    // `local-run-1`'s note is gone, and the fallback reads the record it needs.
+    expect(table.stats().runNotes).toBe(1);
+    expect(table.stats().runNotesExpired).toBeGreaterThanOrEqual(1);
+    expect(table.turnOfRun("c-1", "local-run-1")?.turnRef).toBe("c-1#1");
+    expect(table.turnOfRun("c-1", "local-run-2")?.turnRef).toBe("c-1#2");
+    expect(table.turnOfRun("c-1", "local-run-never")).toBeNull();
+  });
+
+  it("attributes a run a turn continued in to that same turn", () => {
+    const table = createTurnTable();
+
+    table.ingest(delta(1, "local-run-1", { messageId: "m-1" }));
+    table.ingest(stopped(2, "requires_approval", "local-run-1"));
+    table.ingest(delta(3, "local-run-2", { messageId: "m-2" }));
+
+    // The continuation run belongs to the turn that started in the earlier run.
+    expect(table.turnOfRun("c-1", "local-run-1")?.turnRef).toBe("c-1#1");
+    expect(table.turnOfRun("c-1", "local-run-2")?.turnRef).toBe("c-1#1");
+    expect(table.turns()).toHaveLength(1);
   });
 });
