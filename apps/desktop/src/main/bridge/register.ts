@@ -8,7 +8,8 @@
  *
  * Five handlers, six channels:
  *   submit   receives the renderer's control frames and hands the string to the
- *            host, which feeds it to the current session's sender
+ *            host, which feeds it to the current session's sender; a frame an
+ *            injected consumer takes first never reaches the host
  *   ack      terminal byte acknowledgement; transport-level, never a frame
  *   layout   C4's write-back; absent implementation is an explicit refusal, not
  *            a silent success
@@ -53,6 +54,18 @@ export interface BridgeIpcDeps {
   readonly layoutSave?: (request: unknown) => Promise<unknown> | unknown;
   /** C4's `LayoutChannel.handleState`; absent until the layout wiring is ready. */
   readonly layoutState?: () => LayoutState;
+  /**
+   * The consumer for a control frame the submit path does not own.
+   *
+   * The submit path is a renderer-bound sender: handing it a request frame
+   * numbers the frame and sends it back to the renderer it came from. A
+   * producer that answers such a request has to take it here instead.
+   *
+   * It receives the payload string exactly as it arrived and reports whether it
+   * consumed the frame; `true` stops the frame from reaching the host, `false`
+   * leaves the submit path as it is. Absent means every frame takes that path.
+   */
+  readonly onControlFrame?: (payload: string) => boolean;
 }
 
 /** The reply every handler returns; `ok:false` is a refusal, never a throw. */
@@ -68,10 +81,16 @@ export interface IpcReply {
  *   time, which is what a reload/teardown path needs
  */
 export function registerBridgeIpc(deps: BridgeIpcDeps): () => void {
-  const { host, ipc, layoutSave, layoutState } = deps;
+  const { host, ipc, layoutSave, layoutState, onControlFrame } = deps;
 
   ipc.handle(FRAME_SUBMIT, (_event, payload) => {
     if (typeof payload !== "string") return { ok: false, code: BAD_PAYLOAD };
+
+    // Asked first, and only when injected: a frame a producer answers here must
+    // not reach the submit path, which would number it and send it back to the
+    // renderer that asked. A hook that cannot answer leaves the frame alone -
+    // the existing path is the one every frame took before this hook existed.
+    if (onControlFrame !== undefined && consumed(onControlFrame, payload)) return { ok: true };
 
     host.submit(payload);
 
@@ -126,6 +145,21 @@ export function registerBridgeIpc(deps: BridgeIpcDeps): () => void {
       ipc.removeHandler(channel);
     }
   };
+}
+
+/**
+ * Ask the injected consumer whether it took this frame.
+ *
+ * A hook that throws has not consumed anything: the frame still has an owner
+ * that predates the hook, and turning a wiring bug into a rejected `invoke()`
+ * in the renderer would trade a working path for a broken one.
+ */
+function consumed(hook: (payload: string) => boolean, payload: string): boolean {
+  try {
+    return hook(payload) === true;
+  } catch {
+    return false;
+  }
 }
 
 /** Read and validate the ack payload without trusting its shape. */

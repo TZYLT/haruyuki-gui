@@ -508,6 +508,68 @@ describe("createCommandService", () => {
     ).resolves.toMatchObject({ ok: false, code: "COMMAND_UNKNOWN_CAPABILITY" });
   });
 
+  it("hands every change to the injected consumer, after the terminal passthroughs", () => {
+    const engineRig = createEngineRig();
+    engineRig.setEndpoint(ENDPOINT);
+    const poolRig = createPoolRig();
+    const mergerRig = createMergerRig();
+    const frames: Frame[] = [];
+    const seen: MergerChange[] = [];
+    const order: string[] = [];
+
+    createCommandService({
+      engine: engineRig.engine,
+      send: (frame) => {
+        frames.push(frame);
+        order.push("frame");
+      },
+      createPool: () => poolRig.pool,
+      createMerger: mergerRig.factory,
+      onMergerChange: (change) => {
+        seen.push(change);
+        order.push("change");
+      },
+    });
+
+    const control = poolRig.channels.get("__control__");
+    const record = mergerRig.records[0];
+    const passthrough: MergerChange = {
+      authorAgentId: "a1",
+      runtimeAgentId: "a1",
+      subagentId: null,
+      conversationId: "c1",
+      at: 2,
+      kind: "passthrough",
+      type: "terminal_spawned",
+      raw: { terminal_id: "t-1" },
+    };
+
+    record?.changes.push(CHANGE, passthrough);
+    control?.emit({ type: "terminal_output", raw: {}, at: 1 });
+
+    expect(seen).toEqual([CHANGE, passthrough]);
+    // The passthrough frame goes first: this module's own output must not wait
+    // on a consumer, and a slow one must not reorder it.
+    expect(order).toEqual(["frame", "change", "change"]);
+    expect(frames).toHaveLength(1);
+  });
+
+  it("counts and logs changes with no consumer injected", () => {
+    const rig = ready();
+    const control = rig.poolRig.channels.get("__control__");
+    const record = rig.mergerRig.records[0];
+
+    record?.changes.push(CHANGE);
+    control?.emit({ type: "terminal_output", raw: {}, at: 1 });
+
+    expect(rig.frames).toEqual([]);
+    expect(rig.logs.find((entry) => entry.code === "COMMAND_MERGE_CHANGES")?.detail).toEqual({
+      agentId: "__control__",
+      count: 1,
+      total: 1,
+    });
+  });
+
   it("disposes idempotently: unsubscribes the engine and closes the pool exactly once", () => {
     const rig = ready();
 

@@ -159,3 +159,59 @@ describe("registerBridgeIpc", () => {
     );
   });
 });
+
+describe("registerBridgeIpc control-frame hook", () => {
+  it("stops a consumed frame from reaching the host, and answers ok", () => {
+    const { ipc, handlers } = createFakeIpc();
+    const host = createFakeHost();
+    const payload = '{"t":"session.subscribe"}';
+    const onControlFrame = vi.fn(() => true);
+
+    registerBridgeIpc({ ipc, host, onControlFrame });
+
+    expect(handlers.get(FRAME_SUBMIT)?.(null, payload)).toEqual({ ok: true });
+    expect(onControlFrame).toHaveBeenCalledWith(payload);
+    expect(host.submit).not.toHaveBeenCalled();
+  });
+
+  it("hands the raw payload over untouched and forwards an unconsumed frame", () => {
+    const { ipc, handlers } = createFakeIpc();
+    const host = createFakeHost();
+    const payload = '{ "t" : "bridge.ready", "body":{"a":1} }';
+    const onControlFrame = vi.fn(() => false);
+
+    registerBridgeIpc({ ipc, host, onControlFrame });
+
+    expect(handlers.get(FRAME_SUBMIT)?.(null, payload)).toEqual({ ok: true });
+    // Byte for byte: no re-serialization happened on the way to the hook or out
+    // of it, so the existing path sees exactly what the renderer sent.
+    expect(onControlFrame).toHaveBeenCalledWith(payload);
+    expect(host.submit).toHaveBeenCalledWith(payload);
+  });
+
+  it("leaves the submit path alone when no hook is injected", () => {
+    const { ipc, handlers } = createFakeIpc();
+    const host = createFakeHost();
+
+    registerBridgeIpc({ ipc, host });
+
+    expect(handlers.get(FRAME_SUBMIT)?.(null, "{}")).toEqual({ ok: true });
+    expect(host.submit).toHaveBeenCalledWith("{}");
+  });
+
+  it("forwards the frame when the hook throws instead of failing the invoke", () => {
+    const { ipc, handlers } = createFakeIpc();
+    const host = createFakeHost();
+
+    registerBridgeIpc({
+      ipc,
+      host,
+      onControlFrame: () => {
+        throw new Error("bad hook");
+      },
+    });
+
+    expect(handlers.get(FRAME_SUBMIT)?.(null, "{}")).toEqual({ ok: true });
+    expect(host.submit).toHaveBeenCalledWith("{}");
+  });
+});
