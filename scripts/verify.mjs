@@ -437,21 +437,13 @@ function buildSegments(options) {
       command: () => gate("scripts/check-fixtures.mjs", options.verbose),
     },
     {
-      // Frame type registration (docs/21). Also text-only and cheap. Sits after
-      // the other gates so a violation is reported by the segment that names it
-      // rather than as a failing unit test, and before `test` for the same
-      // reason as every other gate above.
-      //
-      // Independent of `fixtures`: that segment grades a corpus file's shape,
-      // this one grades the source literals against the declared type table.
-      // Merging them would make a red result ambiguous.
+      // Frame type registration: source literals against the declared type table.
       label: "frame",
       command: () => gate("scripts/check-frame.mjs", options.verbose),
     },
     {
-      //  the shell must not name a capability. The one sample page is
-      // allowlisted by file, and every literal it names is checked against
-      // capabilities.json so the exception cannot hide a misspelling.
+      // The shell must not name a capability; the allowlisted sample's literals
+      // are checked against capabilities.json so the exception cannot hide a typo.
       label: "capabilities",
       command: () => gate("scripts/check-capabilities.mjs", options.verbose),
     },

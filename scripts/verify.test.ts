@@ -398,13 +398,13 @@ afterAll(() => {
 });
 
 describe("verify aggregator: segment assembly", () => {
-  it("runs the nine default segments in the documented order", () => {
+  it("runs the thirteen default segments in the documented order", () => {
     const tree = makeStubTree();
     const run = cachedRun("default", () => runVerify(tree));
 
     expect(run.status, run.output).toBe(0);
-    expect(run.output).toContain("verify: 12 segments, mode default");
-    expectHeadingsInOrder(run, DEFAULT_LABELS, 12);
+    expect(run.output).toContain("verify: 13 segments, mode default");
+    expectHeadingsInOrder(run, DEFAULT_LABELS, 13);
 
     // The gate scripts themselves ran in segment order, not just the printer.
     const gateLog = readFileSync(tree.logFile, "utf8");
@@ -413,8 +413,8 @@ describe("verify aggregator: segment assembly", () => {
     expect(gateLog.indexOf("check-contract.mjs")).toBeGreaterThan(
       gateLog.indexOf("check-boundaries.mjs"),
     );
-    expect(run.output).toContain("[3/12] boundaries  PASS");
-    expect(run.output).toContain("[6/12] contract  PASS");
+    expect(run.output).toContain("[3/13] boundaries  PASS");
+    expect(run.output).toContain("[6/13] contract  PASS");
   });
 
   it("appends the three --full segments in the documented order", () => {
@@ -422,9 +422,9 @@ describe("verify aggregator: segment assembly", () => {
     const run = cachedRun("full", () => runVerify(tree, ["--full"]));
 
     expect(run.status, run.output).toBe(0);
-    expect(run.output).toContain("verify: 14 segments, mode full");
-    expectHeadingsInOrder(run, [...DEFAULT_LABELS, ...FULL_LABELS], 14);
-    expect(run.output).toContain("[14/14] module ownership  PASS");
+    expect(run.output).toContain("verify: 15 segments, mode full");
+    expectHeadingsInOrder(run, [...DEFAULT_LABELS, ...FULL_LABELS], 15);
+    expect(run.output).toContain("[15/15] module ownership  PASS");
   });
 
   it("derives a segment reference from the assembled list, not a literal (P3-03)", () => {
@@ -436,10 +436,10 @@ describe("verify aggregator: segment assembly", () => {
     const run = peekRun("default");
 
     expect(run).toBeDefined();
-    expect(run?.output).toContain("rendered under test in segment 11");
+    expect(run?.output).toContain("rendered under test in segment 12");
     // The placeholder itself must not survive into the output.
     expect(run?.output).not.toContain("{segment:");
-    expect(run?.output).toContain("[11/12] test");
+    expect(run?.output).toContain("[12/13] test");
   });
 });
 
@@ -572,7 +572,7 @@ describe("verify aggregator: fail closed", () => {
     expect(existsSync(tree.logFile)).toBe(false);
   });
 
-  it("requires the three --full-only scripts as well (twelve segments) (P3-01)", () => {
+  it("requires the three --full-only scripts as well (thirteen segments) (P3-01)", () => {
     const tree = makeStubTree({ missing: ["scripts/check-cycles.mjs"] });
     const run = cachedRun("missing-full", () => runVerify(tree, ["--full"]));
 
@@ -606,12 +606,12 @@ describe("verify aggregator: behaviour", () => {
     );
 
     expect(run.status, run.output).toBe(1);
-    expectHeadingsInOrder(run, DEFAULT_LABELS, 12);
-    expect(run.output).toContain("[3/12] boundaries  FAIL");
+    expectHeadingsInOrder(run, DEFAULT_LABELS, 13);
+    expect(run.output).toContain("[3/13] boundaries  FAIL");
     // Later segments still ran, including the one after the failure.
-    expect(run.output).toContain("[6/12] contract  PASS");
-    expect(run.output).toContain("[11/12] test  PASS");
-    expect(run.output).toContain("verify: 1 of 12 segments FAILED");
+    expect(run.output).toContain("[6/13] contract  PASS");
+    expect(run.output).toContain("[12/13] test  PASS");
+    expect(run.output).toContain("verify: 1 of 13 segments FAILED");
     expect(run.output).toContain("FAILED: boundaries");
     // The failing segment's captured output is replayed as the debugging payload.
     expect(run.output).toContain("stub gate output: check-boundaries.mjs");
