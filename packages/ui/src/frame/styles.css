@@ -2,10 +2,37 @@
    maps through its own CSS variables, so this file deliberately has none. */
 
 .hz-frame {
+  position: relative;
   display: flex;
   flex: 1 1 auto;
   min-height: 0;
   min-width: 0;
+}
+
+/* One entry for opening a page into a layout that already has tabs. The empty
+   state's picker only exists while the dock has no panels, so without this a
+   non-empty first-run layout could never grow. */
+.hz-frame__bar {
+  display: flex;
+  flex: 0 0 auto;
+  justify-content: flex-end;
+  padding: 0 var(--ui-space-2, 8px) var(--ui-space-1, 4px);
+}
+
+/* The picker is an in-frame overlay rather than a modal: it has to sit inside
+   the frame host's provider, which is what gives it `openPage`. */
+.hz-frame__picker {
+  position: absolute;
+  z-index: 20;
+  top: var(--ui-space-6, 32px);
+  right: var(--ui-space-6, 32px);
+  max-height: 70%;
+  overflow: auto;
+  padding: var(--ui-space-3, 12px);
+  border: 1px solid var(--ui-color-border, #888);
+  border-radius: var(--ui-radius-2, 8px);
+  background: var(--ui-color-surface-1, #fff);
+  box-shadow: var(--ui-shadow-2, 0 8px 24px rgb(0 0 0 / 18%));
 }
 
 .hz-frame__dock {

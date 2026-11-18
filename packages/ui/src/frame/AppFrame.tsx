@@ -136,6 +136,7 @@ export function AppFrame(props: AppFrameProps): ReactElement {
     }
   };
   const [menuOpen, setMenuOpen] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [dismissed, setDismissed] = useState<readonly string[]>([]);
   const [activePageId, setActivePageId] = useState("");
 
@@ -337,6 +338,7 @@ export function AppFrame(props: AppFrameProps): ReactElement {
 
     try {
       api.fromJSON(toDockview(next, size()).serialized as never);
+      applyPanelTitles(api);
     } finally {
       applying.current = false;
     }
@@ -359,6 +361,24 @@ export function AppFrame(props: AppFrameProps): ReactElement {
     height: frame.current?.clientHeight ?? 800,
   });
 
+  /**
+   * Replace dockview's default tab title with the page's localized title.
+   *
+   * `toDockview` is a pure document mapping and has no translator, so the title
+   * it can produce is the tab id. Without this pass a restored layout shows
+   * `conversation` where the page picker shows "Conversation"; a document that
+   * came from a save would read as a different product than the one just opened.
+   */
+  const applyPanelTitles = (api: DockviewApi): void => {
+    for (const panel of api.panels ?? []) {
+      const definition = props.registry.get(pageIdOfPanel(panel));
+
+      if (definition !== undefined && typeof panel.api.setTitle === "function") {
+        panel.api.setTitle(t(definition.titleKey));
+      }
+    }
+  };
+
   const onReady = (event: DockviewReadyEvent): void => {
     apiRef.current = event.api;
 
@@ -371,6 +391,7 @@ export function AppFrame(props: AppFrameProps): ReactElement {
 
     const { serialized } = toDockview(latest.current, size());
     event.api.fromJSON(serialized as never);
+    applyPanelTitles(event.api);
     applying.current = false;
     setActivePageId(pageIdOfPanel(event.api.activePanel));
 
@@ -499,6 +520,7 @@ export function AppFrame(props: AppFrameProps): ReactElement {
     applying.current = true;
     const { serialized } = toDockview(props.doc, size());
     api.fromJSON(serialized as never);
+    applyPanelTitles(api);
     applying.current = false;
     latest.current = props.doc;
 
@@ -615,6 +637,18 @@ export function AppFrame(props: AppFrameProps): ReactElement {
           {banners}
         </div>
       )}
+      {compact ? null : (
+        <div className="hz-frame__bar">
+          <Button
+            variant="secondary"
+            size="sm"
+            aria-expanded={pickerOpen}
+            onClick={() => setPickerOpen((open) => !open)}
+          >
+            {t("page.frame.empty.open")}
+          </Button>
+        </div>
+      )}
       {compact ? (
         <div className="hz-compact-bar">
           <Button
@@ -642,6 +676,14 @@ export function AppFrame(props: AppFrameProps): ReactElement {
       ) : null}
       <FrameHostProvider value={host}>
         <div className={compact ? "hz-frame hz-frame--compact" : "hz-frame"}>
+          {pickerOpen ? (
+            <div className="hz-frame__picker">
+              <PagePicker onOpen={() => setPickerOpen(false)} />
+              <Button variant="secondary" size="sm" onClick={() => setPickerOpen(false)}>
+                {t("page.topbar.cancel")}
+              </Button>
+            </div>
+          ) : null}
           {compact ? null : (
             <SideRail
               side="left"

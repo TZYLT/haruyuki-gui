@@ -121,14 +121,14 @@ function consequenceText(code: CommandErrorCode, t: Translator): string | null {
   switch (code) {
     case "COMMAND_UNKNOWN_CAPABILITY":
     case "COMMAND_CAPABILITY_UNAVAILABLE":
-      return t("page.command.notAvailable");
+      return t("page.commandSample.notAvailable");
     case "COMMAND_SCOPE_REQUIRED":
-      return t("page.command.scopeRequired");
+      return t("page.commandSample.scopeRequired");
     case "COMMAND_CHANNEL_UNAVAILABLE":
     case "NOT_CONNECTED":
-      return t("page.command.notConnected");
+      return t("page.commandSample.notConnected");
     case "COMMAND_BAD_PAYLOAD":
-      return t("page.command.badPayload");
+      return t("page.commandSample.badPayload");
     default:
       return null;
   }
@@ -171,13 +171,13 @@ function Success({
   if (reply.completion === "answered") {
     return (
       <>
-        <p>{t("page.command.answered")}</p>
+        <p>{t("page.commandSample.answered")}</p>
         <pre>{summarize(reply.data)}</pre>
       </>
     );
   }
 
-  return <p>{t("page.command.accepted")}</p>;
+  return <p>{t("page.commandSample.accepted")}</p>;
 }
 
 /**
@@ -257,7 +257,7 @@ export function CommandSample({ client }: CommandSampleProps): ReactElement {
 
   return (
     <section>
-      <h3>{t("page.command.title")}</h3>
+      <h3>{t("page.commandSample.title")}</h3>
 
       <div style={ACTIONS}>
         <Button
@@ -267,7 +267,7 @@ export function CommandSample({ client }: CommandSampleProps): ReactElement {
           loading={busy === DEVICE_INFO}
           disabled={disabled}
         >
-          {t("page.command.deviceInfo")}
+          {t("page.commandSample.deviceInfo")}
         </Button>
 
         <Button
@@ -278,7 +278,7 @@ export function CommandSample({ client }: CommandSampleProps): ReactElement {
           loading={busy === TERMINAL_KILL}
           disabled={disabled}
         >
-          {t("page.command.terminalKill")}
+          {t("page.commandSample.terminalKill")}
         </Button>
       </div>
 
