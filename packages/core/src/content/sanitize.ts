@@ -67,33 +67,52 @@ export function sanitizeBlock(block: Block): Block {
   }
 
   switch (block.type) {
-    case "text":
+    case "text": {
+      const base = copyBase(block);
       return {
-        ...copyBase(block),
+        id: base.id,
+        messageId: base.messageId,
+        runId: base.runId,
+        role: base.role,
         type: "text",
         text: asText(block.text),
         flavor: block.flavor,
         status: block.status,
       };
-    case "code":
+    }
+    case "code": {
+      const base = copyBase(block);
       return {
-        ...copyBase(block),
+        id: base.id,
+        messageId: base.messageId,
+        runId: base.runId,
+        role: base.role,
         type: "code",
         text: asText(block.text),
         info: asText(block.info),
         closed: asFlag(block.closed),
         status: block.status,
       };
-    case "image":
+    }
+    case "image": {
+      const base = copyBase(block);
       return {
-        ...copyBase(block),
+        id: base.id,
+        messageId: base.messageId,
+        runId: base.runId,
+        role: base.role,
         type: "image",
         source: sanitizeImageSource(block.source),
         alt: asTextOrNull(block.alt),
       };
-    case "tool_call":
+    }
+    case "tool_call": {
+      const base = copyBase(block);
       return {
-        ...copyBase(block),
+        id: base.id,
+        messageId: base.messageId,
+        runId: base.runId,
+        role: base.role,
         type: "tool_call",
         toolCallId: asText(block.toolCallId),
         name: asTextOrNull(block.name),
@@ -102,35 +121,56 @@ export function sanitizeBlock(block: Block): Block {
         status: block.status,
         orphan: asFlag(block.orphan),
       };
-    case "reasoning":
+    }
+    case "reasoning": {
+      const base = copyBase(block);
       return {
-        ...copyBase(block),
+        id: base.id,
+        messageId: base.messageId,
+        runId: base.runId,
+        role: base.role,
         type: "reasoning",
         text: asText(block.text),
       };
-    case "notice":
+    }
+    case "notice": {
+      const base = copyBase(block);
       return {
-        ...copyBase(block),
+        id: base.id,
+        messageId: base.messageId,
+        runId: base.runId,
+        role: base.role,
         type: "notice",
         category: block.category,
         title: asTextOrNull(block.title),
         text: asText(block.text),
       };
-    case "error":
+    }
+    case "error": {
+      const base = copyBase(block);
       return {
-        ...copyBase(block),
+        id: base.id,
+        messageId: base.messageId,
+        runId: base.runId,
+        role: base.role,
         type: "error",
         message: asText(block.message),
         errorType: asTextOrNull(block.errorType),
         detail: asTextOrNull(block.detail),
       };
-    case "unknown":
+    }
+    case "unknown": {
+      const base = copyBase(block);
       return {
-        ...copyBase(block),
+        id: base.id,
+        messageId: base.messageId,
+        runId: base.runId,
+        role: base.role,
         type: "unknown",
         rawType: asText(block.rawType),
         raw: toJsonSafe(block.raw),
       };
+    }
     default:
       return toJsonSafe(block) as Block;
   }
@@ -236,6 +276,15 @@ function defineJsonProperty(target: Record<string, unknown>, key: string, value:
   });
 }
 
+/**
+ * Read the four identity fields through one set of rules, per block type.
+ *
+ * Callers name the fields individually in the literal they return instead of
+ * spreading this object. A literal that writes `type` alongside a spread looks
+ * like a frame whose channel the frame gate cannot read, so block literals are
+ * written out in full; naming the fields also keeps the returned shape to the
+ * declared ones instead of whatever else the input happens to carry.
+ */
 function copyBase(block: Block): BlockBase {
   return {
     id: asText(block.id),
