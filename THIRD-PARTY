@@ -71,6 +71,26 @@ travel inside that tree and are reproduced by the packager, not by this file.
 | chromium | 156.0.8078.100 | BSD-3-Clause and others | https://www.chromium.org/ | Embedded in electron. Version read from `process.versions.chrome`. Third-party attributions are the `LICENSES.chromium.html` file above; do not enumerate them individually here. |
 | node | 24.22.2 | MIT | https://nodejs.org/ | Embedded in electron (`process.versions.node`). Node's own dependency notices are inside the Chromium licence file. |
 
+## The Linux single-file package
+
+The AppImage is not a directory of files that the packager assembles from this
+repository: it is a launcher plus a squashfs image, and the launcher is a
+prebuilt binary that electron-builder downloads rather than compiles. That
+binary and the desktop libraries copied beside it are redistributed, so they are
+inventory rows and not build tooling.
+
+This section describes the Linux artifact only. The Windows zip contains none of
+these -- it is the Electron tree plus the application archive.
+
+| Package | Version | License | Source | Notes |
+| ------- | ------- | ------- | ------ | ----- |
+| AppImage runtime | from toolset `appimage-12.0.1` | MIT | https://github.com/AppImage/AppImageKit | The launcher prepended to the AppImage (`runtime-x64`, 188,392 B). electron-builder fetches the `appimage-12.0.1` toolset from `electron-userland/electron-builder-binaries` and embeds this binary at the head of the file; it is what mounts the squashfs payload and runs `AppRun`. The toolset archive contains **no licence file of its own** -- verified by extracting it in full and listing for `COPYING`/`LICENSE*`, which finds nothing -- so the attribution is the project's MIT licence, recorded here rather than reproduced from a file that does not exist. The same binary also contains the squashfs reader it uses to open the payload. |
+| libappindicator | as shipped in toolset `appimage-12.0.1` (`libappindicator.so.1`) | LGPL-2.1-or-later and GPL-3.0-or-later | https://launchpad.net/libappindicator | Copied into `usr/lib/` of the AppImage by the legacy FUSE2 layout, i.e. it ships whenever the Linux artifact is built. The shared object carries no embedded licence text, so this row records what the distribution packages that ship the same library declare; treat the packaged `.so` as the authority. |
+| libindicator | as shipped in toolset `appimage-12.0.1` (`libindicator.so.7`) | GPL-3.0-only | https://launchpad.net/libindicator | Same origin and same caveat as `libappindicator`: shipped in `usr/lib/` of the AppImage only. |
+| GConf | as shipped in toolset `appimage-12.0.1` (`libgconf-2.so.4`) | LGPL-2.0-or-later and GPL-2.0-or-later | https://gitlab.gnome.org/Archive/gconf | Same origin and same caveat. A desktop-configuration library; it ships inside the AppImage, not in the Windows zip. |
+| libnotify | as shipped in toolset `appimage-12.0.1` (`libnotify.so.4`) | LGPL-2.1-or-later | https://gitlab.gnome.org/GNOME/libnotify | Same origin and same caveat. |
+| libXss / libXtst | as shipped in toolset `appimage-12.0.1` (`libXss.so.1`, `libXtst.so.6`) | MIT | https://www.x.org/ | Same origin and same caveat. X.Org runtime libraries; the MIT text is the one already reproduced in NOTICE for `electron`. |
+
 ## Dev-only dependencies (not shipped, therefore not listed above)
 
 Lint, format, type-check, test and build tooling: ESLint, Prettier, TypeScript,
@@ -79,6 +99,13 @@ typescript-eslint, Vitest, the Vitest coverage provider, madge, Vite, `@types/no
 `@testing-library/user-event`. The authoritative versions live in `package.json`
 (`devDependencies`) and `pnpm-lock.yaml`. If any of these ever becomes part of a
 published artifact, it must be moved into the inventory table above.
+
+Note on `electron-builder`: it builds the archive and does not ship inside it.
+Its own output in the package is the application archive, the file name and the
+launcher described above -- no electron-builder code reaches a user, so it stays
+on this side of the line. What it *does* add to the Linux artifact are the
+runtime binary and the desktop libraries, and those are listed in the section
+above precisely because the packager is not what ends up on the user's disk.
 
 Note on Vite: it is build tooling and does not ship, but it is what produces the
 renderer bundle from `packages/ui` sources, so it is named here to keep the line

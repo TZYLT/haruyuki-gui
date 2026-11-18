@@ -68,6 +68,24 @@ module.exports = {
   extraMetadata: {
     main: "dist/main/main.cjs",
   },
+  // The three legal documents at the repository root, copied to the package
+  // root -- the directory the user unzipped, which is where the about window
+  // opens them from when packaged.
+  //
+  // `extraFiles`, not `files`: `files` is relative to this package directory
+  // and everything it selects is packed *into* `app.asar`, whose root is
+  // `resources/app`. Reaching the repository root from there is impossible --
+  // the walk starts at `apps/desktop` and never leaves it, and a destination
+  // inside the archive is not the package root. `extraFiles` copies to the
+  // app's content directory (`win-unpacked/` on Windows), which is exactly the
+  // directory the three documents have to be in.
+  extraFiles: [
+    {
+      from: REPO_ROOT,
+      to: ".",
+      filter: ["LICENSE", "NOTICE", "THIRD-PARTY"],
+    },
+  ],
   extraResources: [
     {
       // `from: runtime/engine` loses `node_modules` because electron-builder's

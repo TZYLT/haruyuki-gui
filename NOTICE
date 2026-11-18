@@ -42,9 +42,42 @@ record it in both.
 Attributions
 ================================================================================
 
-No modified Apache-2.0 third-party code is distributed. The notices below are
-reproduced because the corresponding licences require the copyright notice and
-permission notice to travel with a binary distribution.
+This package redistributes a modified Apache-2.0 upstream project, and several of
+its components require their copyright and permission notices to travel with a
+binary distribution. Each entry below names the work that ships, the licence it
+ships under, and the obligation the entry discharges. Nothing here is a summary:
+where a licence requires its text verbatim, the text is reproduced verbatim.
+
+--------------------------------------------------------------------------------
+haruyuki-gui -- Apache-2.0
+--------------------------------------------------------------------------------
+
+Copyright 2026 The Haruyuki GUI Authors
+
+The application shell, the renderer and the build configuration in this
+repository are first-party work, licensed under the Apache License 2.0; the full
+text travels next to this file as LICENSE. This entry is here so that the
+attribution record names the licence of the work itself and not only the
+licences of what that work depends on. It claims no third-party material.
+
+--------------------------------------------------------------------------------
+haruyuki (the bundled engine) -- Apache-2.0
+--------------------------------------------------------------------------------
+
+Copyright 2026 TZYLT <TZY143@126.com>
+Copyright 2025, Letta authors (upstream portions)
+
+The engine is redistributed as an unmodified copy of the published package
+`haruyuki@0.6.0` under `resources/engine/`, and it carries its own legal
+documents in that same directory: LICENSE, NOTICE and THIRD-PARTY-NOTICES.md.
+
+The engine is a modified version of the letta-code project, so its NOTICE holds
+the statement of modification that Section 4(b) of the Apache License requires,
+and the upstream notices that Section 4(c) requires be retained. Those three
+files are the authoritative attribution for the engine; they travel inside the
+package, next to the code they describe, and must be neither removed nor edited
+when the package is redistributed. This entry records that they are there and
+why. It does not restate them.
 
 --------------------------------------------------------------------------------
 intl-messageformat -- BSD-3-Clause
