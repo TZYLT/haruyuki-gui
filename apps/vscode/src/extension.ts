@@ -31,11 +31,15 @@
  *   icon an entry point at all.
  */
 
+import { homedir } from "node:os";
+
 import * as vscode from "vscode";
 
+import { createController, type Controller } from "./host/controller.js";
+import { createVSCodeEngineSettings } from "./host/engine-source.js";
 import { createLifecycle, type Lifecycle, type LifecycleCoreHost } from "./host/lifecycle.js";
 import { createShellLog, type ShellLog } from "./host/log.js";
-import { createPanelHost } from "./host/panel.js";
+import { createPanelHost, type PanelLinkFactory } from "./host/panel.js";
 import { createStatusBar, type StatusBar } from "./host/status.js";
 import { COMMAND_OPEN_PANEL, OUTPUT_CHANNEL_NAME, VIEW_LAUNCHER } from "./shared/channels.js";
 import { APP_VERSION } from "./shared/version.js";
@@ -87,8 +91,8 @@ let tokenDir: string | undefined;
 /**
  * Record the core child this activation owns.
  *
- * Called by whatever starts the child -- the panel opener -- so `deactivate`
- * knows what to stop and which single directory holds the token file. Passing
+ * Called by whatever starts the child -- the controller -- so `deactivate` knows
+ * what to stop and which single directory holds the token file. Passing
  * `undefined` forgets it, which is what a test does to leave no state behind.
  *
  * @param host the running child, or `undefined` when none was started
@@ -97,6 +101,33 @@ let tokenDir: string | undefined;
 export function setCoreHost(host: LifecycleCoreHost | undefined, dir?: string): void {
   coreHost = host;
   tokenDir = dir;
+}
+
+/**
+ * The panel actions that need an editor surface.
+ *
+ * The ones that only move the controller's own state never reach here; what does
+ * is a request for something only the editor can show -- its settings page, a
+ * folder picker, the log channel. A request this build does not answer is logged
+ * rather than swallowed, so a button that does nothing says so somewhere.
+ *
+ * @param action the action the panel sent
+ */
+function handlePanelAction(action: string): void {
+  switch (action) {
+    case "openSettings":
+      void vscode.commands.executeCommand("workbench.action.openSettings", "haruyuki.enginePath");
+
+      return;
+
+    case "openLogs":
+      shellLog?.show();
+
+      return;
+
+    default:
+      shellLog?.event("PANEL_ACTION_UNHANDLED", { action });
+  }
 }
 
 /**
@@ -206,16 +237,50 @@ export function activate(context: vscode.ExtensionContext): void {
     treeDataProvider: launcherProvider,
   });
 
-  // The panel itself. Built here but opened later: constructing the host joins
-  // two URIs and reads no document, so activation still starts nothing, and the
-  // seam is filled by the time any entry point can be reached.
-  setPanelOpener(
-    createPanelHost({
-      extensionUri: context.extensionUri,
-      language: vscode.env.language,
-      log: (code, fields) => log.event(code, fields),
-    }),
-  );
+  // The assembly itself. Built here but started later: constructing it builds a
+  // host port, a secret store and two subscriptions, and starts no process, so
+  // activation still costs nothing and the seam is filled by the time any entry
+  // point can be reached. `open` is what forks the child, and it does so once.
+  const controller: Controller = createController({
+    extensionPath: context.extensionUri.fsPath,
+    secrets: context.secrets,
+    storageRoot: context.globalStorageUri.fsPath,
+    toFileUri: (absPath) => vscode.Uri.file(absPath),
+    locale: vscode.env.language,
+    // Read at start rather than at activation: the user may have opened a folder
+    // in between, and a window that starts without one is the case the
+    // degradation exists for.
+    folders: vscode.workspace.workspaceFolders,
+    homeDir: homedir(),
+    settings: createVSCodeEngineSettings((section) => vscode.workspace.getConfiguration(section)),
+    ...(process.env["PATH"] === undefined ? {} : { pathEnv: process.env["PATH"] }),
+    log,
+    status,
+    createPanel: (link: PanelLinkFactory) =>
+      createPanelHost({
+        extensionUri: context.extensionUri,
+        language: vscode.env.language,
+        log: (code, fields) => log.event(code, fields),
+        createLink: link,
+      }),
+    // The child and its token directory reach `deactivate` through the one seam
+    // the teardown reads, so nothing here has to be duplicated there.
+    onStarted: (host, dir) => {
+      setCoreHost(host, dir);
+    },
+    onAction: (action) => {
+      handlePanelAction(action);
+    },
+  });
+
+  setPanelOpener({
+    open: () => {
+      controller.open();
+    },
+    close: async () => {
+      await controller.close();
+    },
+  });
 
   context.subscriptions.push(channel, item, command, treeView);
 }

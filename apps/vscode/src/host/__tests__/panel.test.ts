@@ -32,11 +32,16 @@ interface FakePanel {
     html: string;
     postMessage(message: unknown): void;
     asWebviewUri(uri: UriLike): UriLike;
+    onDidReceiveMessage(listener: (raw: unknown) => void): { dispose(): void };
   };
   readonly revealed: number;
   readonly disposeCalls: number;
   /** How many view-state listeners are attached right now. */
   readonly viewStateListeners: number;
+  /** How many document-message listeners are attached right now. */
+  readonly messageListeners: number;
+  /** Post a message as the document would, through the installed subscription. */
+  fireMessage(raw: unknown): void;
   /** Fire a visibility change, as switching tabs would. */
   fireViewState(visible: boolean): void;
   /** Fire the disposal listener, as the user closing the tab would. */
@@ -97,6 +102,10 @@ vi.mock("vscode", () => {
         const viewStateListeners = new Set<
           (event: { webviewPanel: { visible: boolean } }) => void
         >();
+        // The document's own messages: `ready`, `command.invoke`, `terminal.ack`
+        // and `action`. A panel with no listener here is a panel that opens and
+        // then answers nothing, which looks exactly like a blank document.
+        const messageListeners = new Set<(raw: unknown) => void>();
         const index = editor.panels.length + 1;
 
         let html = "";
@@ -127,6 +136,16 @@ vi.mock("vscode", () => {
 
               return { fsPath: served, toString: () => served };
             },
+            onDidReceiveMessage(listener: (raw: unknown) => void): { dispose(): void } {
+              editor.calls.push({ member: "onDidReceiveMessage", args: [index] });
+              messageListeners.add(listener);
+
+              return {
+                dispose(): void {
+                  messageListeners.delete(listener);
+                },
+              };
+            },
           },
           get revealed(): number {
             return revealed;
@@ -136,6 +155,12 @@ vi.mock("vscode", () => {
           },
           get viewStateListeners(): number {
             return viewStateListeners.size;
+          },
+          get messageListeners(): number {
+            return messageListeners.size;
+          },
+          fireMessage(raw: unknown): void {
+            for (const listener of [...messageListeners]) listener(raw);
           },
           fireViewState(next: boolean): void {
             visible = next;
@@ -197,18 +222,20 @@ vi.mock("vscode", () => {
   };
 });
 
-import { createPanelHost, PANEL_TITLE, PANEL_VIEW_TYPE } from "../panel.js";
+import { createPanelHost, PANEL_TITLE, PANEL_VIEW_TYPE, type PanelLink } from "../panel.js";
 
 /**
  * Build a host with a template that needs no build tree.
  *
  * @param language the editor's language tag
+ * @param link the two directions the assembly would hand over, when a case is
+ *   about them
  * @returns the host and the sink it logs into
  */
-function createHost(language = "zh-cn"): {
-  readonly host: ReturnType<typeof createPanelHost>;
-  readonly lines: string[];
-} {
+function createHost(
+  language = "zh-cn",
+  link?: (panel: { readonly webview: unknown }) => PanelLink,
+): { readonly host: ReturnType<typeof createPanelHost>; readonly lines: string[] } {
   const lines: string[] = [];
 
   const host = createPanelHost({
@@ -220,6 +247,7 @@ function createHost(language = "zh-cn"): {
     readTemplate: () =>
       '<html><head></head><body><div id="root"></div>' +
       '<script type="module" src="./assets/index-x.js"></script></body></html>',
+    ...(link === undefined ? {} : { createLink: link }),
   });
 
   return { host, lines };
@@ -408,5 +436,112 @@ describe("panel host", () => {
     panel?.fireViewState(true);
 
     expect(posts()).toBe(2);
+  });
+});
+
+describe("panel host: the document's messages", () => {
+  beforeEach(() => {
+    editor.reset();
+  });
+
+  /**
+   * Record what the host handed to the link, so a case can assert the direction
+   * really exists rather than that a call was made.
+   *
+   * @returns the recorder and the factory to hand over
+   */
+  function recorder(): {
+    readonly received: unknown[];
+    readonly disposed: number;
+    readonly factory: (panel: { readonly webview: unknown }) => PanelLink;
+  } {
+    const received: unknown[] = [];
+    const counter = { disposed: 0 };
+
+    return {
+      received,
+      get disposed(): number {
+        return counter.disposed;
+      },
+      factory: () => ({
+        receive(raw: unknown): void {
+          received.push(raw);
+        },
+        dispose(): void {
+          counter.disposed += 1;
+        },
+      }),
+    };
+  }
+
+  it("installs the one subscription the document's messages arrive through", () => {
+    const sink = recorder();
+
+    createHost("zh-cn", sink.factory).host.open();
+
+    // Without this subscription the editor has nowhere to deliver `ready`,
+    // `command.invoke`, `terminal.ack` or `action`, and the panel opens and then
+    // answers nothing -- which is exactly a blank document with no error.
+    expect(editor.panels[0]?.messageListeners).toBe(1);
+    expect(editor.calls.some((call) => call.member === "onDidReceiveMessage")).toBe(true);
+  });
+
+  it("hands every document message to the link, unchanged", () => {
+    const sink = recorder();
+
+    createHost("zh-cn", sink.factory).host.open();
+
+    const panel = editor.panels[0];
+    const message = { kind: "ready", appVersion: "0.1.0", bridgeVersion: "1" };
+
+    panel?.fireMessage(message);
+
+    // Passed through as it arrived: the host is not a parser of this protocol,
+    // and a re-encoded message would be a second authority on its shape.
+    expect(sink.received).toEqual([message]);
+  });
+
+  it("subscribes before the announcement, so an early ready is not lost", () => {
+    const sink = recorder();
+
+    createHost("zh-cn", sink.factory).host.open();
+
+    const subscribed = editor.calls.findIndex((call) => call.member === "onDidReceiveMessage");
+    const announced = editor.calls.findIndex((call) => call.member === "postMessage");
+
+    // The document posts `ready` the moment it sees `boot`; a subscription
+    // installed afterwards would miss it and the panel would never connect.
+    expect(subscribed).toBeGreaterThan(-1);
+    expect(announced).toBeGreaterThan(-1);
+    expect(subscribed).toBeLessThan(announced);
+  });
+
+  it("releases the subscription when the document is closed", async () => {
+    const sink = recorder();
+
+    const { host } = createHost("zh-cn", sink.factory);
+
+    host.open();
+
+    const panel = editor.panels[0];
+
+    await host.close();
+
+    expect(panel?.messageListeners).toBe(0);
+    expect(sink.disposed).toBe(1);
+  });
+
+  it("opens the panel even when the two directions cannot be built", () => {
+    const { host, lines } = createHost("zh-cn", () => {
+      throw new Error("no core to talk to");
+    });
+
+    host.open();
+
+    // A build with no core still shows its document and says what is missing;
+    // throwing here would leave a created panel with no handle at all.
+    expect(editor.panels).toHaveLength(1);
+    expect(editor.panels[0]?.webview.html).toContain('id="root"');
+    expect(lines).toContain("PANEL_LINK_FAILED");
   });
 });

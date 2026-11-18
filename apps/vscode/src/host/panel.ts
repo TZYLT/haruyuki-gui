@@ -22,6 +22,11 @@
  *    the first frame can arrive, and its initial announcement is what tells the
  *    document which protocol versions it is speaking; it is also the only thing
  *    that puts the panel back in sync after a return to visibility.
+ * 5. **Two directions, created with the document.** The document's messages
+ *    arrive through one subscription and leave through the link the composition
+ *    root builds; both are installed before the announcement, because `boot` is
+ *    what makes the document send `ready` and a `ready` nobody listens to is a
+ *    panel that never connects.
  *
  * The resource roots are deliberately two directories and not the workspace:
  * this panel ships its own bundle (`dist/webview`) and its own icon (`media`),
@@ -84,6 +89,16 @@ export interface PanelHostOptions {
    * so it is a small local file rather than anything that could be slow.
    */
   readonly readTemplate?: (absolutePath: string) => string;
+  /**
+   * Build the two directions between a panel and the core.
+   *
+   * Called once per created panel, immediately after its document is filled and
+   * before the first announcement: the document is a live listener at that
+   * point, so a frame posted before the link exists would reach it with no way
+   * back. Omitted means this build has no core behind the panel, and the panel
+   * then renders its own document with nothing on the other end.
+   */
+  readonly createLink?: PanelLinkFactory;
 }
 
 /** The handle the extension entry keeps, and the one `deactivate` calls. */
@@ -94,10 +109,30 @@ export interface PanelHost {
   close(): Promise<void>;
 }
 
+/**
+ * The two directions between this panel and the core.
+ *
+ * This host creates the panel and its document; it does not create the core or
+ * the paths to it. The composition root builds those and hands one link back for
+ * the panel it just created, so the module that owns the pipe is also the module
+ * that knows a panel exists to speak through it.
+ */
+export interface PanelLink {
+  /** Take one raw message from the document. Never throws. */
+  receive(raw: unknown): void;
+  /** Release both directions. Idempotent. */
+  dispose(): void;
+}
+
+/** @param panel the panel just created @returns its link, or `null` for a panel-only build */
+export type PanelLinkFactory = (panel: vscode.WebviewPanel) => PanelLink;
+
 /** The one panel this host may have open. */
 type Live = {
   readonly panel: vscode.WebviewPanel;
   readonly framePath: FramePath;
+  readonly link: PanelLink | null;
+  readonly inbound: { dispose(): void } | null;
 };
 
 /**
@@ -204,6 +239,20 @@ export function createPanelHost(options: PanelHostOptions): PanelHost {
       // nothing listening for it, and the announcement below is a message.
       showDocument(panel);
 
+      // Then the two directions, before anything can be posted: a frame that
+      // arrives while no outbox exists is a frame the document cannot receive,
+      // and the panel would look connected while rendering nothing.
+      let link: PanelLink | null = null;
+
+      try {
+        link = options.createLink?.(panel) ?? null;
+      } catch (error) {
+        // A link that cannot be built is the same state as a build that ships no
+        // core: the panel still opens, and the log says what is missing. Throwing
+        // here would leave a created panel with no document and no handle.
+        log("PANEL_LINK_FAILED", { reason: error instanceof Error ? error.name : "unknown" });
+      }
+
       // Then the replay point, immediately: it must exist before the first frame
       // can arrive, and its initial announcement is what tells the document which
       // protocol versions it is speaking. Constructed before `live` is assigned
@@ -215,7 +264,25 @@ export function createPanelHost(options: PanelHostOptions): PanelHost {
         log,
       });
 
-      live = { panel, framePath };
+      // The one subscription the document's messages arrive through. Installed
+      // before the announcement for the same reason the frame path is: the
+      // document posts `ready` as soon as it sees `boot`, and a `ready` nobody
+      // subscribed to is a panel that never becomes connected.
+      let inbound: { dispose(): void } | null = null;
+
+      if (link !== null) {
+        try {
+          inbound = panel.webview.onDidReceiveMessage((raw: unknown) => {
+            link.receive(raw);
+          });
+        } catch (error) {
+          log("PANEL_INBOUND_SUBSCRIBE_FAILED", {
+            reason: error instanceof Error ? error.name : "unknown",
+          });
+        }
+      }
+
+      live = { panel, framePath, link, inbound };
 
       framePath.announce();
 
@@ -226,6 +293,8 @@ export function createPanelHost(options: PanelHostOptions): PanelHost {
 
         live = null;
         framePath.dispose();
+        inbound?.dispose();
+        link?.dispose();
 
         log("PANEL_DISPOSED", {});
       });
@@ -244,6 +313,8 @@ export function createPanelHost(options: PanelHostOptions): PanelHost {
       // is about to be disposed; the disposal itself is what tears the document
       // down, and its own listener then sees a handle that is already gone.
       current.framePath.dispose();
+      current.inbound?.dispose();
+      current.link?.dispose();
 
       current.panel.dispose();
 

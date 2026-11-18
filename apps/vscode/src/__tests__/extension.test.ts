@@ -36,6 +36,8 @@ const editor = {
   channels: [] as { name: string; lines: string[] }[],
   /** Every `WebviewPanel` created, in order. */
   panels: [] as { viewType: string; title: string }[],
+  /** Every `fork` the editor-side code made, so a startup can be counted. */
+  forks: 0,
 
   reset(): void {
     editor.calls.length = 0;
@@ -44,6 +46,7 @@ const editor = {
     editor.statusItems.length = 0;
     editor.channels.length = 0;
     editor.panels.length = 0;
+    editor.forks = 0;
   },
 };
 
@@ -79,6 +82,25 @@ vi.mock("vscode", () => {
         editor.calls.push({ member: "Uri.joinPath", args: [base, ...segments] });
 
         return makeUri(`${base.fsPath}/${segments.join("/")}`);
+      },
+      file(absolutePath: string): unknown {
+        editor.calls.push({ member: "Uri.file", args: [absolutePath] });
+
+        return makeUri(absolutePath);
+      },
+    },
+    // The engine search reads one setting through this and nothing else here.
+    // Answering the declared default keeps the search's first rung a refusal, so
+    // these cases never touch the real filesystem.
+    workspace: {
+      workspaceFolders: undefined as { uri: { fsPath: string } }[] | undefined,
+      getConfiguration(section: string) {
+        editor.calls.push({ member: "getConfiguration", args: [section] });
+
+        return {
+          get: <T>(_key: string, defaultValue: T): T => defaultValue,
+          update: async () => undefined,
+        };
       },
     },
     env: {
@@ -162,12 +184,24 @@ import * as extension from "../extension.js";
 function context(): {
   subscriptions: { dispose(): void }[];
   extensionUri: { fsPath: string; toString(): string };
+  globalStorageUri: { fsPath: string; toString(): string };
+  secrets: {
+    get(key: string): Promise<string | undefined>;
+    store(key: string, value: string): Promise<void>;
+    delete(key: string): Promise<void>;
+  };
 } {
-  // The panel host resolves its two resource roots against this, and nothing
-  // else in the entry reads it.
+  // The two roots reach the host port, which composes four directories under the
+  // storage root; the secrets store is where the capability token round-trips.
   return {
     subscriptions: [],
     extensionUri: { fsPath: "/extension", toString: () => "file:///extension" },
+    globalStorageUri: { fsPath: "/storage", toString: () => "file:///storage" },
+    secrets: {
+      get: async () => undefined,
+      store: async () => undefined,
+      delete: async () => undefined,
+    },
   };
 }
 
@@ -267,10 +301,12 @@ describe("extension entry: the panel seam", () => {
   beforeEach(() => {
     editor.reset();
     extension.setPanelOpener(undefined);
+    extension.setCoreHost(undefined);
   });
 
   afterEach(() => {
     extension.setPanelOpener(undefined);
+    extension.setCoreHost(undefined);
   });
 
   it("says so when no opener is installed instead of failing silently", () => {
@@ -362,6 +398,21 @@ describe("extension entry: the panel seam", () => {
     const lines = editor.channels[0]?.lines.join("\n") ?? "";
 
     expect(lines).toContain("EXTENSION_DEACTIVATED");
+  });
+
+  it("opens no panel and starts no core until the command is invoked", async () => {
+    extension.activate(context() as never);
+
+    // Activation installed the assembly; it must not have opened the panel or
+    // started the child, because that is the cost lazy activation exists to
+    // avoid, and it is paid by the command rather than by the window appearing.
+    expect(editor.panels).toHaveLength(0);
+
+    extension.openPanel();
+
+    // Positive half: the first open reached the panel host, so "nothing before"
+    // is not the vacuous reading of an opener that never ran.
+    expect(editor.panels).toHaveLength(1);
   });
 });
 
