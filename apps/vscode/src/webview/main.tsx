@@ -24,6 +24,7 @@ import { createRoot } from "react-dom/client";
 import { AppFrame, LocaleProvider } from "@haruyuki/ui";
 
 import { createRegistry } from "./registry.js";
+import { applyShellTheme } from "./theme.js";
 import { useBridgeNotice, useLayout, webviewTransport } from "./transport.js";
 
 /**
@@ -107,6 +108,10 @@ function bootstrap(): void {
   if (container === null) {
     throw new Error(`the webview document needs a #${WEBVIEW_ROOT_ID} element`);
   }
+
+  // The theme seam: before the first paint, so the panel never flashes the
+  // palette while the editor's already says otherwise.
+  applyShellTheme();
 
   mountWebview(container);
 }

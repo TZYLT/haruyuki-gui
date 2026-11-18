@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="light" data-contrast="normal">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -19,6 +19,12 @@
 
       The `#root` id is the contract with the entry module (`main.tsx`); it is
       the only element this document names.
+
+      The two theme attributes are the light/normal default, not a decision:
+      the entry module overwrites them from the editor's own class before the
+      first paint. Declaring them here only means a document that somehow
+      renders before that code runs is still a themed one rather than an
+      unstyled tree.
     -->
   </head>
   <body>
