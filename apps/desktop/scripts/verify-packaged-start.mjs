@@ -43,7 +43,7 @@
  *      because "there was nothing to check" must not read as "it works".
  */
 
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
@@ -246,9 +246,17 @@ function compare(a, b) {
 /**
  * Start the extracted executable and wait for a rendered window.
  *
+ * The child is spawned detached and its whole tree is killed afterwards. Electron
+ * is one executable that becomes five processes - browser, renderer, GPU, utility
+ * and crashpad - and killing only the one that was spawned leaves the rest
+ * holding pipes and handles. Node keeps the event loop alive for a child that has
+ * not exited, so a verdict that has already been reached can sit for minutes
+ * waiting on processes nobody is going to look at. Measured at 485 s before this,
+ * against 3 s of actual work.
+ *
  * @param {string} exe
  * @param {number} port
- * @returns {Promise<{stop: () => void, verdict: () => Promise<string | null>}>}
+ * @returns {{stop: () => void, verdict: () => Promise<string | null>}}
  */
 function launch(exe, port) {
   const environment = { ...process.env };
@@ -260,20 +268,37 @@ function launch(exe, port) {
   const child = spawn(exe, [`--remote-debugging-port=${String(port)}`], {
     env: environment,
     stdio: "ignore",
-    detached: false,
+    // Detached so the process group can be signalled as a whole, and unref'd so
+    // this script's own lifetime is not tied to a program it is observing. The
+    // second part matters: Node keeps running while a child pipe is open, and
+    // without it a finished verdict waits on the application.
+    detached: process.platform !== "win32",
   });
 
   let exited = null;
   child.on("exit", (code) => {
     exited = code;
   });
+  child.unref();
 
   return {
     stop: () => {
+      // The spawned process is the browser process; the renderer and the rest
+      // are its children. Killing the tree is what ends the run, and the wait
+      // afterwards is bounded so a stuck child cannot hold the verdict.
       try {
         child.kill();
       } catch {
         /* already gone */
+      }
+      try {
+        if (process.platform === "win32") {
+          spawnSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], { stdio: "ignore" });
+        } else {
+          spawnSync("pkill", ["-TERM", "-P", String(child.pid)], { stdio: "ignore" });
+        }
+      } catch {
+        /* nothing left to kill */
       }
     },
     verdict: async () => {
@@ -305,22 +330,33 @@ function launch(exe, port) {
           await sleep(1000);
           continue;
         }
+        // A target appears before the document inside it has run. Sampling once
+        // and complaining about an empty title reports the ordering, not a
+        // defect: the same package passes on the next attempt. So an incomplete
+        // page is retried within the budget, and only a page that stays
+        // incomplete is a failure.
+        if (title.length === 0) {
+          lastLine = "the page target exists but has no title yet";
+          await sleep(500);
+          continue;
+        }
         try {
           const evaluated = await evaluate(
             page.webSocketDebuggerUrl,
             "document.querySelectorAll('#root > *').length",
           );
           const children = evaluated?.result?.value;
+          if (typeof children !== "number" || children <= 0) {
+            lastLine = `#root has ${String(children)} children; the document has not mounted yet`;
+            await sleep(500);
+            continue;
+          }
           process.stdout.write(
             `  cdp: title=${JSON.stringify(title)} url=${JSON.stringify(pageUrl)} ` +
               `rootChildren=${String(children)} waitedMs=${String(Date.now() - started)}\n`,
           );
-          if (title.length === 0) return "the window target has an empty title";
           if (!pageUrl.startsWith("app://haruyuki/")) {
             return `the window did not load the app protocol: ${pageUrl}`;
-          }
-          if (typeof children !== "number" || children <= 0) {
-            return `#root has ${String(children)} children; the document mounted nothing`;
           }
           return null;
         } catch (error) {
@@ -428,7 +464,13 @@ async function unzip(archive, destination) {
           args: [
             "-NoProfile",
             "-Command",
-            `Expand-Archive -LiteralPath '${archive}' -DestinationPath '${destination}' -Force`,
+            // `Expand-Archive` is the obvious cmdlet and it is roughly forty
+            // times slower: it decompresses through the pipeline and took six
+            // minutes for this archive, against nine seconds for the framework
+            // call. A judgement that takes six minutes to unpack is one that
+            // gets commented out of the pipeline it was written for.
+            "Add-Type -AssemblyName System.IO.Compression.FileSystem; " +
+              `[System.IO.Compression.ZipFile]::ExtractToDirectory('${archive}', '${destination}')`,
           ],
         }
       : { file: "unzip", args: ["-q", archive, "-d", destination] };
@@ -554,10 +596,10 @@ async function main() {
     const app = launch(exe, port);
     await judge("the packaged application renders its window", () => app.verdict());
 
-    // Judged before stopping: the engine bootstrap happens about ten seconds
-    // after the window appears - the shell draws first and starts the engine
-    // behind it - so a verdict taken after the process is gone would be about a
-    // run that never got the chance to report.
+    // Judged before stopping: the engine reports shortly after the window
+    // appears - the shell draws first and starts the engine behind it - so a
+    // verdict taken after the process is gone would be about a run that never
+    // got the chance to report.
     await judge("the packaged engine starts and its watchdog runs", async () => {
       const events = await waitForEvents(logDir, STARTUP_BUDGET_MS);
       return engineComplaint(events);
