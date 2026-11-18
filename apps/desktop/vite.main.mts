@@ -57,24 +57,54 @@ const WHICH: keyof typeof ENTRIES =
   process.env["HARUYUKI_BUILD_ENTRY"] === "preload" ? "preload" : "main";
 
 /**
- * Anchor for the core package's `createRequire(import.meta.url)`.
+ * Anchor for the core package's `createRequire(import.meta.url)` -- resolved at
+ * **runtime**, never baked as a path from the machine that built the app.
  *
- * Removing this anchor was attempted and reverted. The reason it cannot go yet is
- * that nothing in this bundle imports the frame sender on its own: the supervision
- * code imports reclaim and evidence primitives from the package root, and the root
- * re-exports the engine transport, whose first module-level statement is
- * `createRequire(import.meta.url)`. This bundle is CommonJS, so `import.meta` becomes
- * an empty object and `createRequire` throws `ERR_INVALID_ARG_VALUE` while the module
- * is still loading -- before the window, before the logger, before any error code.
- * Measured twice on this machine with the identical trace; the `./bridge` subpath does
- * not help here, because no file in the bundle imports it.
+ * The engine transport reaches the websocket client through
+ * `createRequire(import.meta.url)`. This bundle is CommonJS, where `import.meta`
+ * becomes an empty object, so that call throws `ERR_INVALID_ARG_VALUE` while the
+ * module is still loading -- before the window, before the logger, before any error
+ * code could be reported. The expression below supplies the missing URL.
  *
- * The absolute path is a development-tree fact. Packaging has to copy the websocket
- * client next to the bundle or replace this anchor with one derived from the installed
- * layout, and this define can be deleted only once the main process no longer reaches
- * the engine transport transitively. Both halves are the same open debt.
+ * Deleting the anchor entirely is what the supervision work was aiming at, and it is
+ * not reachable yet: the shell constructs the engine facade (`new Engine()`), and that
+ * class reaches the transport by value through two of its own imports, so the
+ * expression is in the bundle no matter which subpath the supervision primitives are
+ * imported from. Widening this define to cover that is a transport change, not a
+ * build-config one.
+ *
+ * What it must *not* do is name a directory from this checkout. A literal path
+ * resolves on the build machine and nowhere else: on any other installation the
+ * client is looked up under a tree that does not exist, the module throws while
+ * loading, and a packaged app exits without ever creating a window or writing a log
+ * line. That was the shipped failure this replaces.
+ *
+ * So the URL is chosen at runtime, in this order:
+ *
+ *   packaged -- `resources/engine/package.json`. Inside `app.asar` that directory is
+ *   `process.resourcesPath/engine`, shipped as real files because the engine spawns
+ *   from it, and it carries its own `node_modules/ws`.
+ *
+ *   development -- the sibling package that owns the dependency. `__dirname` is
+ *   `apps/desktop/dist/main` here, four levels below the repository root. Relative,
+ *   so it stays correct for any clone location.
+ *
+ * The check is a file test rather than `app.isPackaged`, because this expression also
+ * lands in two `typeof __dirname === "string" ? ... : ...` fallbacks, which are not
+ * given the Electron module.
  */
-const CORE_PACKAGE_JSON = path.resolve(import.meta.dirname, "../../packages/core/package.json");
+/** Runtime package root for `ws`: the shipped engine tree, else the owning package. */
+const CORE_REQUIRE_ANCHOR = [
+  `(function () {`,
+  `  const fs = require("node:fs");`,
+  `  const path = require("node:path");`,
+  `  const resourcesPath = typeof process.resourcesPath === "string" ? process.resourcesPath : "";`,
+  `  const packaged = path.join(resourcesPath, "engine", "package.json");`,
+  `  return fs.existsSync(packaged)`,
+  `    ? packaged`,
+  `    : path.join(__dirname, "..", "..", "..", "..", "packages", "core", "package.json");`,
+  `})()`,
+].join("\n");
 
 export default defineConfig({
   build: {
@@ -101,14 +131,12 @@ export default defineConfig({
       },
     },
   },
-  // The core package resolves the websocket client through
-  // `createRequire(import.meta.url)`. In this CommonJS bundle `import.meta` is `{}`,
-  // so anchor it where that client actually lives instead of letting module load
-  // throw. Kept after the removal attempt failed twice; see the comment above.
+  // The engine transport reaches the websocket client through
+  // `createRequire(import.meta.url)`; this bundle is CommonJS, where `import.meta`
+  // is `{}`. The expression anchors it at runtime -- see the comment above for why
+  // it cannot name a directory from this checkout, and why it cannot be deleted yet.
   define: {
-    "import.meta.url": `require("node:url").pathToFileURL(${JSON.stringify(
-      CORE_PACKAGE_JSON,
-    )}).href`,
+    "import.meta.url": `require("node:url").pathToFileURL(${CORE_REQUIRE_ANCHOR}).href`,
   },
   // Neither entry has an `index.html`; without this Vite looks for one.
   appType: "custom",

@@ -41,7 +41,7 @@ import {
   type RuntimeMarker,
   type StaleEngineRecord,
   type StaleMarkerEntry,
-} from "@haruyuki/core";
+} from "@haruyuki/core/supervision";
 
 import { describeError, type SupervisionLog } from "./errors.js";
 

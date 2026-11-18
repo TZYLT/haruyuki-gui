@@ -20,14 +20,13 @@ import { randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 
+import { Engine, type EngineSpawnSpec } from "@haruyuki/core/engine";
 import {
-  Engine,
   RUNTIME_MARKER_FILE_NAME,
-  TOKEN_FILE_NAME,
   isProcessAlive,
   type EngineMarker,
-  type EngineSpawnSpec,
-} from "@haruyuki/core";
+} from "@haruyuki/core/supervision";
+import { TOKEN_FILE_NAME } from "@haruyuki/core/engine/token";
 
 import { createEngineCrashWatcher } from "../crash/capture.js";
 import { crashDirFor, type CrashRecord, type CrashVersions } from "../crash/records.js";

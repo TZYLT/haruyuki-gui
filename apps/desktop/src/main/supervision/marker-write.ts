@@ -17,7 +17,7 @@ import {
   writeRuntimeMarker,
   type EngineMarker,
   type RuntimeMarker,
-} from "@haruyuki/core";
+} from "@haruyuki/core/supervision";
 
 import type { SupervisionLog } from "./errors.js";
 import { describeError } from "./errors.js";

@@ -7,9 +7,12 @@
   "exports": {
     ".": "./src/index.ts",
     "./testing": "./src/testing/index.ts",
-    "./bridge": "./src/bridge/index.ts"
+    "./bridge": "./src/bridge/index.ts",
+    "./supervision": "./src/supervision/index.ts",
+    "./engine": "./src/engine/index.ts",
+    "./engine/token": "./src/engine/token.ts"
   },
-  "_comment": "Inherited: this package's owning item had already finished, and the addition is pure -- the root and test-support entries behave exactly as before. It names the producer half of the frame contract, which the package root already documents as public, yet was reachable only by importing the root, which also pulls in the engine transport and its createRequire(import.meta.url) call. JSON has no comments, so the reason lives in this key, the same way the repository's own baseline manifests carry theirs.",
+  "_comment": "Inherited: this package's owning item had already finished, and the additions are pure -- the root and test-support entries behave exactly as before. They name two surfaces the package root already documents as public but exposed only through the root: the producer half of the frame contract, and the supervision marker/evidence/reclaim primitives. Both were reachable only by importing the root, which also pulls in the engine transport -- and that module's first statement needs import.meta.url, which a CommonJS bundle cannot evaluate, so the desktop shell had to patch it with a build-machine absolute path that no user machine has. Naming each surface separately lets a consumer that only sends frames, or only reads markers, keep the transport out of its bundle. JSON has no comments, so the reason lives in this key, the same way the repository's own baseline manifests carry theirs.",
   "scripts": {
     "typecheck": "tsc --noEmit"
   },

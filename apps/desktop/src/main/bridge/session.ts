@@ -15,7 +15,7 @@
  */
 
 import type { Frame } from "@haruyuki/protocol";
-import { createFrameSender, createHandshake, type FrameSender } from "@haruyuki/core";
+import { createFrameSender, createHandshake, type FrameSender } from "@haruyuki/core/bridge";
 
 /** What one session needs from its host. */
 export interface SessionOptions {

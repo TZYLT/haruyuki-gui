@@ -28,7 +28,7 @@
  *   4.6: a failed kill must show a readable reason).
  */
 
-import { isProcessAlive } from "@haruyuki/core";
+import { isProcessAlive } from "@haruyuki/core/supervision";
 
 import type { Logger } from "../log.js";
 import type { StaleCandidate } from "./boot.js";

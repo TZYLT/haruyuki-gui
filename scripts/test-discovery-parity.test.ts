@@ -26,14 +26,15 @@ const GATE = readFileSync(path.join(ROOT, "scripts", "verify.mjs"), "utf8");
 function runnerIncludes() {
   const block = /include:\s*\[([\s\S]*?)\]/.exec(CONFIG);
   if (block === null) throw new Error("vitest.config.mts has no include list");
-  return [...block[1].matchAll(/"([^"]+)"/g)].map((match) => match[1]);
+  const body = block[1] ?? "";
+  return [...body.matchAll(/"([^"]+)"/g)].map((match) => match[1] ?? "");
 }
 
 /** One line per discovery root in the gate, as written in its source. */
 function gateRootLines() {
   const block = /const roots = \[([\s\S]*?)\];/.exec(GATE);
   if (block === null) throw new Error("verify.mjs has no discovery roots");
-  return block[1]
+  return (block[1] ?? "")
     .split("\n")
     .map((line) => line.trim())
     .filter((line) => line.includes("pattern:"));
