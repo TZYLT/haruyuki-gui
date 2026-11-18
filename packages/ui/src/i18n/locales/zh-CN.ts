@@ -110,6 +110,8 @@ export const zhCN = {
   "component.terminal.action.reopen": "重新打开",
   "component.terminal.action.stop": "停止",
   "component.terminal.action.clear": "清屏",
+  "component.terminal.action.clearAll": "清屏（清到底）",
+  "component.terminal.action.clearAllHint": "连视口上方的滚动缓冲一起清掉",
   "component.terminal.action.fontSmaller": "缩小终端字号",
   "component.terminal.action.fontLarger": "放大终端字号",
   "component.terminal.action.more": "更多操作",

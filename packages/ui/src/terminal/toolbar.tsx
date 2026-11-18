@@ -112,6 +112,16 @@ export interface TerminalToolbarProps {
   readonly onStop: () => void;
   /** Asked to clear the screen. */
   readonly onClear: () => void;
+  /**
+   * Asked to clear the viewport *and* the scrollback.
+   *
+   * A second action rather than a second meaning for the first: the plain clear
+   * delegates to the shell on purpose (Ctrl-L semantics), and a shell whose
+   * terminfo does not know the sequence is allowed to do nothing. This one acts on
+   * the emulator, so it works for a shell that never repaints and for a session
+   * that already exited.
+   */
+  readonly onClearAll: () => void;
   /** Asked to change the font size by one step. */
   readonly onFontSize: (next: number) => void;
   /** Asked to open the overflow menu, anchored at the button that was pressed. */
@@ -226,6 +236,7 @@ export function TerminalToolbar({
   onReopen,
   onStop,
   onClear,
+  onClearAll,
   onFontSize,
   onMore,
 }: TerminalToolbarProps): ReactElement {
@@ -247,6 +258,15 @@ export function TerminalToolbar({
         </Button>
         <Button variant="ghost" size="sm" disabled={!available.canClear} onClick={onClear}>
           {t("component.terminal.action.clear")}
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          disabled={!available.canClear}
+          onClick={onClearAll}
+          title={t("component.terminal.action.clearAllHint")}
+        >
+          {t("component.terminal.action.clearAll")}
         </Button>
       </div>
 

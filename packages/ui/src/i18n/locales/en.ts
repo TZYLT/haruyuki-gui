@@ -144,6 +144,8 @@ export const en = {
   "component.terminal.action.reopen": "Reopen",
   "component.terminal.action.stop": "Stop",
   "component.terminal.action.clear": "Clear",
+  "component.terminal.action.clearAll": "Clear scrollback",
+  "component.terminal.action.clearAllHint": "Also removes the lines above the viewport",
   "component.terminal.action.fontSmaller": "Smaller terminal text",
   "component.terminal.action.fontLarger": "Larger terminal text",
   "component.terminal.action.more": "More actions",

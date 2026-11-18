@@ -492,6 +492,19 @@ export function TerminalPanel({
     });
   }, [send, settleCommand, terminalId]);
 
+  /**
+   * Clear the emulator's viewport and scrollback.
+   *
+   * Deliberately not routed through `transmit`: this is the one clear the
+   * emulator owns, so it works for a shell whose terminfo cannot clear (cmd.exe,
+   * `TERM=dumb`) and for a session that already exited. The shell is not told,
+   * because it is not being asked to do anything.
+   */
+  const clearScrollback = useCallback((): void => {
+    setMenuOpen(false);
+    hostRef.current?.terminal.clear();
+  }, []);
+
   /** Apply a paste the exit function has already ruled on. */
   const applyPaste = useCallback(
     (text: string) => {
@@ -744,6 +757,7 @@ export function TerminalPanel({
           setMenuOpen(false);
           transmit(CLEAR_SCREEN);
         }}
+        onClearAll={clearScrollback}
         onFontSize={setFontSize}
         onMore={() => setMenuOpen((open) => !open)}
       />
