@@ -36,8 +36,10 @@
  */
 
 import { build as esbuild } from "esbuild";
-import { cpSync, existsSync, readdirSync, rmSync, statSync } from "node:fs";
+import { fork } from "node:child_process";
+import { cpSync, existsSync, mkdtempSync, readdirSync, rmSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { build as viteBuild, createLogger } from "vite";
 
@@ -56,8 +58,17 @@ const DIST_DIR = path.join(PACKAGE_DIR, "dist");
 /** The extension host entry. Owned by another change; see the file comment. */
 const EXTENSION_ENTRY = path.join(PACKAGE_DIR, "src", "extension.ts");
 
-/** The core child entry. */
-const CORE_ENTRY = path.join(PACKAGE_DIR, "src", "core", "main.ts");
+/**
+ * The core child entry.
+ *
+ * Deliberately the launcher, not `src/core/main.ts`: that module runs the
+ * message loop only when it is handed its three seams, so a bundle built from it
+ * exports a function and then exits. The extension host forks this artifact and
+ * waits for `ready`, and a bundle that never runs makes that wait a boot
+ * timeout. `src/core/entry.ts` is the file that injects the seams and calls the
+ * loop; see its comment for which half of each seam is wired.
+ */
+const CORE_ENTRY = path.join(PACKAGE_DIR, "src", "core", "entry.ts");
 
 /** The Vite config that owns the webview build, kept out of this file. */
 const WEBVIEW_CONFIG = path.join(PACKAGE_DIR, "vite.webview.mts");
@@ -70,6 +81,18 @@ const WS_TARGET_DIR = path.join(DIST_DIR, "node_modules", "ws");
 
 /** Node built-ins the bundle may keep as imports; the runtime provides them. */
 const NODE_EXTERNAL = ["vscode"];
+
+/**
+ * Budget for the core bundle's first answer to `init`.
+ *
+ * Generous because the child has to load a bundle that inlines the engine facade
+ * and the client before it subscribes to the pipe; a working child answers in
+ * tens of milliseconds, so this only bounds a bundle that never subscribes.
+ */
+const CORE_BOOT_TIMEOUT_MS = 15_000;
+
+/** Budget for the self-check's child to exit after `shutdown`. */
+const CORE_STOP_TIMEOUT_MS = 10_000;
 
 /** The identifier an esbuild `define` may point at; a define takes no expression. */
 const MODULE_URL_IDENTIFIER = "__MODULE_URL__";
@@ -206,6 +229,145 @@ async function buildCore() {
 
   reportFile(outfile);
   copyRuntimeDependency();
+  await checkCoreBootstrap(outfile);
+}
+
+/**
+ * Prove the written core bundle actually runs, and that it waits for its host.
+ *
+ * The failure this catches is silent: a bundle whose entry only exports the
+ * message loop loads cleanly, exits 0 with no output, and never answers the
+ * extension host, which then waits out its whole boot budget. Neither a byte
+ * count nor a successful esbuild call can tell that apart from a working child,
+ * so the only usable proof is to run the artifact the way the host runs it.
+ *
+ * Three facts are asserted, in this order:
+ *
+ *   1. the child is still alive after a grace period, so it did not exit on its
+ *      own the way an exports-only bundle does;
+ *   2. it answered the IPC `init` with a message at all, which proves the
+ *      message loop is subscribed to the pipe;
+ *   3. that answer was `status`, not a crash report or silence.
+ *
+ * `ready` is deliberately *not* required. The core only emits it after an engine
+ * has actually started (`src/core/main.ts`, `onInit`), and this check runs with
+ * no engine: the init below names a directory that does not exist, so the honest
+ * expected outcome is a `starting` status followed by a `failed` one. Requiring
+ * `ready` here would be a check that can only pass on a machine with a real
+ * engine installed, which is the kind of "green because it never ran" result
+ * this build step exists to prevent.
+ *
+ * The child is ended with `shutdown`, and any failure fails the whole build
+ * rather than warning.
+ *
+ * @param outfile the freshly written `dist/core.mjs`
+ * @returns {void}
+ */
+async function checkCoreBootstrap(outfile) {
+  // Nothing this check writes may land in `dist/`: the token file is a secret
+  // and the four roots are throwaway, so they go in a temp tree that is removed
+  // before the build reports.
+  const scratch = mkdtempSync(path.join(tmpdir(), "haruyuki-core-selfcheck-"));
+
+  const child = fork(outfile, {
+    // The child is a Node ESM artifact, so it is started the way the host
+    // starts it: this binary, no shell, an IPC slot as the fourth stdio slot.
+    stdio: ["ignore", "pipe", "pipe", "ipc"],
+    cwd: DIST_DIR,
+  });
+
+  let stderr = "";
+
+  child.stderr?.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  const settled = new Promise((resolve) => {
+    child.once("spawn", () => {
+      child.send({
+        kind: "init",
+        paths: {
+          userData: path.join(scratch, "userData"),
+          logs: path.join(scratch, "logs"),
+          cache: path.join(scratch, "cache"),
+          temp: scratch,
+        },
+        cwd: DIST_DIR,
+        locale: "en",
+        engine: {
+          kind: "external",
+          dir: path.join(scratch, "missing-engine"),
+          bundlePath: path.join(scratch, "missing-engine", "haruyuki.js"),
+        },
+        expectedVersion: "0.0.0",
+      });
+
+      // The first answer is the proof that the loop is running; a bundle that
+      // only exports never sends one and the timer below is what reports it.
+      const timer = setTimeout(() => {
+        resolve(null);
+      }, CORE_BOOT_TIMEOUT_MS);
+
+      child.once("message", (message) => {
+        clearTimeout(timer);
+        resolve(message);
+      });
+    });
+  });
+
+  const first = await settled;
+
+  // The child is ended before it is judged, so a failed check never leaves a
+  // process behind. `shutdown` is the documented stop path.
+  if (child.exitCode === null) {
+    try {
+      child.send({ kind: "shutdown" });
+    } catch {
+      // A child that already closed its channel is stopped below.
+    }
+  }
+
+  const stopped = new Promise((resolve) => {
+    const timer = setTimeout(resolve, CORE_STOP_TIMEOUT_MS);
+
+    child.once("exit", () => {
+      clearTimeout(timer);
+      resolve();
+    });
+  });
+
+  await stopped;
+
+  if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+
+  // Always: the engine wrote a token file in here, and a build must not leave a
+  // secret behind, even in a scratch directory.
+  rmSync(scratch, { recursive: true, force: true });
+
+  const tail = stderr.trim() === "" ? "" : `; stderr: ${stderr.trim()}`;
+
+  if (first === null) {
+    fail(
+      "core",
+      `${relative(outfile)} does not bootstrap: no answer to init within ` +
+        `${CORE_BOOT_TIMEOUT_MS}ms${tail}`,
+    );
+
+    return;
+  }
+
+  if (first?.kind !== "status") {
+    fail(
+      "core",
+      `${relative(outfile)} answered init with ${JSON.stringify(first?.kind)} instead of a status${tail}`,
+    );
+
+    return;
+  }
+
+  say(
+    `  ${relative(outfile)}  bootstraps: answered ${JSON.stringify(first.phase)} and stayed resident`,
+  );
 }
 
 /**
