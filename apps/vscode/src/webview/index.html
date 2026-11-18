@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Haruyuki</title>
+    <!--
+      The webview HTML template. The bundler treats this file as the entry, and
+      the extension host serves it into a VS Code webview panel; everything
+      visible comes from the bundle, so the document has no inline script and no
+      inline style of its own.
+
+      No CSP meta tag here on purpose. The panel's Content-Security-Policy is
+      injected by the host side that creates the webview, because that is the
+      only place that knows the panel's own origin and its resource roots; a
+      second copy written here would silently diverge from it, and a webview
+      document that ships its own policy cannot be widened when the host later
+      needs a new source.
+
+      The `#root` id is the contract with the entry module (`main.tsx`); it is
+      the only element this document names.
+    -->
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./main.tsx"></script>
+  </body>
+</html>
