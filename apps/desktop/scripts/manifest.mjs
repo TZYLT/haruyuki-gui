@@ -6,7 +6,12 @@
  * one for people reading a Release page and one for `sha256sum -c`. Two
  * producers would eventually disagree, and the disagreement would be invisible
  * until a user's verification failed, so both come from this file and the
- * checksum table is asserted to equal the body table before either is written.
+ * body table is parsed back out of the markdown before either is written.
+ *
+ * The manifest is judged as something a person can act on, not as a record:
+ * the release body and the upload steps are part of it for that reason. A
+ * document that lists hashes but not which files to attach leaves the reader to
+ * decide, and that decision is the one thing it was meant to save them.
  *
  * Usage:
  *   node apps/desktop/scripts/manifest.mjs [--dirty] [--linux-not-built=<reason>]
@@ -97,6 +102,280 @@ export function hashTable(artifacts) {
   return ["| 文件 | SHA-256 |", "|---|---|", ...rows].join("\n");
 }
 
+/**
+ * Read the hash table back out of a finished release body.
+ *
+ * The notes are parsed from the text that would actually be pasted into GitHub,
+ * not compared against the array they were rendered from: the claim a reader
+ * cares about is about the markdown, and a rendering bug would keep an
+ * array-to-array comparison green.
+ *
+ * @param {string} markdown
+ * @returns {{ file: string, sha256: string }[]}
+ */
+export function parseHashTable(markdown) {
+  const rows = [];
+  for (const line of markdown.split("\n")) {
+    const match = /^\|\s*`([^`]+)`\s*\|\s*`([0-9a-f]{64})`\s*\|\s*$/.exec(line.trim());
+    if (match !== null) rows.push({ file: match[1], sha256: match[2] });
+  }
+  return rows;
+}
+
+/**
+ * The files a user must attach to the Release.
+ *
+ * The two documents are on the list because a downloader needs something to
+ * check the download against; leaving them off would describe an upload that
+ * cannot be verified afterwards.
+ *
+ * @param {string[]} artifactFiles
+ * @returns {string[]}
+ */
+export function uploadedFiles(artifactFiles) {
+  return [...artifactFiles, ...WRITTEN_DOCUMENTS];
+}
+
+/**
+ * How to publish this build, as the four things a person actually does.
+ *
+ * Written out rather than pointed at by name: a list that says "upload the
+ * artifacts" leaves the reader to decide which files those are, and that
+ * decision is exactly what this document exists to remove. The tag is created
+ * locally and not pushed - publishing is the user's step, and a pipeline that
+ * pushed would be doing it for them.
+ *
+ * @param {{ version: string, files: string[] }} input
+ * @returns {string[]}
+ */
+export function uploadSteps({ version, files }) {
+  const tag = `v${version}`;
+  return [
+    `git tag -a ${tag} -m "Haruyuki ${version}"（用户在本地建，不推送）`,
+    `GitHub → Releases → Draft a new release → 选择 tag ${tag}`,
+    `上传：${files.join("、")}`,
+    "正文粘贴 releaseNotes",
+  ];
+}
+
+/**
+ * The file names an upload step list tells a person to attach.
+ *
+ * Read back from the rendered steps rather than taken from the array they were
+ * rendered from, so a step list that names a file nobody produced is caught by
+ * comparing two different sources instead of by trusting one.
+ *
+ * @param {string[]} steps
+ * @returns {string[]}
+ */
+export function parseUploadedFiles(steps) {
+  const line = steps.find((step) => step.startsWith("上传："));
+  if (line === undefined) return [];
+  return line
+    .slice("上传：".length)
+    .split("、")
+    .map((name) => name.trim())
+    .filter((name) => name.length > 0);
+}
+
+/** The two documents this script writes, which ride along with the artifacts. */
+const WRITTEN_DOCUMENTS = ["SHA256SUMS", "release-manifest.json"];
+
+/** Inputs that cannot describe a build. Not a failed build, so not exit 1. */
+export class ManifestInconsistency extends Error {}
+
+/**
+ * The lines `SHA256SUMS` contains, from the artifacts alone.
+ *
+ * @param {{ file: string, sha256: string }[]} artifacts
+ * @returns {string[]}
+ */
+export function checksumLines(artifacts) {
+  return artifacts.map((artifact) => `${artifact.sha256}  ${artifact.file}`);
+}
+
+/**
+ * Fail unless the rendered body lists exactly the files and digests in the
+ * checksum file.
+ *
+ * The body is parsed back from the markdown a person would paste, never
+ * compared against the array it was rendered from: that array agreeing with
+ * itself is what a constant-true assertion looks like, and it stays green when
+ * the rendering is wrong.
+ *
+ * @param {string} markdown
+ * @param {string[]} lines
+ */
+export function assertSameHashes(markdown, lines) {
+  const fromBody = parseHashTable(markdown).map((row) => `${row.sha256}  ${row.file}`);
+  if (fromBody.join("\n") !== lines.join("\n")) {
+    throw new ManifestInconsistency(
+      `the release body and SHA256SUMS disagree\n` +
+        `SHA256SUMS:\n${lines.join("\n")}\nrelease body:\n${fromBody.join("\n")}`,
+    );
+  }
+}
+
+/**
+ * Fail unless every file the upload steps name is a file this build produced.
+ *
+ * The steps are the part a person follows literally, and a name in them that
+ * nothing produces sends them hunting for a file after the build was already
+ * declared successful.
+ *
+ * @param {string[]} steps
+ * @param {string[]} produced
+ */
+export function assertUploadList(steps, produced) {
+  const available = new Set(produced);
+  const missing = parseUploadedFiles(steps).filter((file) => !available.has(file));
+  if (missing.length > 0) {
+    throw new ManifestInconsistency(
+      `the upload steps name files this build did not produce: ${missing.join(", ")}`,
+    );
+  }
+}
+
+/**
+ * Everything the manifest says, from the facts about one finished build.
+ *
+ * Pure on purpose: the two claims that can silently be false - the body table
+ * matching `SHA256SUMS`, and the upload steps naming files that were produced -
+ * can then be exercised without a packaged tree.
+ *
+ * @param {{
+ *   packageJson: Record<string, unknown>,
+ *   rootJson: Record<string, unknown>,
+ *   described: { platform: string, file: string, bytes: number, sha256: string }[],
+ *   trees: string[],
+ *   platforms: Record<string, { state: string, builtIn?: string, reason?: string }>,
+ *   engine: { version: string, source: unknown, lockSha256: string | null },
+ *   commit: string,
+ *   builtAt: string,
+ *   dirty: boolean,
+ * }} facts
+ * @returns {{ checksumText: string, manifest: Record<string, unknown> }}
+ */
+export function buildDocuments(facts) {
+  const version = String(facts.packageJson.version ?? "");
+  if (version.length === 0) {
+    // The version is the one thing users quote back at us, and it is the one
+    // thing this script only reads. A blank one would render a tag of "v" and a
+    // title of "Haruyuki ", both of which read like a real release.
+    throw new ManifestInconsistency("apps/desktop/package.json has no version to release under");
+  }
+  const productName = String(facts.packageJson.productName ?? "Haruyuki");
+
+  const lines = checksumLines(facts.described);
+  const checksumText = `${lines.join("\n")}\n`;
+
+  const notes = releaseNotes({
+    productName,
+    version,
+    artifacts: facts.described,
+    platforms: facts.platforms,
+  });
+  assertSameHashes(notes, lines);
+
+  const files = uploadedFiles(facts.described.map((artifact) => artifact.file));
+  const steps = uploadSteps({ version, files });
+  assertUploadList(steps, files);
+
+  const manifest = {
+    manifestVersion: 1,
+    appVersion: facts.packageJson.version,
+    productName,
+    builtAt: facts.builtAt,
+    tag: `v${version}`,
+    commit: facts.commit,
+    dirty: facts.dirty,
+    toolchain: {
+      node: process.version,
+      pnpm: facts.rootJson.packageManager ?? "unknown",
+      electron: facts.rootJson.devDependencies?.electron ?? "unknown",
+      electronBuilder: facts.rootJson.devDependencies?.["electron-builder"] ?? "unknown",
+    },
+    platforms: facts.platforms,
+    artifacts: facts.described,
+    trees: facts.trees,
+    engine: facts.engine,
+    releaseNotes: notes,
+    uploadSteps: steps,
+  };
+
+  return { checksumText, manifest };
+}
+
+/**
+ * The release body, as markdown a person will read before downloading.
+ *
+ * It carries the four things a reader cannot get from the asset names: what
+ * this is, what to check the download against, which platforms it covers and
+ * what has not been verified about them. The platform line is taken from the
+ * recorded states rather than from "the artifacts present", so a platform that
+ * was not built says so instead of quietly disappearing from the body.
+ *
+ * @param {{
+ *   productName: string,
+ *   version: string,
+ *   artifacts: { file: string, bytes: number, sha256: string }[],
+ *   platforms: Record<string, { state: string, builtIn?: string, reason?: string }>,
+ * }} input
+ * @returns {string}
+ */
+export function releaseNotes({ productName, version, artifacts, platforms }) {
+  const totalMb = (
+    artifacts.reduce((sum, artifact) => sum + artifact.bytes, 0) /
+    1024 /
+    1024
+  ).toFixed(1);
+  const platformLines = Object.entries(platforms).map(([platform, value]) => {
+    if (value.state === "built")
+      return `- \`${platform}\`：已产出（${value.builtIn ?? "unknown"}）`;
+    if (value.state === "not-built")
+      return `- \`${platform}\`：本版无产物（${value.reason ?? "原因未记录"}）`;
+    return `- \`${platform}\`：本版不需要（${value.reason ?? "not-required"}）`;
+  });
+
+  // Only listed where it can apply: a claim about Linux that no Linux artifact
+  // exists to carry it would make the notes longer and truer of nothing. The
+  // Windows entry stays unconditional, because every build is unsigned.
+  const unverified = [
+    "本包未签名：Windows 首次运行会被 SmartScreen 拦，需点「更多信息 → 仍要运行」。这是预期摩擦，不是故障。",
+    "仅在打包机上换目录验证过启动，没有在另一台干净的 Windows 机器上验证过。",
+  ];
+  if (platforms.linux?.state === "built") {
+    unverified.push(
+      "Linux 侧只验到进程存活与产物可解，窗口是否真的画出来未验证（构建容器里没有截图工具）。",
+    );
+    unverified.push("Linux 侧双击运行未验证（构建容器里没有桌面环境与 FUSE）。");
+  }
+
+  return [
+    `# ${productName} ${version}`,
+    "",
+    "产物来自同一份构建配置，两个平台的包挂在同一个 tag 下。",
+    "",
+    "## 校验下载",
+    "",
+    "下面这张表与随附的 `SHA256SUMS` 逐行相同，两处都能复算：",
+    "Linux 用 `sha256sum -c SHA256SUMS`，Windows 用 `Get-FileHash` 逐行比对。",
+    "",
+    hashTable(artifacts),
+    "",
+    `合计 ${String(artifacts.length)} 个文件，约 ${totalMb} MiB。`,
+    "",
+    "## 平台",
+    "",
+    ...platformLines,
+    "",
+    "## 本版未验证项",
+    "",
+    ...unverified.map((line) => `- ${line}`),
+    "",
+  ].join("\n");
+}
+
 /** @param {string[]} argv */
 function parseArgs(argv) {
   const options = { dirty: false, linuxNotBuilt: null };
@@ -131,6 +410,22 @@ function parseArgs(argv) {
 async function main() {
   const options = parseArgs(process.argv.slice(2));
 
+  try {
+    return await describeBuild(options);
+  } catch (error) {
+    if (error instanceof ManifestInconsistency) {
+      process.stderr.write(`refusing to write: ${error.message}\n`);
+      return 2;
+    }
+    throw error;
+  }
+}
+
+/**
+ * @param {{ dirty: boolean, linuxNotBuilt: string | null }} options
+ * @returns {Promise<number>} exit code
+ */
+async function describeBuild(options) {
   if (!existsSync(RELEASE_DIR)) {
     process.stderr.write(`no ${RELEASE_DIR}: nothing was built\n`);
     return 2;
@@ -214,34 +509,12 @@ async function main() {
     }
   }
 
-  const checksumLines = described.map((artifact) => `${artifact.sha256}  ${artifact.file}`);
-  const checksumText = `${checksumLines.join("\n")}\n`;
-  const bodyTable = hashTable(described);
-
-  // The assertion this file exists for: two formats, one set of hashes.
-  const fromBody = described.map((artifact) => `${artifact.sha256}  ${artifact.file}`).join("\n");
-  if (fromBody !== checksumLines.join("\n")) {
-    process.stderr.write("internal: the release-body table and SHA256SUMS disagree\n");
-    return 2;
-  }
-
-  const manifest = {
-    manifestVersion: 1,
-    appVersion: packageJson.version,
-    productName: packageJson.productName ?? "Haruyuki",
-    builtAt: new Date().toISOString(),
-    tag: `v${String(packageJson.version)}`,
-    commit: git(["rev-parse", "--short", "HEAD"]),
-    dirty: options.dirty || git(["status", "--porcelain"]).length > 0,
-    toolchain: {
-      node: process.version,
-      pnpm: rootJson.packageManager ?? "unknown",
-      electron: rootJson.devDependencies?.electron ?? "unknown",
-      electronBuilder: rootJson.devDependencies?.["electron-builder"] ?? "unknown",
-    },
-    platforms,
-    artifacts: described,
+  const { checksumText, manifest } = buildDocuments({
+    packageJson,
+    rootJson,
+    described,
     trees,
+    platforms,
     engine: {
       version: engineVersion,
       // `source` is what the lock says it was built from, not what this script
@@ -249,8 +522,10 @@ async function main() {
       source: engineHonest ? { kind: "npm", spec: `haruyuki@${engineVersion}` } : null,
       lockSha256: lockSha,
     },
-    releaseNotes: `Haruyuki ${String(packageJson.version)}\n\n${bodyTable}\n`,
-  };
+    commit: git(["rev-parse", "--short", "HEAD"]),
+    builtAt: new Date().toISOString(),
+    dirty: options.dirty || git(["status", "--porcelain"]).length > 0,
+  });
 
   await writeFile(CHECKSUMS_FILE, checksumText, "utf8");
   await writeFile(MANIFEST_FILE, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
@@ -267,6 +542,8 @@ async function main() {
   }
   process.stdout.write(`\nwrote ${path.relative(REPO_ROOT, MANIFEST_FILE)}\n`);
   process.stdout.write(`wrote ${path.relative(REPO_ROOT, CHECKSUMS_FILE)}\n`);
+  process.stdout.write(`\nupload\n`);
+  for (const line of manifest.uploadSteps) process.stdout.write(`  ${line}\n`);
 
   const unstated = Object.entries(platforms).filter(([, value]) => value.reason === "unstated");
   if (unstated.length > 0) {
@@ -281,11 +558,16 @@ async function main() {
   return 0;
 }
 
-main()
-  .then((code) => {
-    process.exitCode = code;
-  })
-  .catch((error) => {
-    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-    process.exitCode = 1;
-  });
+// Only when run as a command: importing this file must not write anything.
+// The tests import its functions, and a module that rewrites `release/` on
+// import makes every test run a small, unnoticed release.
+if (process.argv[1] !== undefined && path.resolve(process.argv[1]) === SCRIPT_PATH) {
+  main()
+    .then((code) => {
+      process.exitCode = code;
+    })
+    .catch((error) => {
+      process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+      process.exitCode = 1;
+    });
+}

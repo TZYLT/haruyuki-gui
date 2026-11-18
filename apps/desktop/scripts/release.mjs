@@ -22,15 +22,22 @@
  * Exit codes:
  *   0  every requested target succeeded, or was skipped for lack of a capability
  *   1  a target was attempted and failed
- *   2  a prerequisite failed: no manifest, nothing half-written left behind
+ *   2  nothing was attempted: a prerequisite failed, the command line was bad,
+ *      or this version already carries a tag
  *   3  the only requested target cannot be done on this machine
  * 1 and 2 are failures; 3 is also a failure, it just reads differently.
+ *
+ * The three sources of 2 share a code but not a first line: each writes one of
+ * the fixed prefixes in `ERROR_PREFIX`, because "nothing was attempted" has
+ * three causes and a check that only reads the exit code cannot tell them apart.
+ * The version guard runs before every step, so a refusal costs nothing and
+ * leaves nothing behind.
  */
 
 import { existsSync } from "node:fs";
 import { readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
@@ -54,10 +61,16 @@ const USAGE = `usage: node apps/desktop/scripts/release.mjs [options]
   --linux-not-built=<reason>  why no AppImage was produced; see manifest.mjs
   -h, --help       this text
 
+A version that is already a git tag is refused before any step runs: two patches
+sharing a number are indistinguishable where users download them. A leftover
+release/ document for the same version is only a warning, because the same
+command has to be re-runnable.
+
 exit codes
   0  every requested target succeeded, or was skipped for lack of a capability
   1  a target was attempted and failed
-  2  a prerequisite failed (nothing half-written is left behind)
+  2  nothing was attempted: a prerequisite failed, the command line was bad, or
+     this version already carries a tag. The first line says which
   3  the only requested target cannot be done on this machine`;
 
 /**
@@ -115,6 +128,169 @@ export function parseArgs(argv) {
 
 /** A bad command line, as opposed to a failed step. */
 export class UsageError extends Error {}
+
+/**
+ * The first line of every message that ends the run with exit code 2.
+ *
+ * Three unrelated things share that code, and all of them mean "nothing was
+ * attempted". A caller that only reads the exit code cannot tell a typo from a
+ * broken `install` from a version that is already published, and the three want
+ * different reactions - so the code stays the same and the prefix does not.
+ *
+ * The version conflict splits again, into "the tag is there" and "git could not
+ * say whether it is": the second is a broken checkout, not a published number.
+ */
+export const ERROR_PREFIX = {
+  /** `install`/`fetch` failed: a prerequisite of the build is missing. */
+  prerequisite: "error: prerequisite failed",
+  /** The command line cannot be acted on. */
+  usage: "error: usage",
+  /** `git tag v<version>` already exists. */
+  tagTaken: "error: version conflict: tag exists",
+  /** The tag list could not be read, so the answer is unknown. */
+  tagUnknown: "error: version conflict: tag list unreadable",
+};
+
+/**
+ * The version this build would be a release of, from the one place that owns it.
+ *
+ * @param {string} [desktopDir]
+ * @returns {Promise<string|null>} null when package.json does not name a version
+ */
+export async function readAppVersion(desktopDir = DESKTOP_DIR) {
+  const raw = JSON.parse(await readFile(path.join(desktopDir, "package.json"), "utf8"));
+  return typeof raw.version === "string" && raw.version.length > 0 ? raw.version : null;
+}
+
+/**
+ * Is `tag` already a local tag?
+ *
+ * Separate from the guard below so the guard can be judged without creating a
+ * tag: a test that has to mutate the repository to prove a refusal is a test
+ * nobody runs twice.
+ *
+ * @param {string} tag
+ * @param {string} [cwd]
+ * @returns {boolean|null} null when git cannot answer, which is not "no"
+ */
+export function localTagExists(tag, cwd = REPO_ROOT) {
+  try {
+    // A directory that is not a checkout is an expected answer here, not an
+    // error to show the user: git's own message would read like a crash.
+    const listed = execFileSync("git", ["tag", "--list", tag], {
+      cwd,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    return listed.split("\n").some((line) => line.trim() === tag);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Why this version must not be packaged, or null when it may be.
+ *
+ * A tag that already carries this number means the number has been published,
+ * so a second package under it is indistinguishable from the first one at the
+ * place users download from - and no checksum can tell them apart afterwards.
+ * That is the only authority: an old `release/` manifest is the residue of a
+ * previous build, not a record of publication, so it never refuses anything.
+ *
+ * Refusal is exit code 2 rather than 1 or 3: nothing was attempted, so there is
+ * no failed target and no manifest to write, which is exactly what 2 means
+ * here. 1 would claim a build ran and broke; 3 would claim this machine lacks
+ * the capability, and any machine with git has it.
+ *
+ * The answer "git could not say" also refuses: the check exists to make a
+ * silent re-release impossible, and "unknown" has to be louder than "no", not
+ * quieter. It is a different refusal from a tag that exists - one means bump the
+ * version, the other means fix the checkout - so it carries its own prefix.
+ *
+ * @param {() => Promise<string|null>} [getVersion]
+ * @param {(tag: string) => boolean|null} [tagExists]
+ * @returns {Promise<{prefix: string, message: string}|null>} refusal, or null
+ */
+export async function versionConflict(getVersion = readAppVersion, tagExists = localTagExists) {
+  const version = await getVersion();
+  if (version === null) {
+    // No version is a prerequisite this run cannot invent: the tag to compare
+    // against and the number on the package both come from that one field.
+    return {
+      prefix: ERROR_PREFIX.prerequisite,
+      message:
+        "apps/desktop/package.json has no version, so there is no tag to compare against " +
+        "and no honest number to package under. Nothing was built.",
+    };
+  }
+
+  const tag = `v${version}`;
+  const taken = tagExists(tag);
+
+  if (taken === false) return null;
+  if (taken === true) {
+    return {
+      prefix: ERROR_PREFIX.tagTaken,
+      message:
+        `git tag ${tag} already exists, so ${version} has been published. Refusing to build ` +
+        `a second package under the same number: a user downloading either one could not tell ` +
+        `them apart, and no checksum would say which is which.\n` +
+        `Bump "version" in apps/desktop/package.json and run again. Nothing was built.`,
+    };
+  }
+  return {
+    prefix: ERROR_PREFIX.tagUnknown,
+    message:
+      `could not read the tag list from git, so it is unknown whether ${tag} already exists. ` +
+      `Refusing rather than packaging a version that may already be taken; ` +
+      `run the command from a checkout. Nothing was built.`,
+  };
+}
+
+/**
+ * A note about the build `release/` still holds, or null when there is none.
+ *
+ * A second run of the same version is not an error - the same command has to be
+ * re-runnable, and refusing would make it not so. But the leftover documents
+ * describe an older build, and silently overwriting them is how somebody
+ * attaches yesterday's checksums to today's package. So they are named, with
+ * the three fields that say which build they are, and the run continues.
+ *
+ * @param {string} [version] the version to compare against; read from
+ *   `package.json` next to `releaseDir` when omitted
+ * @param {string} [releaseDir]
+ * @returns {Promise<{message: string}|{unreadable: string}|null>}
+ */
+export async function previousBuildNote(version, releaseDir = path.join(DESKTOP_DIR, "release")) {
+  // The version is read here rather than required from the caller: a default
+  // that silently receives nothing would compare `appVersion` against
+  // `undefined` and stay quiet for every leftover document, which is the one
+  // failure this note exists to prevent.
+  const wanted = version ?? (await readAppVersion(path.dirname(releaseDir)));
+  const file = path.join(releaseDir, "release-manifest.json");
+  if (!existsSync(file)) return null;
+
+  /** @type {any} */
+  let old;
+  try {
+    old = JSON.parse(await readFile(file, "utf8"));
+  } catch (error) {
+    // A half-written manifest is exactly the case where saying nothing is
+    // worst: the next step is about to overwrite it.
+    return { unreadable: `${file} exists but cannot be read (${String(error)})` };
+  }
+
+  if (String(old?.appVersion) !== wanted) return null;
+
+  return {
+    message:
+      `release/release-manifest.json already describes ${String(wanted)}: ` +
+      `builtAt=${old?.builtAt ?? "unknown"} commit=${old?.commit ?? "unknown"} ` +
+      `dirty=${old?.dirty === undefined ? "unknown" : String(old.dirty)}. ` +
+      `This is a previous local build, not a publication, so it does not stop this run - ` +
+      `but its SHA256SUMS must not be attached to the new package.`,
+  };
+}
 
 /**
  * Run a step, printing what it is and how long it took.
@@ -223,10 +399,36 @@ async function pruneBinDirectories(root) {
  * @param {{ skipInstall: boolean, skipFetch: boolean }} options
  * @returns {Promise<number>} exit code
  */
-async function roundOne(options) {
+/**
+ * Print a failure under one of the fixed prefixes, so the source of exit code 2
+ * is readable from the log rather than only inferable.
+ *
+ * @param {string} prefix
+ * @param {string} message
+ */
+function fail(prefix, message) {
+  process.stderr.write(`${prefix}\n${message}\n`);
+}
+
+/**
+ * Round 1: everything up to and including the runtime lock.
+ *
+ * `spawn` is a parameter so a missing prerequisite can be reached without
+ * actually breaking the machine: the prefix this path writes is the only thing
+ * that tells "install failed" from "the version is taken", and a branch nobody
+ * can reach in a test is a branch nobody would notice going quiet.
+ *
+ * @param {{ skipInstall: boolean, skipFetch: boolean }} options
+ * @param {(command: string, args: string[], cwd: string) => {status: number|null}} [spawn]
+ * @returns {Promise<number>} exit code
+ */
+export async function roundOne(options, spawn = run) {
   if (!options.skipInstall) {
-    const ok = step("install", () => run("pnpm", ["install", "--frozen-lockfile"], REPO_ROOT));
-    if (!ok) return 2;
+    const ok = step("install", () => spawn("pnpm", ["install", "--frozen-lockfile"], REPO_ROOT));
+    if (!ok) {
+      fail(ERROR_PREFIX.prerequisite, "pnpm install did not finish; nothing can be built on it.");
+      return 2;
+    }
   }
 
   const lockFile = path.join(DESKTOP_DIR, "runtime-lock.json");
@@ -234,15 +436,21 @@ async function roundOne(options) {
 
   if (!options.skipFetch) {
     const ok = step("fetch engine", () =>
-      run(
+      spawn(
         process.execPath,
         ["scripts/engine/fetch-engine.mjs", "--out", ENGINE_ARTIFACT],
         REPO_ROOT,
       ),
     );
-    if (!ok) return 2;
+    if (!ok) {
+      fail(ERROR_PREFIX.prerequisite, `could not fetch the engine into ${ENGINE_ARTIFACT}.`);
+      return 2;
+    }
   } else if (!existsSync(path.join(ENGINE_ARTIFACT, "package", "haruyuki.js"))) {
-    process.stderr.write(`--skip-fetch given but ${ENGINE_ARTIFACT} has no package\n`);
+    fail(
+      ERROR_PREFIX.prerequisite,
+      `--skip-fetch was given but ${ENGINE_ARTIFACT} has no package to reuse.`,
+    );
     return 2;
   }
 
@@ -256,9 +464,12 @@ async function roundOne(options) {
   const electronDist = path.join(REPO_ROOT, "node_modules", "electron", "dist");
   if (!existsSync(electronDist)) {
     const okElectron = step("electron binary", () =>
-      run(process.execPath, ["node_modules/electron/install.js"], REPO_ROOT),
+      spawn(process.execPath, ["node_modules/electron/install.js"], REPO_ROOT),
     );
-    if (!okElectron) return 2;
+    if (!okElectron) {
+      fail(ERROR_PREFIX.prerequisite, "the electron binary could not be downloaded.");
+      return 2;
+    }
   }
 
   const deref = await dereferenceTree(path.join(ENGINE_ARTIFACT, "package"));
@@ -416,25 +627,70 @@ async function roundTwo(options) {
   return 0;
 }
 
-async function main() {
+/**
+ * The whole command.
+ *
+ * The guard and both rounds are parameters so the refusal can be judged without
+ * a tag and without packaging anything: a check that can only be exercised by
+ * mutating the repository is a check that stops being exercised.
+ *
+ * @param {string[]} argv
+ * @param {{
+ *   versionConflict?: () => Promise<{prefix: string, message: string}|null>,
+ *   previousBuildNote?: () => Promise<{message: string}|{unreadable: string}|null>,
+ *   roundOne?: (options: object) => Promise<number>,
+ *   roundTwo?: (options: object) => Promise<number>,
+ *   stderr?: (text: string) => void,
+ *   stdout?: (text: string) => void,
+ * }} [deps]
+ * @returns {Promise<number>} exit code
+ */
+export async function runPipeline(argv, deps = {}) {
+  const stderr = deps.stderr ?? ((text) => process.stderr.write(text));
+  const stdout = deps.stdout ?? ((text) => process.stdout.write(text));
+
   let options;
   try {
-    options = parseArgs(process.argv.slice(2));
+    options = parseArgs(argv);
   } catch (error) {
     if (error instanceof UsageError) {
-      process.stderr.write(`${error.message}\n\n${USAGE}\n`);
+      stderr(`${ERROR_PREFIX.usage}\n${error.message}\n\n${USAGE}\n`);
       return 2;
     }
     throw error;
   }
 
-  const code = await roundOne(options);
+  // Before any step, and therefore before `electron-builder` can leave a file in
+  // release/: a refusal has to be cheap and has to leave no trace.
+  const conflict = await (deps.versionConflict ?? versionConflict)();
+  if (conflict !== null) {
+    stderr(`${conflict.prefix}\n${conflict.message}\n`);
+    return 2;
+  }
+
+  // A leftover document for this same version is a warning, never a refusal:
+  // the same command has to be re-runnable. It is named rather than silently
+  // overwritten, because yesterday's checksums attached to today's package is
+  // the one mistake a reader cannot detect from the files.
+  const note = await (deps.previousBuildNote ?? previousBuildNote)();
+  if (note !== null) {
+    stderr(
+      "unreadable" in note
+        ? `warning: ${note.unreadable}; it will be overwritten by this run.\n`
+        : `warning: ${note.message}\n`,
+    );
+  }
+
+  const code = await (deps.roundOne ?? ((options) => roundOne(options)))(options);
   if (code !== 0) return code;
 
   if (options.skipBundle) return 0;
 
-  const manifest = await roundTwo(options);
-  return manifest;
+  return (deps.roundTwo ?? ((options) => roundTwo(options)))(options);
+}
+
+async function main() {
+  return runPipeline(process.argv.slice(2));
 }
 
 if (process.argv[1] !== undefined && path.resolve(process.argv[1]) === SCRIPT_PATH) {
