@@ -17,7 +17,7 @@ import { app, shell, type IpcMain } from "electron";
 import path from "node:path";
 
 import { registerAboutIpc } from "./about-ipc.js";
-import { openAboutWindow } from "./about-window.js";
+import { closeAboutWindow, openAboutWindow, type AboutWindowDeps } from "./about-window.js";
 import type { Logger } from "./log.js";
 import { computeRuntimeLayout } from "./runtime/layout.js";
 
@@ -35,6 +35,15 @@ export interface AboutInstallDeps {
   /** The bundle the engine is running now, for the "where did it come from" answer. */
   readonly liveBundlePath: () => string | null;
   readonly logger?: Logger;
+  /**
+   * Test seam for the window opener.
+   *
+   * Production never passes it: the window is this module's own collaborator, and
+   * an injected one would be a second way to create a second window. A test uses
+   * it to observe that the menu entry reached the opener at all -- the failure
+   * that motivated adding it was a click that silently did nothing.
+   */
+  readonly openWindow?: (deps: AboutWindowDeps) => Promise<unknown>;
 }
 
 /** What the composition root keeps: the menu's callback and the teardown. */
@@ -43,10 +52,13 @@ export interface AboutInstall {
   open(): void;
   /** Remove the two channels and close the window. */
   dispose(): void;
-}
-
-/**
+} /**
  * Install the about surface and hand back its one entry point.
+ *
+ * The teardown is registered here rather than returned to `main.ts`, because
+ * `main.ts` is at its size gate and this surface's lifetime is its own concern:
+ * its handlers belong to this process and its window to this session, and both
+ * have to go when the process does.
  *
  * @param deps the composition root's facts
  * @returns the menu callback and the teardown
@@ -99,7 +111,9 @@ export function installAbout(deps: AboutInstallDeps): AboutInstall {
 
   return {
     open: () => {
-      void openAboutWindow({
+      const open = deps.openWindow ?? openAboutWindow;
+
+      void open({
         here: deps.here,
         locale: deps.locale(),
         theme: deps.theme().mode,
@@ -114,7 +128,42 @@ export function installAbout(deps: AboutInstallDeps): AboutInstall {
       });
     },
     dispose: () => {
+      // Both halves: the handlers belong to this process, the window to this
+      // user's session. Leaving the window open after its channels are gone
+      // would show a page whose buttons all fail -- the worst of the two.
+      closeAboutWindow();
       dispose();
     },
   };
+}
+
+/**
+ * How this module asks to be torn down.
+ *
+ * A callback rather than an `app.on` call inside this file: the about surface is
+ * one of several things the quit path has to release, and the composition root
+ * owns the order. Taking the hook keeps this module free of a second quit path.
+ */
+export interface QuitHook {
+  /** Register a callback to run before the process exits. */
+  readonly onQuit: (callback: () => void) => void;
+}
+
+/**
+ * Install the surface and tear it down when the process quits.
+ *
+ * One call from the composition root, which is why this exists: the root is at
+ * its size gate, and "when does this go away" is a fact this module owns.
+ *
+ * @param deps the composition root's facts plus the quit hook
+ * @returns the surface, for the menu
+ */
+export function installAboutOnQuit(deps: AboutInstallDeps & QuitHook): AboutInstall {
+  const about = installAbout(deps);
+
+  deps.onQuit(() => {
+    about.dispose();
+  });
+
+  return about;
 }
