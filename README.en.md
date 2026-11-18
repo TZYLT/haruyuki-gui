@@ -14,11 +14,11 @@ This section and the next describe **what you can see once you have the package*
 
 ### Our Goals
 
-| Goal | Meaning |
-| ---- | ------- |
-| **All-in-one, easy-to-use desktop application** | Cover the full capabilities needed for daily use, rather than a window that can only chat; its derivative plugins will also strive to do the same. |
-| **Fully local and self-contained** | No dependence on any cloud service. State, data, and configuration all reside on your own machine. |
-| **Good visual design and visualization** | The interface itself must be good-looking and the information understandable—turning a powerful runtime into an application people are willing to open every day. |
+| Goal                                            | Meaning                                                                                                                                                           |
+| ----------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **All-in-one, easy-to-use desktop application** | Cover the full capabilities needed for daily use, rather than a window that can only chat; its derivative plugins will also strive to do the same.                |
+| **Fully local and self-contained**              | No dependence on any cloud service. State, data, and configuration all reside on your own machine.                                                                |
+| **Good visual design and visualization**        | The interface itself must be good-looking and the information understandable—turning a powerful runtime into an application people are willing to open every day. |
 
 ## 2. Current Status
 
@@ -66,7 +66,7 @@ This version is **a foundation that installs and starts**, not a finished applic
    bash apps/desktop/scripts/verify-linux-package.sh       # Linux single-file package (runs in a container)
    ```
 
-   **Do not omit `--win-only` on Windows**: giving no platform flag means "do both", and the Linux half has to be done on Linux, so on this machine it fails with `exit 1` (after about 7 seconds). The Linux artifact comes from the third command, which starts its own container. If this version simply has no Linux package, use `--win-only --linux-not-built=docker-unavailable` so the manifest records the reason.
+   **Do not omit `--win-only` on Windows**: giving no platform flag means "do both", and the Linux half has to be done on Linux, so on this machine it fails with `exit 1` (after about 7 seconds). The Linux artifact comes from the third command, which starts its own container. If this version simply has no Linux package, `--win-only` alone is enough: the manifest records Linux as not required for this version (`skipped`/`not-required`). **Do not add `--linux-not-built=...`** - that flag answers "Linux was asked for and this machine cannot do it", and giving it together with `--win-only` is a usage error (`exit 2`).
 
    Artifacts land in `apps/desktop/release/`: on Windows `Haruyuki-<version>-win-x64.zip` plus `win-unpacked/`; on Linux `Haruyuki-<version>-linux-x86_64.AppImage` (note `x86_64`).
    Creating the tag, creating the Release and uploading the attachments **is yours to do by hand**; the command prints the upload steps at the end.
@@ -80,43 +80,43 @@ This version is **a foundation that installs and starts**, not a finished applic
 
 Everything below is a **measured** finding of this project rather than general knowledge; following it saves a full round of self-doubt.
 
-| Requirement | Value | Why it is written here |
-| --- | --- | --- |
-| Node.js | `>= 24` (`24.22.3` measured on the development machine) | Declared by `engines` in the root `package.json` |
-| pnpm | `10.24.0` | Pinned by `packageManager`; the version wall is a known risk, do not use another version |
-| corepack | `corepack enable pnpm --install-directory <the directory node lives in>` | `corepack pnpm` and `pnpm` are not equivalent, and child processes then cannot find pnpm |
-| electron | the binary is downloaded on first `require` | the `electron` dependency here has no `postinstall`; run `pnpm --filter @haruyuki/desktop setup:electron` when needed, and the release command does it once automatically |
-| electron-builder | run `pnpm install --frozen-lockfile` on the packaging machine first | the main checkout's `node_modules` may not have it, and `pnpm exec electron-builder` then reports not found |
-| Docker Desktop | **must be running for the Linux package**: `27.5.1` or newer, WSL2 backend | without Docker there is no Linux artifact (the manifest says `not-built` with a reason instead of pretending); with the daemon down, `docker info` reports `Internal Server Error` |
-| Registry mirror | prefix every image with `docker.m.daocloud.io` | **the official Docker Hub site is not reachable from this project's development network** (measured timeout). It is written here because it saves a person ten minutes of self-doubt |
-| Container image | `docker.m.daocloud.io/library/node:24-bookworm-slim` | digest `sha256:5ba3c1ded6eada2ea16582327a87c672fb3889fca362ee3ac0d78ed742b583c0`; it has Node 24 and glibc |
-| GUI libraries in the container | `libglib2.0-0`, `libnss3`, `libgbm1`, `libgtk-3-0`, `libxss1`, `libasound2`, `libdrm2` | without any of them the Electron binary does not even get through dynamic linking (it reports that `libglib-2.0.so.0` cannot be found). This was found by a probe |
-| Build tools in the container | `python3`, `make`, `g++` | the terminal component has no prebuilt Linux artifact and must be compiled there; the exit code of `apt-get` only proves "the command succeeded", so check each package |
-| How to start in the container | an unprivileged user plus `Xvfb :99 -screen 0 1280x800x24` | as root, Chromium always refuses to start, and this project does **not** trade `--no-sandbox` for a green line |
-| User machine (Linux) | `libfuse2` | absent by default since Ubuntu 22.04; without it use `--appimage-extract`, see section 7 |
-| Network | `registry.npmjs.org`, the Electron release page on GitHub, `nodejs.org/dist` | offline builds are out of scope for this project |
+| Requirement                    | Value                                                                                  | Why it is written here                                                                                                                                                               |
+| ------------------------------ | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Node.js                        | `>= 24` (`24.22.3` measured on the development machine)                                | Declared by `engines` in the root `package.json`                                                                                                                                     |
+| pnpm                           | `10.24.0`                                                                              | Pinned by `packageManager`; the version wall is a known risk, do not use another version                                                                                             |
+| corepack                       | `corepack enable pnpm --install-directory <the directory node lives in>`               | `corepack pnpm` and `pnpm` are not equivalent, and child processes then cannot find pnpm                                                                                             |
+| electron                       | the binary is downloaded on first `require`                                            | the `electron` dependency here has no `postinstall`; run `pnpm --filter @haruyuki/desktop setup:electron` when needed, and the release command does it once automatically            |
+| electron-builder               | run `pnpm install --frozen-lockfile` on the packaging machine first                    | the main checkout's `node_modules` may not have it, and `pnpm exec electron-builder` then reports not found                                                                          |
+| Docker Desktop                 | **must be running for the Linux package**: `27.5.1` or newer, WSL2 backend             | without Docker there is no Linux artifact (the manifest says `not-built` with a reason instead of pretending); with the daemon down, `docker info` reports `Internal Server Error`   |
+| Registry mirror                | prefix every image with `docker.m.daocloud.io`                                         | **the official Docker Hub site is not reachable from this project's development network** (measured timeout). It is written here because it saves a person ten minutes of self-doubt |
+| Container image                | `docker.m.daocloud.io/library/node:24-bookworm-slim`                                   | digest `sha256:5ba3c1ded6eada2ea16582327a87c672fb3889fca362ee3ac0d78ed742b583c0`; it has Node 24 and glibc                                                                           |
+| GUI libraries in the container | `libglib2.0-0`, `libnss3`, `libgbm1`, `libgtk-3-0`, `libxss1`, `libasound2`, `libdrm2` | without any of them the Electron binary does not even get through dynamic linking (it reports that `libglib-2.0.so.0` cannot be found). This was found by a probe                    |
+| Build tools in the container   | `python3`, `make`, `g++`                                                               | the terminal component has no prebuilt Linux artifact and must be compiled there; the exit code of `apt-get` only proves "the command succeeded", so check each package              |
+| How to start in the container  | an unprivileged user plus `Xvfb :99 -screen 0 1280x800x24`                             | as root, Chromium always refuses to start, and this project does **not** trade `--no-sandbox` for a green line                                                                       |
+| User machine (Linux)           | `libfuse2`                                                                             | absent by default since Ubuntu 22.04; without it use `--appimage-extract`, see section 7                                                                                             |
+| Network                        | `registry.npmjs.org`, the Electron release page on GitHub, `nodejs.org/dist`           | offline builds are out of scope for this project                                                                                                                                     |
 
 ## 5. Command List
 
-| Command | Purpose | Exit code |
-| --- | --- | --- |
-| `pnpm verify` | every gate, the default segments, in one run | `0` all green; `1` at least one segment failed |
-| `pnpm verify:full` | adds the three repository discipline gates (file size, cycles, module ownership) | as above |
-| `pnpm test` | unit tests | `0` / `1` |
-| `pnpm lint` | ESLint | `0` / `1` |
-| `pnpm typecheck` | type-checking for every workspace package plus the gate scripts | `0` / `1` |
-| `pnpm contract:check` | contract artifacts still match their truth sources (`contract:update`, `contract:generate`, `contract:diff` also exist) | `0` / `1` |
-| `pnpm i18n:check` | catalogue completeness and consistency | `0` / `1` |
-| `pnpm fixtures:check` | shape and header of the recorded fixtures | `0` / `1` |
-| `pnpm hooks:install` | point git at the versioned commit hooks (running it twice is a no-op) | `0` installed or already present; `1` not in a repository; `2` broken environment |
-| `pnpm --filter @haruyuki/desktop start` | open the window from a local build (developer path) | the Electron process exit code |
-| `pnpm --filter @haruyuki/desktop setup:electron` | download the Electron binary by hand | `0` / `1` |
-| `node apps/desktop/scripts/release.mjs` | one command, artifacts plus manifest (see the exit codes below) | `0` / `1` / `2` / `3` |
-| `node apps/desktop/scripts/verify-round-one.mjs` | judges "the runtime tree and its lock are in place" | same as `release.mjs` |
-| `node apps/desktop/scripts/verify-artifacts.mjs` | judges "there is an unpacked tree and at least one archive" | `0` / `1`; `2` the release directory does not exist |
-| `node apps/desktop/scripts/verify-manifest.mjs` | judges that the manifest matches the disk claim by claim and that both hash tables agree | `0` / `1`; `2` there is no manifest to judge |
-| `bash apps/desktop/scripts/verify-linux-package.sh` | produce the Linux single-file package inside a container, then run the survival and paint probes | `0` passed; `1` the artifact does not start; `3` this machine cannot do it (no Docker, etc.) |
-| `node apps/desktop/scripts/manifest.mjs` | rewrite the release manifest and the checksums alone (single producer) | `0` written and both tables agree; `2` the inputs cannot describe a build |
+| Command                                             | Purpose                                                                                                                 | Exit code                                                                                    |
+| --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `pnpm verify`                                       | every gate, the default segments, in one run                                                                            | `0` all green; `1` at least one segment failed                                               |
+| `pnpm verify:full`                                  | adds the three repository discipline gates (file size, cycles, module ownership)                                        | as above                                                                                     |
+| `pnpm test`                                         | unit tests                                                                                                              | `0` / `1`                                                                                    |
+| `pnpm lint`                                         | ESLint                                                                                                                  | `0` / `1`                                                                                    |
+| `pnpm typecheck`                                    | type-checking for every workspace package plus the gate scripts                                                         | `0` / `1`                                                                                    |
+| `pnpm contract:check`                               | contract artifacts still match their truth sources (`contract:update`, `contract:generate`, `contract:diff` also exist) | `0` / `1`                                                                                    |
+| `pnpm i18n:check`                                   | catalogue completeness and consistency                                                                                  | `0` / `1`                                                                                    |
+| `pnpm fixtures:check`                               | shape and header of the recorded fixtures                                                                               | `0` / `1`                                                                                    |
+| `pnpm hooks:install`                                | point git at the versioned commit hooks (running it twice is a no-op)                                                   | `0` installed or already present; `1` not in a repository; `2` broken environment            |
+| `pnpm --filter @haruyuki/desktop start`             | open the window from a local build (developer path)                                                                     | the Electron process exit code                                                               |
+| `pnpm --filter @haruyuki/desktop setup:electron`    | download the Electron binary by hand                                                                                    | `0` / `1`                                                                                    |
+| `node apps/desktop/scripts/release.mjs`             | one command, artifacts plus manifest (see the exit codes below)                                                         | `0` / `1` / `2` / `3`                                                                        |
+| `node apps/desktop/scripts/verify-round-one.mjs`    | judges "the runtime tree and its lock are in place"                                                                     | same as `release.mjs`                                                                        |
+| `node apps/desktop/scripts/verify-artifacts.mjs`    | judges "there is an unpacked tree and at least one archive"                                                             | `0` / `1`; `2` the release directory does not exist                                          |
+| `node apps/desktop/scripts/verify-manifest.mjs`     | judges that the manifest matches the disk claim by claim and that both hash tables agree                                | `0` / `1`; `2` there is no manifest to judge                                                 |
+| `bash apps/desktop/scripts/verify-linux-package.sh` | produce the Linux single-file package inside a container, then run the survival and paint probes                        | `0` passed; `1` the artifact does not start; `3` this machine cannot do it (no Docker, etc.) |
+| `node apps/desktop/scripts/manifest.mjs`            | rewrite the release manifest and the checksums alone (single producer)                                                  | `0` written and both tables agree; `2` the inputs cannot describe a build                    |
 
 **Exit code semantics of `release.mjs`** (the three commands share one set; a judge script never invents its own):
 
@@ -128,7 +128,7 @@ Everything below is a **measured** finding of this project rather than general k
   - `error: version conflict: tag exists` / `error: version conflict: tag list unreadable` — the version has been published, or the tag list could not be read (unknown also refuses, because "unknown" has to be louder than "no").
 - `3` the only requested target cannot be done on this machine.
 
-Options: `--win-only`, `--linux-only` (mutually exclusive; neither means both), `--skip-install`, `--skip-fetch`, `--skip-bundle`, `--linux-not-built=<docker-unavailable|machine-offline|toolchain-missing>`. A version that already carries a tag is **refused, and leaves no file behind**.
+Options: `--win-only`, `--linux-only` (mutually exclusive; neither means both), `--skip-install`, `--skip-fetch`, `--skip-bundle`, `--linux-not-built=<docker-unavailable|machine-offline|toolchain-missing>` (**only meaningful for a requested target**: giving it with `--win-only` is a usage error). A version that already carries a tag is **refused, and leaves no file behind**.
 
 ## 6. Directory Structure
 

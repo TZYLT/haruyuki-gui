@@ -14,10 +14,10 @@ Haruyuki 本身是一个成本节约型陪伴 agent 运行时，具备复杂的�
 
 ### 我们的目标
 
-| 目标 | 含义 |
-| --- | --- |
-| **全能易用的桌面应用** | 覆盖日常使用所需的完整能力，而不是一个只能聊天的窗口；其衍生插件也会尽量做到。 |
-| **完全本地自持** | 不依赖任何云服务。状态、数据、配置都在你自己的机器上。 |
+| 目标                       | 含义                                                                             |
+| -------------------------- | -------------------------------------------------------------------------------- |
+| **全能易用的桌面应用**     | 覆盖日常使用所需的完整能力，而不是一个只能聊天的窗口；其衍生插件也会尽量做到。   |
+| **完全本地自持**           | 不依赖任何云服务。状态、数据、配置都在你自己的机器上。                           |
 | **良好的视觉设计与可视化** | 界面本身要好看、信息要看得懂——把一个强大的运行时，变成一个人愿意每天打开的应用。 |
 
 ## 2. 当前状态
@@ -66,7 +66,7 @@ Haruyuki 本身是一个成本节约型陪伴 agent 运行时，具备复杂的�
    bash apps/desktop/scripts/verify-linux-package.sh       # Linux 单文件包（进容器跑）
    ```
 
-   **在 Windows 上不要省略 `--win-only`**：不给平台参数意味着"两个都做"，而 Linux 那一半必须在 Linux 上做，在这台机器上会以 `exit 1` 失败（约 7 秒）。Linux 产物走第三条命令，它自己起容器。若这一版就是不出 Linux 包，用 `--win-only --linux-not-built=docker-unavailable` 让清单把原因写清楚。
+   **在 Windows 上不要省略 `--win-only`**：不给平台参数意味着"两个都做"，而 Linux 那一半必须在 Linux 上做，在这台机器上会以 `exit 1` 失败（约 7 秒）。Linux 产物走第三条命令，它自己起容器。若这一版就是不出 Linux 包，只写 `--win-only` 就够：清单会把 Linux 记成「本版不需要」（`skipped`/`not-required`）。**不要再加 `--linux-not-built=…`** —— 那个参数是给「要了 Linux 但这台机器做不了」用的，与 `--win-only` 同时给是用法错误（`exit 2`）。
 
    产物落在 `apps/desktop/release/`：Windows 是 `Haruyuki-<版本>-win-x64.zip` 与 `win-unpacked/`；Linux 是 `Haruyuki-<版本>-linux-x86_64.AppImage`（注意是 `x86_64`）。
    建 tag、建 Release、上传附件**由你亲手做**，这条命令最后会把上传步骤打印出来。
@@ -80,43 +80,43 @@ Haruyuki 本身是一个成本节约型陪伴 agent 运行时，具备复杂的�
 
 以下都是本项目的**实测结论**，不是通用常识；照做能省掉一整轮自我怀疑。
 
-| 要求 | 值 | 说明 |
-| --- | --- | --- |
-| Node.js | `>= 24`（开发机实测 `24.22.3`） | 由根 `package.json` 的 `engines` 声明 |
-| pnpm | `10.24.0` | 由 `packageManager` 钉住；版本墙是已知风险，别用别的版本 |
-| corepack | `corepack enable pnpm --install-directory <node 所在目录>` | 只写 `corepack pnpm` 与 `pnpm` 不等价，子进程会找不到 pnpm |
-| electron | 首次 `require` 才下载二进制 | 本仓的 `electron` 依赖没有 `postinstall`；需要时跑 `pnpm --filter @haruyuki/desktop setup:electron`，发布命令会自动做一次 |
-| electron-builder | 打包机先 `pnpm install --frozen-lockfile` | 主检出的 `node_modules` 可能没有它，直接 `pnpm exec electron-builder` 会报找不到 |
-| Docker Desktop | **做 Linux 包时必须常开**：`27.5.1` 以上、WSL2 后端 | 没有 Docker 就没有 Linux 产物（清单里会写 `not-built` 并给出原因，不会假装做了）；daemon 没起时 `docker info` 报 `Internal Server Error` |
-| 镜像站 | 所有镜像加 `docker.m.daocloud.io` 前缀 | **Docker Hub 官方站直连在本项目开发网络上不通**（实测超时）。这一条写在这里，是因为它能省下一个人十分钟的自我怀疑 |
-| 容器镜像 | `docker.m.daocloud.io/library/node:24-bookworm-slim` | digest 为 `sha256:5ba3c1ded6eada2ea16582327a87c672fb3889fca362ee3ac0d78ed742b583c0`；有 Node 24 与 glibc |
-| 容器内 GUI 库 | `libglib2.0-0`、`libnss3`、`libgbm1`、`libgtk-3-0`、`libxss1`、`libasound2`、`libdrm2` | 缺任何一个，Electron 二进制连动态链接都过不了（报 `libglib-2.0.so.0` 找不到）。这是探针查出来的 |
-| 容器内构建工具 | `python3`、`make`、`g++` | 终端组件没有 Linux 预编译产物，必须现场编译；`apt-get` 的退出码只证明"命令成功"，要逐包核对 |
-| 容器内启动方式 | 普通用户 + `Xvfb :99 -screen 0 1280x800x24` | root 下 Chromium 一律拒绝启动，而本项目**不用** `--no-sandbox` 换绿 |
-| 用户机（Linux） | `libfuse2` | Ubuntu 22.04 起默认不带；没有它就用 `--appimage-extract`，见第 7 节 |
-| 网络 | `registry.npmjs.org`、GitHub 的 Electron 发布页、`nodejs.org/dist` | 离线构建不在本项目范围内 |
+| 要求             | 值                                                                                     | 说明                                                                                                                                     |
+| ---------------- | -------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| Node.js          | `>= 24`（开发机实测 `24.22.3`）                                                        | 由根 `package.json` 的 `engines` 声明                                                                                                    |
+| pnpm             | `10.24.0`                                                                              | 由 `packageManager` 钉住；版本墙是已知风险，别用别的版本                                                                                 |
+| corepack         | `corepack enable pnpm --install-directory <node 所在目录>`                             | 只写 `corepack pnpm` 与 `pnpm` 不等价，子进程会找不到 pnpm                                                                               |
+| electron         | 首次 `require` 才下载二进制                                                            | 本仓的 `electron` 依赖没有 `postinstall`；需要时跑 `pnpm --filter @haruyuki/desktop setup:electron`，发布命令会自动做一次                |
+| electron-builder | 打包机先 `pnpm install --frozen-lockfile`                                              | 主检出的 `node_modules` 可能没有它，直接 `pnpm exec electron-builder` 会报找不到                                                         |
+| Docker Desktop   | **做 Linux 包时必须常开**：`27.5.1` 以上、WSL2 后端                                    | 没有 Docker 就没有 Linux 产物（清单里会写 `not-built` 并给出原因，不会假装做了）；daemon 没起时 `docker info` 报 `Internal Server Error` |
+| 镜像站           | 所有镜像加 `docker.m.daocloud.io` 前缀                                                 | **Docker Hub 官方站直连在本项目开发网络上不通**（实测超时）。这一条写在这里，是因为它能省下一个人十分钟的自我怀疑                        |
+| 容器镜像         | `docker.m.daocloud.io/library/node:24-bookworm-slim`                                   | digest 为 `sha256:5ba3c1ded6eada2ea16582327a87c672fb3889fca362ee3ac0d78ed742b583c0`；有 Node 24 与 glibc                                 |
+| 容器内 GUI 库    | `libglib2.0-0`、`libnss3`、`libgbm1`、`libgtk-3-0`、`libxss1`、`libasound2`、`libdrm2` | 缺任何一个，Electron 二进制连动态链接都过不了（报 `libglib-2.0.so.0` 找不到）。这是探针查出来的                                          |
+| 容器内构建工具   | `python3`、`make`、`g++`                                                               | 终端组件没有 Linux 预编译产物，必须现场编译；`apt-get` 的退出码只证明"命令成功"，要逐包核对                                              |
+| 容器内启动方式   | 普通用户 + `Xvfb :99 -screen 0 1280x800x24`                                            | root 下 Chromium 一律拒绝启动，而本项目**不用** `--no-sandbox` 换绿                                                                      |
+| 用户机（Linux）  | `libfuse2`                                                                             | Ubuntu 22.04 起默认不带；没有它就用 `--appimage-extract`，见第 7 节                                                                      |
+| 网络             | `registry.npmjs.org`、GitHub 的 Electron 发布页、`nodejs.org/dist`                     | 离线构建不在本项目范围内                                                                                                                 |
 
 ## 5. 命令清单
 
-| 命令 | 用途 | 退出码 |
-| --- | --- | --- |
-| `pnpm verify` | 全部门禁，一条命令跑完默认段 | `0` 全绿；`1` 至少一段失败 |
-| `pnpm verify:full` | 再加仓库纪律三项（体积、环依赖、模块归属） | 同上 |
-| `pnpm test` | 单元测试 | `0` / `1` |
-| `pnpm lint` | ESLint | `0` / `1` |
-| `pnpm typecheck` | 各工作区包 + 门禁脚本的类型检查 | `0` / `1` |
-| `pnpm contract:check` | 契约产物与真源一致（另有 `contract:update`、`contract:generate`、`contract:diff`） | `0` / `1` |
-| `pnpm i18n:check` | 文案目录的完整性与一致性 | `0` / `1` |
-| `pnpm fixtures:check` | 录制样本的格式与头部 | `0` / `1` |
-| `pnpm hooks:install` | 让 git 指向版本化的提交钩子（重复运行无害） | `0` 已装或已存在；`1` 不在仓库里；`2` 环境坏 |
-| `pnpm --filter @haruyuki/desktop start` | 用本机构建产物直接开窗（开发者路径） | Electron 进程退出码 |
-| `pnpm --filter @haruyuki/desktop setup:electron` | 手动下载 Electron 二进制 | `0` / `1` |
-| `node apps/desktop/scripts/release.mjs` | 一条命令出产物与清单（见下面的退出码） | `0` / `1` / `2` / `3` |
-| `node apps/desktop/scripts/verify-round-one.mjs` | 判"运行时树与锁是否就位" | 同 `release.mjs` |
-| `node apps/desktop/scripts/verify-artifacts.mjs` | 判"有没有解包树与至少一个压缩包" | `0` / `1`；`2` 发布目录不存在 |
-| `node apps/desktop/scripts/verify-manifest.mjs` | 判清单与磁盘是否逐条相符、两处哈希是否一致 | `0` / `1`；`2` 没有清单可判 |
-| `bash apps/desktop/scripts/verify-linux-package.sh` | 容器内产出 Linux 单文件包，并做存活与绘制探针 | `0` 通过；`1` 产物起不来；`3` 这台机器做不了（没有 Docker 等） |
-| `node apps/desktop/scripts/manifest.mjs` | 单独重写发布清单与校验和（单一产出者） | `0` 写出且两表一致；`2` 输入不足以描述一次构建 |
+| 命令                                                | 用途                                                                               | 退出码                                                         |
+| --------------------------------------------------- | ---------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| `pnpm verify`                                       | 全部门禁，一条命令跑完默认段                                                       | `0` 全绿；`1` 至少一段失败                                     |
+| `pnpm verify:full`                                  | 再加仓库纪律三项（体积、环依赖、模块归属）                                         | 同上                                                           |
+| `pnpm test`                                         | 单元测试                                                                           | `0` / `1`                                                      |
+| `pnpm lint`                                         | ESLint                                                                             | `0` / `1`                                                      |
+| `pnpm typecheck`                                    | 各工作区包 + 门禁脚本的类型检查                                                    | `0` / `1`                                                      |
+| `pnpm contract:check`                               | 契约产物与真源一致（另有 `contract:update`、`contract:generate`、`contract:diff`） | `0` / `1`                                                      |
+| `pnpm i18n:check`                                   | 文案目录的完整性与一致性                                                           | `0` / `1`                                                      |
+| `pnpm fixtures:check`                               | 录制样本的格式与头部                                                               | `0` / `1`                                                      |
+| `pnpm hooks:install`                                | 让 git 指向版本化的提交钩子（重复运行无害）                                        | `0` 已装或已存在；`1` 不在仓库里；`2` 环境坏                   |
+| `pnpm --filter @haruyuki/desktop start`             | 用本机构建产物直接开窗（开发者路径）                                               | Electron 进程退出码                                            |
+| `pnpm --filter @haruyuki/desktop setup:electron`    | 手动下载 Electron 二进制                                                           | `0` / `1`                                                      |
+| `node apps/desktop/scripts/release.mjs`             | 一条命令出产物与清单（见下面的退出码）                                             | `0` / `1` / `2` / `3`                                          |
+| `node apps/desktop/scripts/verify-round-one.mjs`    | 判"运行时树与锁是否就位"                                                           | 同 `release.mjs`                                               |
+| `node apps/desktop/scripts/verify-artifacts.mjs`    | 判"有没有解包树与至少一个压缩包"                                                   | `0` / `1`；`2` 发布目录不存在                                  |
+| `node apps/desktop/scripts/verify-manifest.mjs`     | 判清单与磁盘是否逐条相符、两处哈希是否一致                                         | `0` / `1`；`2` 没有清单可判                                    |
+| `bash apps/desktop/scripts/verify-linux-package.sh` | 容器内产出 Linux 单文件包，并做存活与绘制探针                                      | `0` 通过；`1` 产物起不来；`3` 这台机器做不了（没有 Docker 等） |
+| `node apps/desktop/scripts/manifest.mjs`            | 单独重写发布清单与校验和（单一产出者）                                             | `0` 写出且两表一致；`2` 输入不足以描述一次构建                 |
 
 **`release.mjs` 的退出码语义**（三条命令共用同一套，判据程序不发明自己的码）：
 
@@ -128,7 +128,7 @@ Haruyuki 本身是一个成本节约型陪伴 agent 运行时，具备复杂的�
   - `error: version conflict: tag exists` / `error: version conflict: tag list unreadable` —— 版本号已被发布，或读不到 tag 列表（读不到也拒绝，因为"不知道"必须比"没有"更响）。
 - `3` 唯一被请求的目标在这台机器上做不了。
 
-选项：`--win-only`、`--linux-only`（互为排斥，都不给 = 两个都做）、`--skip-install`、`--skip-fetch`、`--skip-bundle`、`--linux-not-built=<docker-unavailable|machine-offline|toolchain-missing>`。版本号已打 tag 时**拒绝构建，且不留下任何文件**。
+选项：`--win-only`、`--linux-only`（互为排斥，都不给 = 两个都做）、`--skip-install`、`--skip-fetch`、`--skip-bundle`、`--linux-not-built=<docker-unavailable|machine-offline|toolchain-missing>`（**只对 requested target 有效**：与 `--win-only` 同给是用法错误）。版本号已打 tag 时**拒绝构建，且不留下任何文件**。
 
 ## 6. 目录结构
 

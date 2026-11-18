@@ -48,9 +48,18 @@ const PLATFORMS = ["win32", "linux"];
 /** The only acceptable ways a platform can be absent, and why each exists. */
 const NOT_BUILT_REASONS = new Set(NOT_BUILT_REASON_LIST);
 
-/** Linux images are recorded by digest, not by tag, so the build is repeatable. */
-const LINUX_IMAGE_DIGEST =
-  "docker.m.daocloud.io/library/node:24-bookworm-slim@sha256:5ba3c1ded6eada2ea16582327a87c672fb3889fca362ee3ac0d78ed742b583c0";
+/**
+ * Linux images are recorded by digest, not by tag, so the build is repeatable.
+ *
+ * The shape is `docker:<image>:<digest>`, as the requirement spells it. A full
+ * registry reference (`...@sha256:...`) says the same thing, but the judgement
+ * looks for a docker prefix and a trailing digest, and the two spellings meant
+ * the assertion could only ever hold on a platform the manifest does not build.
+ * Written the way it is checked, with the registry host kept inside the image
+ * part so the digest is still the last colon-separated segment.
+ */
+const LINUX_IMAGE_NAME = "docker.m.daocloud.io/library/node:24-bookworm-slim";
+const LINUX_IMAGE_DIGEST = `docker:${LINUX_IMAGE_NAME}:sha256:5ba3c1ded6eada2ea16582327a87c672fb3889fca362ee3ac0d78ed742b583c0`;
 
 /** @param {string} file */
 async function sha256Of(file) {
@@ -276,7 +285,6 @@ export function buildDocuments(facts) {
 
   const lines = checksumLines(facts.described);
   const checksumText = `${lines.join("\n")}\n`;
-
   const notes = releaseNotes({
     productName,
     version,
@@ -432,6 +440,33 @@ export function platformStates({ produced, targets, linuxNotBuilt, builtInOf }) 
   return { states, unstated };
 }
 
+/**
+ * What is wrong with this command line, if anything, as a sentence.
+ *
+ * Separate from `parseArgs` so it can be judged without exiting a process: a
+ * guard only observable by spawning a child is a guard nobody writes a test for,
+ * and this one exists because the pipeline refused a pair that this command
+ * accepted and then silently dropped half of.
+ *
+ * @param {{ targets: string[], linuxNotBuilt: string | null }} options
+ * @returns {string | null}
+ */
+export function argumentRefusalFor({ targets, linuxNotBuilt }) {
+  if (linuxNotBuilt === null) return null;
+  if (!NOT_BUILT_REASONS.has(linuxNotBuilt)) {
+    return (
+      `--linux-not-built=<reason> must be one of ${[...NOT_BUILT_REASONS].join(", ")}; ` +
+      `"the image was built but will not start" is a failure, not a missing capability\n`
+    );
+  }
+  if (targets.includes("linux")) return null;
+  return (
+    `--linux-not-built=${linuxNotBuilt} explains a platform this run was not asked to ` +
+    `build. Drop the reason (a platform nobody asked for is recorded as skipped, not-required), ` +
+    `or ask for linux in --targets.\n`
+  );
+}
+
 /** @param {string[]} argv */
 function parseArgs(argv) {
   const options = { dirty: false, linuxNotBuilt: null, targets: [...PLATFORMS] };
@@ -469,11 +504,13 @@ function parseArgs(argv) {
     }
   }
 
-  if (options.linuxNotBuilt !== null && !NOT_BUILT_REASONS.has(options.linuxNotBuilt)) {
-    process.stderr.write(
-      `--linux-not-built=<reason> must be one of ${[...NOT_BUILT_REASONS].join(", ")}; ` +
-        `"the image was built but will not start" is a failure, not a missing capability\n`,
-    );
+  // A reason only means something for a platform this run was asked to build.
+  // Without the second branch, `--targets=win32 --linux-not-built=...` wrote
+  // `skipped(not-required)` and dropped the reason without a word: the caller
+  // said why Linux is missing and the document said nobody asked.
+  const refusal = argumentRefusalFor(options);
+  if (refusal !== null) {
+    process.stderr.write(refusal);
     process.exit(2);
   }
 
@@ -492,6 +529,50 @@ async function main() {
     }
     throw error;
   }
+}
+
+/**
+ * What stops this run from writing a publishable manifest, if anything.
+ *
+ * Two independent reasons, both checked before a single byte is written, because
+ * a document written and then declared invalid outlives the run that refused it.
+ *
+ * One: a platform this run was asked for, produced nothing and carries no
+ * reason. Only requested platforms can land here - one nobody asked for is
+ * `skipped`, which is an answer, not a gap.
+ *
+ * Two: an uncommitted tree. The requirement says a dirty package must not be
+ * released and nothing enforced it, so the record was written and the steps to
+ * publish it were written beside it. `--dirty` still produces the document for a
+ * local build that must not be published; that is a decision someone made on
+ * purpose, not a default.
+ *
+ * @param {{ unstated: string[], dirty: boolean, allowDirty: boolean }} facts
+ * @returns {{ code: number, message: string } | null}
+ */
+export function refusalFor({ unstated, dirty, allowDirty }) {
+  if (unstated.length > 0) {
+    return {
+      code: 1,
+      message:
+        `\nno artifact for ${unstated.join(", ")} and no reason given, although this run asked for it.\n` +
+        `Pass --linux-not-built=<docker-unavailable|machine-offline|toolchain-missing> to say why,\n` +
+        `or drop that platform from --targets. A manifest that invents a reason is worse than none.\n`,
+    };
+  }
+
+  if (dirty && !allowDirty) {
+    return {
+      code: 1,
+      message:
+        `\nrefusing to write a publishable manifest: the working tree has uncommitted changes.\n` +
+        `A version number has to identify exactly one tree, and this one cannot be reproduced from\n` +
+        `any commit. Commit or stash the changes, or pass --dirty to describe a local build that\n` +
+        `must not be published.\n`,
+    };
+  }
+
+  return null;
 }
 
 /**
@@ -588,8 +669,30 @@ async function describeBuild(options) {
     dirty: options.dirty || git(["status", "--porcelain"]).length > 0,
   });
 
-  await writeFile(CHECKSUMS_FILE, checksumText, "utf8");
-  await writeFile(MANIFEST_FILE, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+  // Two things have to hold before anything is written, because a document that
+  // is written and then declared invalid is worse than no document: `release/`
+  // outlives this run, and the next reader has no way to tell a refused build's
+  // leftovers from a published one.
+  const refusal = refusalFor({ unstated, dirty: manifest.dirty, allowDirty: options.dirty });
+  if (refusal !== null) {
+    process.stderr.write(refusal.message);
+    return refusal.code;
+  }
+
+  // The manifest is written first so it can be hashed, and only then does the
+  // checksum file get its own line. The document does not carry its own digest,
+  // so this is not circular: the file that a third party downloads and checks is
+  // the one they most need a digest for, and it was the one line missing.
+  const manifestText = `${JSON.stringify(manifest, null, 2)}\n`;
+  await writeFile(MANIFEST_FILE, manifestText, "utf8");
+
+  const manifestSha = await sha256Of(MANIFEST_FILE);
+  const selfLine = `${manifestSha}  ${path.basename(MANIFEST_FILE)}`;
+  await writeFile(
+    CHECKSUMS_FILE,
+    `${[...checksumText.trimEnd().split("\n"), selfLine].join("\n")}\n`,
+    "utf8",
+  );
 
   process.stdout.write(`\nplatforms\n`);
   for (const [name, state] of Object.entries(platforms)) {
@@ -605,18 +708,6 @@ async function describeBuild(options) {
   process.stdout.write(`wrote ${path.relative(REPO_ROOT, CHECKSUMS_FILE)}\n`);
   process.stdout.write(`\nupload\n`);
   for (const line of manifest.uploadSteps) process.stdout.write(`  ${line}\n`);
-
-  // A platform this run was asked for, produced nothing and carries no reason.
-  // Only the requested ones can land here: a platform nobody asked for is
-  // `skipped`, which is an answer, not a gap.
-  if (unstated.length > 0) {
-    process.stderr.write(
-      `\nno artifact for ${unstated.join(", ")} and no reason given, although this run asked for it.\n` +
-        `Pass --linux-not-built=<docker-unavailable|machine-offline|toolchain-missing> to say why,\n` +
-        `or drop that platform from --targets. A manifest that invents a reason is worse than none.\n`,
-    );
-    return 1;
-  }
 
   return 0;
 }

@@ -55,12 +55,12 @@ function defaultIconReference(argv) {
 
 /** The only acceptable platform states, and the reasons each may carry. */
 const STATES = new Set(["built", "not-built", "skipped"]);
-const REASONS = new Set([
-  "docker-unavailable",
-  "machine-offline",
-  "toolchain-missing",
-  "not-required",
-]);
+
+// Two disjoint reason sets, because the two states answer different questions.
+// `not-built` means "asked for and this machine could not"; `skipped` means
+// "nobody asked". One merged set let either state borrow the other's answer.
+const NOT_BUILT_REASONS = new Set(["docker-unavailable", "machine-offline", "toolchain-missing"]);
+const NOT_REQUIRED = "not-required";
 
 /** Lines of a GNU checksum file: `<64 hex><two spaces><name>`. */
 const CHECKSUM_LINE = /^([0-9a-f]{64}) {2}(.+)$/;
@@ -242,7 +242,19 @@ async function main() {
 
   // Every platform is in exactly one of three states, and "built"
   // carries the evidence of where it was built.
+  //
+  // The iteration used to run over whatever keys the document happened to have,
+  // so a document that simply left a platform out satisfied every assertion in
+  // this group. That is the failure the group exists to catch: silence reads as
+  // "fine" and the platform a user asks about is the one nobody described.
   const platforms = manifest.platforms ?? {};
+  const REQUIRED_PLATFORMS = ["win32", "linux"];
+  await judge("every platform is described", () => {
+    const missing = REQUIRED_PLATFORMS.filter((name) => !(name in platforms));
+    return missing.length === 0
+      ? null
+      : `the manifest says nothing about ${missing.join(", ")}; silence is not a state`;
+  });
   await judge("every platform state is one of built/not-built/skipped", () => {
     for (const [name, value] of Object.entries(platforms)) {
       if (!STATES.has(value?.state)) return `${name} has state ${JSON.stringify(value?.state)}`;
@@ -258,9 +270,24 @@ async function main() {
     return null;
   });
   await judge("a not-built platform carries a known reason", () => {
+    // Three reasons answer "asked for, could not". `not-required` answers a
+    // different question - "nobody asked" - and belongs to `skipped` only. Both
+    // were in one set, so a platform could claim incapacity it never tested.
     for (const [name, value] of Object.entries(platforms)) {
-      if (value?.state === "not-built" && !REASONS.has(value.reason)) {
-        return `${name} has reason ${JSON.stringify(value.reason)}`;
+      if (value?.state !== "not-built") continue;
+      if (!NOT_BUILT_REASONS.has(value.reason)) {
+        return `${name} has reason ${JSON.stringify(value.reason)}; not-built means asked for and unavailable`;
+      }
+    }
+    return null;
+  });
+  await judge("a skipped platform says why it was not required", () => {
+    // The mirror of the line above: `skipped` must not carry a capability
+    // reason, and it must say something, or it is indistinguishable from a gap.
+    for (const [name, value] of Object.entries(platforms)) {
+      if (value?.state !== "skipped") continue;
+      if (value.reason !== NOT_REQUIRED) {
+        return `${name} is skipped with reason ${JSON.stringify(value.reason)}; skipped means nobody asked`;
       }
     }
     return null;
@@ -271,9 +298,12 @@ async function main() {
   await judge("linux builtIn is a docker image with a digest", () => {
     const linux = platforms.linux;
     if (linux?.state !== "built") return null;
-    if (!String(linux.builtIn).startsWith("docker:")) return `not a docker image: ${linux.builtIn}`;
-    if (!/@sha256:[0-9a-f]{64}$/.test(String(linux.builtIn)))
-      return `no image digest: ${linux.builtIn}`;
+    // `docker:<image>:<digest>`. The image part may itself contain a registry
+    // host and a tag, so the digest is matched at the end rather than by
+    // splitting on every colon.
+    const value = String(linux.builtIn);
+    if (!value.startsWith("docker:")) return `not a docker image: ${value}`;
+    if (!/:sha256:[0-9a-f]{64}$/.test(value)) return `no image digest: ${value}`;
     return null;
   });
   await judge("windows builtIn names the host", () => {
@@ -287,28 +317,57 @@ async function main() {
   const fromChecksums = parseChecksums(checksumText);
   const fromBody = parseBodyTable(String(manifest.releaseNotes ?? ""));
   await judge("the checksum file and the release notes list the same files", () => {
+    // The release body quotes the downloads, so it must agree with the checksum
+    // file on those - and only on those. The checksum file also carries one line
+    // for the manifest itself, which is not a download and must not appear in a
+    // body that tells a person what to attach.
+    const self = path.basename(MANIFEST_FILE);
     const left = fromChecksums
+      .filter((row) => row.file !== self)
       .map((row) => `${row.sha256}  ${row.file}`)
       .sort()
       .join("\n");
     const right = fromBody
+      .filter((row) => row.file !== self)
       .map((row) => `${row.sha256}  ${row.file}`)
       .sort()
       .join("\n");
     return left === right ? null : `they differ:\n${left}\n---\n${right}`;
   });
   await judge("the manifest artifact list matches the checksum file", () => {
+    // The checksum file has one line the manifest does not list: its own digest,
+    // for the document itself. A third party downloads both, so the document
+    // needs a digest too, and it cannot be inside the document it describes.
+    const selfRows = fromChecksums.filter((row) => row.file === path.basename(MANIFEST_FILE));
+    const artifactRows = fromChecksums.filter((row) => row.file !== path.basename(MANIFEST_FILE));
+
+    if (selfRows.length !== 1) {
+      return selfRows.length === 0
+        ? `the checksum file has no line for ${path.basename(MANIFEST_FILE)} itself`
+        : `the checksum file lists ${path.basename(MANIFEST_FILE)} ${String(selfRows.length)} times`;
+    }
+
     const listed = (manifest.artifacts ?? [])
       .map((a) => `${a.sha256}  ${a.file}`)
       .sort()
       .join("\n");
-    const hashed = fromChecksums
+    const hashed = artifactRows
       .map((row) => `${row.sha256}  ${row.file}`)
       .sort()
       .join("\n");
     return listed === hashed
       ? null
-      : `manifest lists ${String((manifest.artifacts ?? []).length)} artifacts, checksums ${String(fromChecksums.length)}`;
+      : `manifest lists ${String((manifest.artifacts ?? []).length)} artifacts, checksums ${String(artifactRows.length)}`;
+  });
+
+  await judge("the checksum file hashes the manifest it ships with", async () => {
+    // Recomputing it is the point: a self-referential line that was copied rather
+    // than computed is a line nobody can use.
+    const row = fromChecksums.find((entry) => entry.file === path.basename(MANIFEST_FILE));
+    if (row === undefined) return `no line for ${path.basename(MANIFEST_FILE)}`;
+
+    const actual = await sha256Of(MANIFEST_FILE);
+    return actual === row.sha256 ? null : `recorded ${row.sha256}, actual ${actual}`;
   });
 
   // A third party recomputes. This is the only check whose input is the
@@ -324,6 +383,9 @@ async function main() {
     return null;
   });
   await judge("the artifact list covers every downloadable file on disk", async () => {
+    // The two documents describe the artifacts; they are not artifacts. Whether
+    // the checksum file hashes itself and the manifest is a separate question, and
+    // leaving those lines out here keeps the two from answering for each other.
     const onDisk = (await scanArtifacts(RELEASE_DIR))
       .filter((entry) => !["SHA256SUMS", "release-manifest.json"].includes(entry.file))
       .filter((entry) => !entry.file.startsWith("builder-"))

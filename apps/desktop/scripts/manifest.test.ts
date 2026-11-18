@@ -13,6 +13,7 @@ import { describe, expect, it } from "vitest";
 import {
   ManifestInconsistency,
   assertSameHashes,
+  argumentRefusalFor,
   assertUploadList,
   buildDocuments,
   hashTable,
@@ -20,6 +21,7 @@ import {
   parseUploadedFiles,
   platformOf,
   platformStates,
+  refusalFor,
   releaseNotes,
 } from "./manifest.mjs";
 
@@ -322,5 +324,80 @@ describe("platformStates", () => {
     });
 
     expect(states.linux).toEqual({ state: "built", builtIn: "linux@host" });
+  });
+});
+
+describe("refusalFor", () => {
+  // Both reasons are checked before anything is written. A document that is
+  // written and then declared invalid outlives the run that refused it, and the
+  // next reader cannot tell a refused build's leftovers from a published one.
+
+  it("refuses a requested platform that produced nothing and said nothing", () => {
+    const refusal = refusalFor({ unstated: ["linux"], dirty: false, allowDirty: false });
+
+    expect(refusal?.code).toBe(1);
+    expect(refusal?.message).toContain("no reason given");
+    expect(refusal?.message).toContain("linux");
+  });
+
+  it("refuses a dirty tree, which the requirement forbids releasing", () => {
+    const refusal = refusalFor({ unstated: [], dirty: true, allowDirty: false });
+
+    expect(refusal?.code).toBe(1);
+    expect(refusal?.message).toContain("uncommitted changes");
+    expect(refusal?.message).toContain("--dirty");
+  });
+
+  it("allows a dirty tree when the caller asked for a local build", () => {
+    // `--dirty` is a decision, not a default: the document is produced and the
+    // caller has said on purpose that it must not be published.
+    expect(refusalFor({ unstated: [], dirty: true, allowDirty: true })).toBeNull();
+  });
+
+  it("allows a clean tree with every requested platform accounted for", () => {
+    expect(refusalFor({ unstated: [], dirty: false, allowDirty: false })).toBeNull();
+  });
+
+  it("names the missing reason before the dirty tree, so one run reports one cause", () => {
+    // Both are true; the earlier check wins so the message is actionable rather
+    // than a list a reader has to triage.
+    const refusal = refusalFor({ unstated: ["linux"], dirty: true, allowDirty: false });
+
+    expect(refusal?.message).toContain("no reason given");
+    expect(refusal?.message).not.toContain("uncommitted changes");
+  });
+});
+
+describe("argumentRefusalFor", () => {
+  // The pipeline refused this pair and this command accepted it, then dropped
+  // half of it: the caller said why Linux is missing and the document said
+  // nobody asked. Both scripts answer the same question, so both refuse.
+
+  it("refuses a reason for a platform this run was not asked to build", () => {
+    const refusal = argumentRefusalFor({ targets: ["win32"], linuxNotBuilt: "docker-unavailable" });
+
+    expect(refusal).not.toBeNull();
+    expect(refusal).toContain("not asked to build");
+    expect(refusal).toContain("skipped");
+  });
+
+  it("accepts a reason when linux really was asked for", () => {
+    expect(
+      argumentRefusalFor({ targets: ["win32", "linux"], linuxNotBuilt: "docker-unavailable" }),
+    ).toBeNull();
+    expect(argumentRefusalFor({ targets: ["linux"], linuxNotBuilt: "machine-offline" })).toBeNull();
+  });
+
+  it("refuses a reason outside the enum", () => {
+    const refusal = argumentRefusalFor({ targets: ["linux"], linuxNotBuilt: "it-just-broke" });
+
+    expect(refusal).not.toBeNull();
+    expect(refusal).toContain("must be one of");
+    expect(refusal).toContain("not a missing capability");
+  });
+
+  it("says nothing when no reason was given", () => {
+    expect(argumentRefusalFor({ targets: ["win32"], linuxNotBuilt: null })).toBeNull();
+    expect(argumentRefusalFor({ targets: ["linux"], linuxNotBuilt: null })).toBeNull();
   });
 });
