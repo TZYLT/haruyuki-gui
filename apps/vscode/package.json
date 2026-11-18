@@ -1,14 +1,63 @@
 {
   "name": "@haruyuki/vscode",
+  "displayName": "Haruyuki",
+  "description": "Haruyuki shell for Visual Studio Code.",
+  "publisher": "haruyuki",
   "private": true,
   "type": "module",
   "version": "0.1.0",
-  "main": "src/index.ts",
+  "main": "./dist/extension.cjs",
   "exports": {
     ".": "./src/index.ts"
   },
+  "engines": {
+    "vscode": "^1.144.0"
+  },
+  "activationEvents": [
+    "onCommand:haruyuki.openPanel",
+    "onView:haruyuki.launcher"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "haruyuki.openPanel",
+        "title": "Open Haruyuki Panel"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "haruyuki",
+          "title": "Haruyuki",
+          "icon": "media/haruyuki.svg"
+        }
+      ]
+    },
+    "views": {
+      "haruyuki": [
+        {
+          "id": "haruyuki.launcher",
+          "name": "Haruyuki",
+          "icon": "media/haruyuki.svg"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Haruyuki",
+      "properties": {
+        "haruyuki.enginePath": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "description": "Path to a Haruyuki engine directory, or empty to discover one on PATH"
+        }
+      }
+    }
+  },
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build": "node scripts/build.mjs",
+    "test": "vitest run --dir src"
   },
   "dependencies": {
     "@haruyuki/core": "workspace:*",

@@ -1,0 +1,26 @@
+# Packaging manifest for the VS Code extension: only what the extension host loads.
+#
+# `dist/` holds the bundled entry named by package.json `main`, and `media/` holds
+# the activity-bar icon declared in `contributes`; `package.json` itself is the
+# manifest. Everything listed below is development input and is never read at
+# runtime, so it is excluded from the packaged extension. Only plain exclusions
+# are used, so the rules read the same to `vsce` and to a human.
+
+# Build and dependency trees
+node_modules/**
+src/**
+scripts/**
+dist/**/*.map
+dist/**/*.ts
+
+# Development configuration and sources
+**/*.ts
+**/*.tsx
+tsconfig.json
+.gitignore
+
+# Local artifacts
+*.log
+*.vsix
+coverage/**
+.tmp/**
