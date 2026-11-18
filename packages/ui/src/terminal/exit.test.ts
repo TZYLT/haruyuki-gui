@@ -323,8 +323,15 @@ describe("the module is the only place a terminal-input payload is named", () =>
     // this test has to look for it. Any third occurrence -- a keyboard handler
     // that builds its own payload instead of calling `translateKey`, a paste
     // handler that does the same -- lands in this list.
+    //
+    // Generated tables are a different kind of occurrence: they are derived from
+    // the contract by a script, so a name appearing there is the contract being
+    // quoted, not a second hand-written producer. Excluding them by path (rather
+    // than by "this one file") keeps the next generated table from re-reddening
+    // this test while a real second producer still fails it.
     const offenders = Object.keys(SOURCES).filter((path) => {
       if (path.endsWith("exit.ts") || path.endsWith("exit.test.ts")) return false;
+      if (path.endsWith(".generated.ts") || path.endsWith(".generated.tsx")) return false;
 
       const text = SOURCES[path];
 
