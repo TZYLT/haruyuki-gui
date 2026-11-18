@@ -15,13 +15,14 @@
  *   activates, and expects zero calls, then invokes the registered command and
  *   expects the first one.
  *
- * The panel is not this file's to build
- *   Opening the panel is a `WebviewPanel`, a document and a CSP, and that is a
- *   separate body of work with its own files. This file declares the seam it
- *   will arrive through -- {@link setPanelOpener} -- and calls it. Until
- *   something installs an opener, clicking says so in the log and opens nothing,
- *   which is the honest state of a shell whose panel is not written yet rather
- *   than a placeholder panel that would have to be thrown away.
+ * The panel is installed here, built elsewhere
+ *   Opening the panel is a `WebviewPanel`, a document and a CSP, and those live
+ *   in `./host/panel.ts`. This file declares the seam it arrives through --
+ *   {@link setPanelOpener} -- installs the host during activation and calls it.
+ *   Constructing the host starts nothing: it joins two URIs and reads no
+ *   document, so the panel itself is still created only when a command or a tree
+ *   item asks for it. A build that installs no opener would say so in the log
+ *   and open nothing, which is why the seam stays optional.
  *
  * The activity bar cannot carry a command
  *   `contributes.viewsContainers.activitybar` declares a container; the
@@ -32,7 +33,9 @@
 
 import * as vscode from "vscode";
 
+import { createLifecycle, type Lifecycle, type LifecycleCoreHost } from "./host/lifecycle.js";
 import { createShellLog, type ShellLog } from "./host/log.js";
+import { createPanelHost } from "./host/panel.js";
 import { createStatusBar, type StatusBar } from "./host/status.js";
 import { COMMAND_OPEN_PANEL, OUTPUT_CHANNEL_NAME, VIEW_LAUNCHER } from "./shared/channels.js";
 import { APP_VERSION } from "./shared/version.js";
@@ -69,6 +72,32 @@ let shellLog: ShellLog | undefined;
 
 /** The status bar, retained so `deactivate` can return it to idle. */
 let statusBar: StatusBar | undefined;
+
+/**
+ * The core child this activation started, and where its token went.
+ *
+ * Both are `undefined` until something opens the panel: activation itself starts
+ * nothing (see the file comment). The opener that does start the child hands it
+ * over through {@link setCoreHost}, so teardown never has to guess a path or
+ * reach into another module's state.
+ */
+let coreHost: LifecycleCoreHost | undefined;
+let tokenDir: string | undefined;
+
+/**
+ * Record the core child this activation owns.
+ *
+ * Called by whatever starts the child -- the panel opener -- so `deactivate`
+ * knows what to stop and which single directory holds the token file. Passing
+ * `undefined` forgets it, which is what a test does to leave no state behind.
+ *
+ * @param host the running child, or `undefined` when none was started
+ * @param dir the directory the engine wrote its capability token into
+ */
+export function setCoreHost(host: LifecycleCoreHost | undefined, dir?: string): void {
+  coreHost = host;
+  tokenDir = dir;
+}
 
 /**
  * Install the panel opener.
@@ -177,39 +206,57 @@ export function activate(context: vscode.ExtensionContext): void {
     treeDataProvider: launcherProvider,
   });
 
+  // The panel itself. Built here but opened later: constructing the host joins
+  // two URIs and reads no document, so activation still starts nothing, and the
+  // seam is filled by the time any entry point can be reached.
+  setPanelOpener(
+    createPanelHost({
+      extensionUri: context.extensionUri,
+      language: vscode.env.language,
+      log: (code, fields) => log.event(code, fields),
+    }),
+  );
+
   context.subscriptions.push(channel, item, command, treeView);
 }
 
 /**
  * Deactivate the extension.
  *
- * The opener is asked to release the panel first, because it owns everything
- * that would otherwise outlive the window. Nothing here starts anything, so a
- * deactivation of a window where no panel was ever opened is a no-op.
+ * The whole teardown is one call into {@link createLifecycle}, which owns the
+ * order -- panel, then the core child (which stops the engine first), then the
+ * capability-token file, then the status bar -- and the budget it runs inside.
+ * Nothing about that order is repeated here: a second copy of a sequence is a
+ * second sequence, and the one that runs would be whichever was edited last.
  *
- * @returns a promise that settles once the panel is gone
+ * Every module-level handle is cleared before the teardown starts, so a
+ * deactivation that is still in flight cannot be observed by a call that
+ * happens during it, and a reactivated window starts from no shared state.
+ *
+ * @returns a promise that settles once the teardown is over, within its budget
  */
 export async function deactivate(): Promise<void> {
   const log = shellLog;
-
-  statusBar?.set("inactive");
-
   const opener = panelOpener;
+  const host = coreHost;
+  const dir = tokenDir;
 
   panelOpener = undefined;
+  coreHost = undefined;
+  tokenDir = undefined;
 
-  if (opener?.close === undefined) {
-    log?.event("EXTENSION_DEACTIVATED", { panel: false });
+  const lifecycle: Lifecycle = createLifecycle({
+    panel: opener,
+    coreHost: host,
+    tokenDir: dir,
+    log,
+    status: statusBar,
+  });
 
-    return;
-  }
+  await lifecycle.dispose();
 
-  try {
-    await opener.close();
-    log?.event("EXTENSION_DEACTIVATED", { panel: true });
-  } catch (error) {
-    // A failure to close is reported and swallowed: VS Code waits on this
-    // promise, and a rejection here would surface as a crash during shutdown.
-    log?.failure("PANEL_CLOSE_FAILED", error);
-  }
+  log?.event("EXTENSION_DEACTIVATED", {
+    panel: opener?.close !== undefined,
+    core: host !== undefined,
+  });
 }

@@ -34,6 +34,8 @@ const editor = {
   statusItems: [] as { text: string; tooltip: unknown; command: unknown }[],
   /** Every `OutputChannel` created, in order. */
   channels: [] as { name: string; lines: string[] }[],
+  /** Every `WebviewPanel` created, in order. */
+  panels: [] as { viewType: string; title: string }[],
 
   reset(): void {
     editor.calls.length = 0;
@@ -41,6 +43,7 @@ const editor = {
     editor.treeView = undefined;
     editor.statusItems.length = 0;
     editor.channels.length = 0;
+    editor.panels.length = 0;
   },
 };
 
@@ -58,10 +61,31 @@ vi.mock("vscode", () => {
     }
   }
 
+  /** As much of a `Uri` as the panel host reads. */
+  function makeUri(value: string): {
+    fsPath: string;
+    toString(): string;
+  } {
+    return { fsPath: value, toString: () => `file://${value}` };
+  }
+
   return {
     TreeItem,
     TreeItemCollapsibleState: { None: 0, Collapsed: 1, Expanded: 2 },
     StatusBarAlignment: { Left: 1, Right: 2 },
+    ViewColumn: { Active: -1, One: 1 },
+    Uri: {
+      joinPath(base: { fsPath: string }, ...segments: string[]): unknown {
+        editor.calls.push({ member: "Uri.joinPath", args: [base, ...segments] });
+
+        return makeUri(`${base.fsPath}/${segments.join("/")}`);
+      },
+    },
+    env: {
+      // A language the panel writes verbatim; the value itself is not the
+      // subject of this file, only that it reaches the document untouched.
+      language: "zh-cn",
+    },
     window: {
       createOutputChannel(name: string) {
         editor.calls.push({ member: "createOutputChannel", args: [name] });
@@ -98,6 +122,28 @@ vi.mock("vscode", () => {
 
         return { dispose: () => undefined };
       },
+      createWebviewPanel(viewType: string, title: string, showOptions: unknown, options: unknown) {
+        editor.calls.push({
+          member: "createWebviewPanel",
+          args: [viewType, title, showOptions, options],
+        });
+
+        editor.panels.push({ viewType, title });
+
+        return {
+          webview: {
+            cspSource: "https://panel.vscode-cdn.net",
+            html: "",
+            postMessage: () => undefined,
+            asWebviewUri: (uri: { fsPath: string }) => makeUri(uri.fsPath),
+          },
+          visible: true,
+          reveal: () => undefined,
+          dispose: () => undefined,
+          onDidDispose: () => ({ dispose: () => undefined }),
+          onDidChangeViewState: () => ({ dispose: () => undefined }),
+        };
+      },
     },
     commands: {
       registerCommand(command: string, callback: (...args: never[]) => unknown) {
@@ -113,8 +159,16 @@ vi.mock("vscode", () => {
 import * as extension from "../extension.js";
 
 /** A `context` as far as the extension reads it. */
-function context(): { subscriptions: { dispose(): void }[] } {
-  return { subscriptions: [] };
+function context(): {
+  subscriptions: { dispose(): void }[];
+  extensionUri: { fsPath: string; toString(): string };
+} {
+  // The panel host resolves its two resource roots against this, and nothing
+  // else in the entry reads it.
+  return {
+    subscriptions: [],
+    extensionUri: { fsPath: "/extension", toString: () => "file:///extension" },
+  };
 }
 
 /** Every recorded call named one of these. */
@@ -139,6 +193,10 @@ describe("extension entry: activation", () => {
     // opener, and the opener is the one thing activation must not call.
     expect(called(["openPanel", "fork", "spawn", "start"])).toEqual([]);
 
+    // Installing a panel host is not opening one: activation must not have
+    // created a webview, or the cost it exists to avoid is paid on every start.
+    expect(editor.panels).toHaveLength(0);
+
     // Positive half: it did register the two entry points, so "nothing" is not
     // the vacuous reading of an empty call log.
     expect(editor.commands.has("haruyuki.openPanel")).toBe(true);
@@ -146,10 +204,13 @@ describe("extension entry: activation", () => {
   });
 
   it("does not open the panel until the command is invoked", () => {
+    extension.activate(context() as never);
+
+    // Installed after activation so this case observes the command rather than
+    // the host activation installs; both are the same seam.
     const open = vi.fn();
 
     extension.setPanelOpener({ open });
-    extension.activate(context() as never);
 
     expect(open).toHaveBeenCalledTimes(0);
 
@@ -214,12 +275,30 @@ describe("extension entry: the panel seam", () => {
 
   it("says so when no opener is installed instead of failing silently", () => {
     extension.activate(context() as never);
+    // The entry installs the real host during activation; removing it is how a
+    // build with no panel module behind the seam behaves.
+    extension.setPanelOpener(undefined);
+
     extension.openPanel();
 
     const lines = editor.channels[0]?.lines.join("\n") ?? "";
 
     expect(lines).toContain("PANEL_OPEN_REQUESTED");
     expect(lines).toContain("no panel opener is installed");
+  });
+
+  it("opens the panel the entry itself installed", () => {
+    extension.activate(context() as never);
+    extension.openPanel();
+
+    const lines = editor.channels[0]?.lines.join("\n") ?? "";
+
+    // The wiring this change added: the click no longer falls through to the
+    // "no opener" sentence, so it reached the panel module. Whether a document
+    // could be built depends on a build artifact this test does not ship, and
+    // that failure is the panel's own reported one.
+    expect(lines).toContain("PANEL_OPEN_REQUESTED");
+    expect(lines).not.toContain("no panel opener is installed");
   });
 
   it("survives a throwing opener and leaves the status bar failed", () => {
