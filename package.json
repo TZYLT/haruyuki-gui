@@ -32,6 +32,8 @@
     "test": "vitest run",
     "desktop:smoke:supervision": "pnpm --filter @haruyuki/desktop smoke:supervision",
     "release:verify": "node apps/desktop/scripts/verify-packaged-start.mjs",
+    "vscode:build": "pnpm --filter @haruyuki/vscode build",
+    "vscode:test": "vitest run apps/vscode",
     "hooks:install": "node scripts/install-hooks.mjs",
     "record": "node scripts/engine/record.mjs",
     "b2:demo": "vitest run packages/core/src/engine/client/acceptance-demo --reporter=verbose --no-coverage",
