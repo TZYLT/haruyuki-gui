@@ -53,6 +53,8 @@ describe("FRAME_TYPES", () => {
       "state.device": true,
       "state.queue": true,
       "state.subagents": true,
+      terminal_spawned: true,
+      terminal_exited: true,
     };
 
     // Runtime: the two sets must agree, which catches a table edited through a

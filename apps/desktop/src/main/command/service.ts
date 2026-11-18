@@ -7,8 +7,10 @@
  *              the three reply arms out; this module owns the pool lookup and
  *              otherwise delegates every envelope decision to the dispatcher.
  *   events     channel.onEvent -> the agent's merger -> `term.output` to the
- *              bridge sink. The merger's `changes` are consumed by C2 later;
- *              until then they are counted and logged, never rendered.
+ *              bridge sink. Of the merger's `changes`, only the terminal
+ *              lifecycle passthroughs are rendered, as their own control
+ *              frames; everything else still belongs to C2 and is counted and
+ *              logged until that consumer lands.
  *
  * Lifetime
  *   The pool is built on the `ready` transition and closed on `closed`/`failed`.
@@ -99,6 +101,31 @@ function unavailable(): CommandReply {
 }
 
 /**
+ * Engine events that reach the renderer as their own control frame.
+ *
+ * Only these two. A terminal appearing or ending is a single observable
+ * occurrence the renderer cannot derive from `term.output`, and nothing else
+ * consumes these passthroughs yet. Every other passthrough still waits for C2
+ * instead of leaving through a frame type this module does not own.
+ */
+const TERMINAL_EVENT_TYPES: ReadonlySet<string> = new Set(["terminal_spawned", "terminal_exited"]);
+
+/**
+ * The control frame for one merger change, or `null` when the change is not a
+ * terminal lifecycle event.
+ *
+ * `body` is the engine's raw event object, untouched. The envelope is the only
+ * thing this module adds, so the renderer reads exactly the fields the engine
+ * emitted and no decoder here has to track their shape. `seq` is a placeholder
+ * because the bridge sink renumbers every frame it sends.
+ */
+function terminalEventFrame(change: MergerChange): Frame | null {
+  if (change.kind !== "passthrough" || !TERMINAL_EVENT_TYPES.has(change.type)) return null;
+
+  return { v: 1, ch: "control", seq: 0, t: change.type, body: change.raw };
+}
+
+/**
  * Build the command service.
  *
  * @param options the engine, the bridge sink and the optional test seams
@@ -177,8 +204,15 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
 
         if (changes.length === 0) return;
 
-        // Changes belong to C2. Until it is wired, counting and logging is the
-        // honest signal: the frames are merged, but nothing renders them yet.
+        // Terminal lifecycle is forwarded first: it is the one change the
+        // renderer needs today, and nothing about it depends on C2.
+        for (const change of changes) {
+          const frame = terminalEventFrame(change);
+          if (frame !== null) send(frame);
+        }
+
+        // The remaining changes belong to C2. Until it is wired, counting and
+        // logging is the honest signal for the ones nothing renders yet.
         changesSeen += changes.length;
         log("COMMAND_MERGE_CHANGES", {
           agentId,
@@ -277,6 +311,13 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
       detach(state);
     }
   });
+
+  // The service is built when the runtime hands over an engine that is already
+  // ready, so waiting for a transition would wait forever: the handover happens
+  // after the handshake, and `onState` reports transitions rather than the
+  // current value. `endpoint` is the facade's own "ready and usable" fact, and
+  // `attach` is idempotent, so a later `ready` cannot build a second pool.
+  if (engine.endpoint !== null) attach();
 
   async function invoke(call: CommandCall): Promise<CommandReply> {
     if (disposed || pool === null) return unavailable();

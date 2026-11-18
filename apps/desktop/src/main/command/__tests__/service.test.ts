@@ -54,6 +54,27 @@ const CHANGE: MergerChange = {
   first: true,
 };
 
+/**
+ * Deliver one passthrough change through the control channel, the way the
+ * merger produces one from a single engine event.
+ */
+function deliverPassthrough(rig: Setup, type: string, raw: unknown): void {
+  const record = rig.mergerRig.records[0];
+
+  record?.changes.push({
+    authorAgentId: "a1",
+    runtimeAgentId: "a1",
+    subagentId: null,
+    conversationId: "c1",
+    at: 1,
+    kind: "passthrough",
+    type,
+    raw,
+  });
+
+  rig.poolRig.channels.get("__control__")?.emit({ type, raw, at: 1 });
+}
+
 /** A controllable engine facade: the endpoint is set by the test, states are emitted. */
 function createEngineRig(): {
   engine: CommandServiceEngine;
@@ -304,6 +325,29 @@ describe("createCommandService", () => {
     expect(rig.service.ready).toBe(true);
   });
 
+  it("attaches when the engine is already ready at construction", async () => {
+    const engineRig = createEngineRig();
+    engineRig.setEndpoint(ENDPOINT);
+    const poolRig = createPoolRig();
+    const mergerRig = createMergerRig();
+    const createPool = vi.fn(() => poolRig.pool);
+
+    const service = createCommandService({
+      engine: engineRig.engine,
+      send: () => undefined,
+      createPool,
+      createMerger: mergerRig.factory,
+    });
+
+    expect(createPool).toHaveBeenCalledTimes(1);
+    expect(service.ready).toBe(true);
+    await expect(service.invoke(DEVICE_INFO)).resolves.toEqual({
+      ok: true,
+      completion: "answered",
+      data: null,
+    });
+  });
+
   it("builds one pool and one control merger even if ready is emitted twice", () => {
     const rig = ready();
 
@@ -369,8 +413,45 @@ describe("createCommandService", () => {
 
     const logged = rig.logs.find((entry) => entry.code === "COMMAND_MERGE_CHANGES");
     expect(logged?.detail).toEqual({ agentId: "__control__", count: 1, total: 1 });
-    // The merger's changes are counted, not sent: only `onFrame` reaches the bridge.
+    // A message delta is counted, not sent: C2 owns it, and only `onFrame` and
+    // the terminal lifecycle changes reach the bridge today.
     expect(rig.frames).toEqual([]);
+  });
+
+  it("forwards terminal_spawned as a control frame with the engine's body untouched", () => {
+    const rig = ready();
+    const raw = { terminal_id: "t-1", pid: 4242 };
+
+    deliverPassthrough(rig, "terminal_spawned", raw);
+
+    expect(rig.frames).toEqual([{ v: 1, ch: "control", seq: 0, t: "terminal_spawned", body: raw }]);
+    // Same object, not a copy: nothing between the merger and the bridge may
+    // rewrite the engine's payload.
+    expect(rig.frames[0]?.body).toBe(raw);
+  });
+
+  it("forwards terminal_exited as a control frame with the engine's body untouched", () => {
+    const rig = ready();
+    const raw = { terminal_id: "t-1", exitCode: 1, error: "spawn failed" };
+
+    deliverPassthrough(rig, "terminal_exited", raw);
+
+    expect(rig.frames).toEqual([{ v: 1, ch: "control", seq: 0, t: "terminal_exited", body: raw }]);
+    expect(rig.frames[0]?.body).toBe(raw);
+  });
+
+  it("does not render other passthroughs as frames", () => {
+    const rig = ready();
+
+    deliverPassthrough(rig, "memory_updated", { agent_id: "a1", used: 12 });
+
+    // Still ingested and counted, but C2 owns it; the renderer sees nothing.
+    expect(rig.frames).toEqual([]);
+    expect(rig.logs.find((entry) => entry.code === "COMMAND_MERGE_CHANGES")?.detail).toEqual({
+      agentId: "__control__",
+      count: 1,
+      total: 1,
+    });
   });
 
   it("closes the pool and forgets mergers on closed, then builds a fresh pool on a later ready", async () => {

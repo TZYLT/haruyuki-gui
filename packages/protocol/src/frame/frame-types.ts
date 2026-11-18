@@ -107,6 +107,18 @@ export const FRAME_TYPES = {
     since: "C1",
     summary: "subagent state snapshot",
   },
+  terminal_spawned: {
+    ch: "control",
+    coalescible: "never",
+    since: "E1",
+    summary: "a terminal process appeared",
+  },
+  terminal_exited: {
+    ch: "control",
+    coalescible: "never",
+    since: "E1",
+    summary: "a terminal process exited",
+  },
 } as const satisfies Record<string, FrameTypeSpec>;
 
 /**
