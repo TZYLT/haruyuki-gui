@@ -197,6 +197,79 @@ describe("layout", () => {
   });
 });
 
+describe("order with buffered prose", () => {
+  it("flushes an un-newlined line before a new part", () => {
+    const state = newState();
+    const cursor = createPartsCursor();
+
+    expect(appendText(state, "hello")).toEqual([]);
+    const changed = appendParts(state, [BASE64_IMAGE], cursor);
+
+    expect(changed.map((block) => block.id)).toEqual(["msg-1:text:0", "msg-1:image:0"]);
+    expect(state.blocks.map((block) => block.id)).toEqual(["msg-1:text:0", "msg-1:image:0"]);
+    expect(textBlocks(state.blocks).map((block) => block.text)).toEqual(["hello"]);
+    expect(textBlocks(state.blocks)[0]?.status).toBe("streaming");
+  });
+
+  it("flushes buffered prose when a prose position becomes a part", () => {
+    const state = newState();
+    const cursor = createPartsCursor();
+
+    appendText(state, "hello");
+    appendParts(state, [{ type: "text", text: "hello" }], cursor);
+    const changed = appendParts(state, [BASE64_IMAGE], cursor);
+
+    expect(changed.map((block) => block.id)).toEqual(["msg-1:text:0", "msg-1:image:0"]);
+    expect(state.blocks.map((block) => block.id)).toEqual(["msg-1:text:0", "msg-1:image:0"]);
+  });
+
+  it("puts prose appended after a part in a new text block behind it", () => {
+    const state = newState();
+    const cursor = createPartsCursor();
+
+    appendText(state, "hello");
+    appendParts(state, [BASE64_IMAGE], cursor);
+    appendText(state, "more\n");
+
+    expect(state.blocks.map((block) => block.id)).toEqual([
+      "msg-1:text:0",
+      "msg-1:image:0",
+      "msg-1:text:1",
+    ]);
+    expect(textBlocks(state.blocks).map((block) => block.text)).toEqual(["hello", "more\n"]);
+  });
+
+  it("keeps a newline-terminated line ahead of a part and flushes nothing extra", () => {
+    const state = newState();
+    const cursor = createPartsCursor();
+
+    appendText(state, "hello\n");
+    const changed = appendParts(state, [BASE64_IMAGE], cursor);
+
+    expect(changed.map((block) => block.id)).toEqual(["msg-1:image:0"]);
+    expect(state.blocks.map((block) => block.id)).toEqual(["msg-1:text:0", "msg-1:image:0"]);
+    expect(textBlocks(state.blocks).map((block) => block.text)).toEqual(["hello\n"]);
+  });
+
+  it("does not flush buffered prose for a revision", () => {
+    const state = newState();
+    const cursor = createPartsCursor();
+
+    appendText(state, "before\n");
+    appendParts(state, [BASE64_IMAGE], cursor);
+    expect(appendText(state, "pending tail")).toEqual([]);
+
+    const revised: AssistantPart = {
+      ...BASE64_IMAGE,
+      source: { type: "base64", media_type: "image/png", data: "REVISED" },
+    };
+    const changed = appendParts(state, [revised], cursor);
+
+    expect(changed.map((block) => block.id)).toEqual(["msg-1:image:0"]);
+    expect(state.blocks.map((block) => block.id)).toEqual(["msg-1:text:0", "msg-1:image:0"]);
+  });
+});
+
 describe("revisions", () => {
   it("replaces a revised part in place under the same id", () => {
     const state = newState();

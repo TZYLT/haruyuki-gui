@@ -18,6 +18,12 @@
  *     order. Text without a newline yet returns an empty list: it is buffered
  *     inside the fence state so a partial fence is never shown as prose.
  *
+ *   flushPendingText(state: MessageState): readonly Block[]
+ *     Flushes the tail line that has no newline yet, without closing the
+ *     message: `completeMessage` minus the status change. A caller that has to
+ *     place a non-text block calls this first, so the prose that preceded it
+ *     keeps its place in the source order. Idempotent.
+ *
  *   completeMessage(state: MessageState): readonly Block[]
  *     Flushes the tail line and marks every still-`streaming` text/code block
  *     `complete`. An unterminated code block keeps `closed:false`; it does not
@@ -86,6 +92,22 @@ export function appendText(state: MessageState, text: string): readonly Block[] 
 }
 
 /**
+ * Flush the tail line that has no newline yet, without closing the message.
+ *
+ * Prose only becomes a block once its newline arrives; the tail of the running
+ * text waits inside the fence scanner. A caller that is about to append a
+ * non-text block has to flush that tail first, otherwise the part would be
+ * pushed before prose that precedes it in the source and the live order would
+ * disagree with a whole-message parse. This is `completeMessage`'s first step
+ * on its own: the flushed blocks stay `streaming`, because the message is not
+ * over. An empty tail returns an empty list, and calling it twice returns an
+ * empty list the second time.
+ */
+export function flushPendingText(state: MessageState): readonly Block[] {
+  return applySegments(state, finishFence(state.fence));
+}
+
+/**
  * Close a message: flush the unterminated tail line, then mark every streaming
  * text/code block complete.
  *
@@ -95,7 +117,7 @@ export function appendText(state: MessageState, text: string): readonly Block[] 
  */
 export function completeMessage(state: MessageState): readonly Block[] {
   const changed = new Map<BlockId, Block>();
-  for (const block of applySegments(state, finishFence(state.fence))) {
+  for (const block of flushPendingText(state)) {
     changed.set(block.id, block);
   }
 

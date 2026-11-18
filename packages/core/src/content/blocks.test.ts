@@ -10,7 +10,7 @@
 import type { Block, CodeBlock, TextBlock } from "@haruyuki/protocol";
 import { describe, expect, it } from "vitest";
 
-import { appendText, completeMessage, createMessageState } from "./blocks.js";
+import { appendText, completeMessage, createMessageState, flushPendingText } from "./blocks.js";
 
 const ASSISTANT = {
   id: "msg-1",
@@ -163,6 +163,60 @@ describe("deltas", () => {
 
     expect(appendText(state, "partial")).toEqual([]);
     expect(state.blocks).toEqual([]);
+  });
+});
+
+describe("flushPendingText", () => {
+  it("turns an un-newlined tail into a text block", () => {
+    const state = newState();
+    appendText(state, "partial");
+
+    const changed = flushPendingText(state);
+    const [text] = textBlocks(state.blocks);
+
+    expect(changed.map((block) => block.id)).toEqual(["msg-1:text:0"]);
+    expect(text?.text).toBe("partial");
+    expect(text?.flavor).toBe("markdown");
+  });
+
+  it("extends the open text block and leaves the message streaming", () => {
+    const state = newState();
+    appendText(state, "a\nb");
+
+    const changed = flushPendingText(state);
+    const [text] = textBlocks(state.blocks);
+
+    expect(changed.map((block) => block.id)).toEqual(["msg-1:text:0"]);
+    expect(text?.text).toBe("a\nb");
+    expect(streamedBlocks(state.blocks).map((block) => block.status)).toEqual(["streaming"]);
+  });
+
+  it("flushes a code tail without closing the block", () => {
+    const state = newState();
+    appendText(state, "```ts\nlet x = 1;");
+
+    flushPendingText(state);
+    const [code] = codeBlocks(state.blocks);
+
+    expect(code?.text).toBe("let x = 1;");
+    expect(code?.closed).toBe(false);
+    expect(code?.status).toBe("streaming");
+  });
+
+  it("returns nothing when the tail is empty", () => {
+    const state = newState();
+    appendText(state, "done\n");
+
+    expect(flushPendingText(state)).toEqual([]);
+  });
+
+  it("is idempotent", () => {
+    const state = newState();
+    appendText(state, "tail");
+
+    flushPendingText(state);
+    expect(flushPendingText(state)).toEqual([]);
+    expect(textBlocks(state.blocks)).toHaveLength(1);
   });
 });
 

@@ -16,6 +16,8 @@
  * - a new block is appended at the current end, so parts stay in source order
  *   and prose that arrives after a part starts a new text block (the text
  *   assembler writes into "the last block", and the last block is now a part);
+ * - prose still buffered in the fence scanner is flushed before that append, so
+ *   a part never jumps ahead of an un-newlined line that precedes it;
  * - a part already seen is replaced in place under the same id; a revision
  *   never moves or duplicates it;
  * - an assistant message's `reasoning` part produces no block: the same
@@ -34,6 +36,7 @@
 import type { Block, BlockId, ImageBlock, ImageSource, UnknownBlock } from "@haruyuki/protocol";
 
 import type { AssistantPart } from "../merge/types.js";
+import { flushPendingText } from "./blocks.js";
 import { blockIdFor, type MessageState } from "./types.js";
 
 /** One part position that produced a block. */
@@ -113,6 +116,15 @@ export function appendParts(
 
     // A new position, or a position that used to hold prose. A block cannot
     // take prose's place without reordering, so it is appended like a new part.
+    //
+    // Prose whose last line has no newline yet is still buffered in the fence
+    // scanner, so it is not in `state.blocks` and a part pushed now would land
+    // ahead of it. Flush that tail first and report it too: the result is then
+    // the same block order a whole-message parse produces. A revision never
+    // needs this -- it replaces a block in place and flushes nothing.
+    for (const flushed of flushPendingText(state)) {
+      changed.set(flushed.id, flushed);
+    }
     const block = buildBlock(state, part);
     cursor.slots[index] = { blockId: block.id, part };
     changed.set(block.id, pushBlock(state, block));
