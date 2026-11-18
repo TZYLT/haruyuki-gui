@@ -57,6 +57,7 @@ import {
   type HostToCore,
   type SecureOp,
 } from "../core/ipc.js";
+import type { SecureInboundAnswerer, SecureReplyMessage } from "./secrets.js";
 
 /** Fork budget for `start`: the core boots, validates `init` and answers `ready`. */
 const DEFAULT_START_TIMEOUT_MS = 30_000;
@@ -126,6 +127,15 @@ export type CoreHostOptions = {
   readonly commandTimeoutMs?: number;
   /** Per-request budget for the secret store. */
   readonly secureTimeoutMs?: number;
+  /**
+   * The handler for secret requests the child sends.
+   *
+   * Absent means no such handler is wired in, and then a request from the child
+   * has nothing to answer it. It is injected rather than constructed here so
+   * this class stays a pipe: `./secrets.ts` owns the store, and the message loop
+   * must not grow a second reader of the secret message family.
+   */
+  readonly secureInbound?: SecureInboundAnswerer;
   /** Graceful-shutdown budget. */
   readonly stopTimeoutMs?: number;
 };
@@ -195,6 +205,8 @@ export class CoreProcessHost implements CoreHost {
 
   private readonly secureTimeoutMs: number;
 
+  private readonly secureInbound: SecureInboundAnswerer | undefined;
+
   private readonly stopTimeoutMs: number;
 
   private child: ChildProcess | null = null;
@@ -232,6 +244,7 @@ export class CoreProcessHost implements CoreHost {
     this.startTimeoutMs = options.startTimeoutMs ?? DEFAULT_START_TIMEOUT_MS;
     this.commandTimeoutMs = options.commandTimeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS;
     this.secureTimeoutMs = options.secureTimeoutMs ?? DEFAULT_SECURE_TIMEOUT_MS;
+    this.secureInbound = options.secureInbound;
     this.stopTimeoutMs = options.stopTimeoutMs ?? DEFAULT_STOP_TIMEOUT_MS;
   }
 
@@ -446,8 +459,16 @@ export class CoreProcessHost implements CoreHost {
     return env;
   }
 
-  /** @returns whether the message was handed to the child */
-  private send(message: HostToCore): boolean {
+  /**
+   * Hand one message to the child, whichever direction it belongs to.
+   *
+   * `secure.request` is the one family whose request the child sends and whose
+   * answer the host sends, so both directions reach the same handle here.
+   *
+   * @param message a host-to-core message or the answer to one
+   * @returns whether it was handed over
+   */
+  private send(message: HostToCore | SecureReplyMessage): boolean {
     const child = this.child;
 
     if (child === null || !child.connected) return false;
@@ -461,6 +482,16 @@ export class CoreProcessHost implements CoreHost {
 
   /** The one place inbound messages are narrowed. Never throws. */
   private handleMessage(raw: unknown): void {
+    // Offered before narrowing, because the request family belongs to the child's
+    // side of this channel: `../core/ipc.ts` narrows it with the host-to-core
+    // helpers, so a core-to-host narrowing would refuse every request. The
+    // handler is injected and decides ownership itself; see `./secrets.ts`.
+    //
+    // Only this one message can be answered asynchronously. Narrowing it here
+    // too would be a second reader of a shape that module already owns, so a
+    // request the handler owns never reaches the switch below.
+    if (this.secureInbound?.(raw, (reply) => this.send(reply)) === true) return;
+
     const narrowed = narrowCoreToHost(raw);
 
     if (!narrowed.ok) {
