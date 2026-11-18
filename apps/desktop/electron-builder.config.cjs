@@ -28,6 +28,25 @@ const PACKAGE_DIR = __dirname;
 /** Repository root, two levels up. */
 const REPO_ROOT = path.resolve(PACKAGE_DIR, "..", "..");
 
+/**
+ * Icon files, resolved through `buildResources` (`build/`).
+ *
+ * These are PLACEHOLDERS, drawn by `scripts/make-placeholder-icons.mjs`: a
+ * neutral rounded square with a dashed frame and a capital H. They are not a
+ * brand mark, and they are deliberately not the Electron default icon either --
+ * the whole point of having them is that the package no longer ships the stock
+ * Electron icon, and that "which icon did we ship" can be answered from source.
+ *
+ * When real artwork arrives, replace `build/icon.png`, `build/icon.ico` and
+ * `build/icon.icns` with the same file names. Nothing in this file needs to
+ * change, because these paths point at the files, not at the generator.
+ * Regenerating the placeholders is one command and is byte-reproducible, so the
+ * generator is safe to delete once real artwork is in place.
+ */
+const ICON_PNG = path.join(PACKAGE_DIR, "build", "icon.png");
+const ICON_ICO = path.join(PACKAGE_DIR, "build", "icon.ico");
+const ICON_ICNS = path.join(PACKAGE_DIR, "build", "icon.icns");
+
 /** @type {import("electron-builder").Configuration} */
 module.exports = {
   appId: "com.haruyuki.gui",
@@ -41,6 +60,10 @@ module.exports = {
     output: path.join(PACKAGE_DIR, "release"),
     buildResources: path.join(PACKAGE_DIR, "build"),
   },
+  // `icon` is set per platform rather than at the top level: the formats are not
+  // interchangeable, and a single value would be converted for the other
+  // platforms at build time -- silently, and with whatever sizes the converter
+  // decides are enough.
   files: ["dist/**/*", "!dist/probe/**", "!node_modules/**", "package.json", "runtime-lock.json"],
   extraMetadata: {
     main: "dist/main/main.cjs",
@@ -69,11 +92,20 @@ module.exports = {
   // nested directory in the download. `productName` is the name a user sees.
   artifactName: "${productName}-${version}-${os}-${arch}.${ext}",
   win: {
+    // The multi-size `.ico` is what Windows reads: the executable's icon
+    // resource is replaced wholesale, and the shell picks the closest size for
+    // the task bar, Alt-Tab and Explorer. `.png` here would be converted, and
+    // the conversion would have to guess which sizes to keep.
+    icon: ICON_ICO,
     // `dir` stays in the list: G1's exit is "a tree that starts", and the tree
     // is what the smoke test launches. `zip` is the download.
     target: ["dir", "zip"],
   },
   linux: {
+    // AppImage wants a PNG; 512x512 is enough for the `.desktop` entry and the
+    // window icon, and the AppImage builder re-encodes it into the icon theme
+    // sizes it needs.
+    icon: ICON_PNG,
     // AppImage is the single-file Linux download. It needs no maintainer
     // scripts and runs without an install step, which matches "download and
     // start" for a desktop app that has no system integration to set up.
@@ -87,5 +119,11 @@ module.exports = {
         Name: "Haruyuki",
       },
     },
+  },
+  // macOS is not a target today, but the icon exists because the resource
+  // directory is format-complete: leaving `.icns` out would make "the icons are
+  // placeholders" true only on the platforms we happen to build.
+  mac: {
+    icon: ICON_ICNS,
   },
 };

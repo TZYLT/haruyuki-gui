@@ -15,8 +15,8 @@
  */
 
 import { createHash } from "node:crypto";
-import { existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { closeSync, existsSync, openSync, readSync } from "node:fs";
+import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -24,9 +24,34 @@ import { scanArtifacts } from "./release.mjs";
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const DESKTOP_DIR = path.resolve(path.dirname(SCRIPT_PATH), "..");
+const REPO_ROOT = path.resolve(DESKTOP_DIR, "..", "..");
 const RELEASE_DIR = path.join(DESKTOP_DIR, "release");
 const MANIFEST_FILE = path.join(RELEASE_DIR, "release-manifest.json");
 const CHECKSUMS_FILE = path.join(RELEASE_DIR, "SHA256SUMS");
+
+/** The icon files the build configuration points at. */
+const BUILT_IN_ICONS = ["icon.png", "icon.ico", "icon.icns"].map((name) =>
+  path.join(DESKTOP_DIR, "build", name),
+);
+
+/** The stock Electron binary: the concrete meaning of "the default icon". */
+const STOCK_ELECTRON = path.join(REPO_ROOT, "node_modules", "electron", "dist", "electron.exe");
+
+/**
+ * What to treat as the stock icon, overridable only to prove this check fails.
+ *
+ * `--default-icon-reference=<exe>` replaces the reference executable. Pointing
+ * it at the packaged tree itself makes every embedded icon "stock", which is
+ * exactly the state a package built without an icon is in -- so it exercises
+ * the byte comparison rather than the file-existence half of the assertion.
+ * Nothing else in this script reads it, and no normal run passes it.
+ */
+function defaultIconReference(argv) {
+  const flag = argv.find((arg) => arg.startsWith("--default-icon-reference="));
+  if (flag === undefined) return STOCK_ELECTRON;
+  const value = flag.slice("--default-icon-reference=".length);
+  return path.isAbsolute(value) ? value : path.resolve(REPO_ROOT, value);
+}
 
 /** The only acceptable platform states, and the reasons each may carry. */
 const STATES = new Set(["built", "not-built", "skipped"]);
@@ -95,7 +120,117 @@ async function sha256Of(file) {
     .digest("hex");
 }
 
+/**
+ * Read the bytes of every RT_ICON resource in a Windows executable.
+ *
+ * Hand-rolled because the alternative is a dependency whose only job would be
+ * this one read, and because the format is small: a PE header, a resource tree
+ * of three directory levels (type -> name -> language), and a data entry that
+ * points at the payload. Everything is little-endian.
+ *
+ * Returns `[]` for anything that is not a PE image or has no resources, so the
+ * caller can tell "no icon resource" from "not a binary I can read" by checking
+ * whether the file exists at all -- which is the distinction that matters here.
+ *
+ * @param {string} file
+ * @returns {Buffer[]} icon payloads, in resource-name order
+ */
+function readIconResources(file) {
+  if (!existsSync(file)) return [];
+
+  // One open handle for the whole parse, and positional reads, so a
+  // 250 MB executable costs a few dozen small reads rather than a full load.
+  const fd = openSync(file, "r");
+  /** @param {number} offset @param {number} bytes @returns {Buffer} */
+  const read = (offset, bytes) => {
+    const buffer = Buffer.alloc(bytes);
+    readSync(fd, buffer, 0, bytes, offset);
+    return buffer;
+  };
+
+  try {
+    const peOffset = read(0x3c, 4).readUInt32LE(0);
+    const coff = read(peOffset, 24);
+    if (coff.toString("latin1", 0, 4) !== "PE\u0000\u0000") return [];
+
+    const sectionCount = coff.readUInt16LE(6);
+    const optionalSize = coff.readUInt16LE(20);
+    const optional = read(peOffset + 24, optionalSize);
+    const magic = optional.readUInt16LE(0);
+    // PE32+ puts the data directories at 112, PE32 at 96. Electron is always
+    // 64-bit here, but the 32-bit offset is what an arm build would hit.
+    const directoryOffset = magic === 0x20b ? 112 : 96;
+    const resourceRva = optional.readUInt32LE(directoryOffset + 2 * 8);
+    if (resourceRva === 0) return [];
+
+    const sectionTable = read(peOffset + 24 + optionalSize, sectionCount * 40);
+    const sections = [];
+    for (let index = 0; index < sectionCount; index++) {
+      const at = index * 40;
+      sections.push({
+        virtualSize: sectionTable.readUInt32LE(at + 8),
+        virtualAddress: sectionTable.readUInt32LE(at + 12),
+        rawSize: sectionTable.readUInt32LE(at + 16),
+        rawPointer: sectionTable.readUInt32LE(at + 20),
+      });
+    }
+
+    const toFileOffset = (rva) => {
+      for (const section of sections) {
+        const span = Math.max(section.virtualSize, section.rawSize);
+        if (rva >= section.virtualAddress && rva < section.virtualAddress + span) {
+          return rva - section.virtualAddress + section.rawPointer;
+        }
+      }
+      return -1;
+    };
+
+    const base = toFileOffset(resourceRva);
+    if (base < 0) return [];
+
+    /** Entries of one resource directory: a header, then name/offset pairs. */
+    const entries = (offset) => {
+      const header = read(base + offset, 16);
+      const count = header.readUInt16LE(12) + header.readUInt16LE(14);
+      const body = read(base + offset + 16, count * 8);
+      const out = [];
+      for (let index = 0; index < count; index++) {
+        out.push({
+          name: body.readUInt32LE(index * 8),
+          // The high bit marks a string key, which an RT_ICON entry never has.
+          offset: body.readUInt32LE(index * 8 + 4) & 0x7fffffff,
+        });
+      }
+      return out;
+    };
+
+    const icons = [];
+    for (const type of entries(0)) {
+      if ((type.name & 0x7fffffff) !== 3) continue; // 3 is RT_ICON
+      for (const name of entries(type.offset)) {
+        for (const language of entries(name.offset)) {
+          const entry = read(base + language.offset, 16);
+          const payloadRva = entry.readUInt32LE(0);
+          const size = entry.readUInt32LE(4);
+          const at = toFileOffset(payloadRva);
+          if (at < 0 || size === 0) continue;
+          icons.push(read(at, size));
+        }
+      }
+    }
+    return icons;
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/** @param {Buffer} bytes @returns {string} */
+function digest(bytes) {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
 async function main() {
+  const REFERENCE_ICON = defaultIconReference(process.argv.slice(2));
   if (!existsSync(MANIFEST_FILE)) {
     process.stderr.write(`no ${MANIFEST_FILE}: nothing was packaged\n`);
     return 2;
@@ -200,30 +335,80 @@ async function main() {
       : `disk [{${onDisk.join()}}] vs manifest [{${listed.join()}}]`;
   });
 
-  // The icon is not the default Electron one. Judged by absence of a
-  // fingerprint rather than presence of a file, because a 1x1 placeholder also
-  // produces a file and would satisfy "an icon exists".
-  await judge(" no packaged icon is the Electron default", async () => {
-    const trees = manifest.trees ?? [];
-    const icons = [];
-    for (const tree of trees) {
+  // The icon the package actually carries is not the Electron default.
+  //
+  // Judged by the bytes inside the packaged executable, not by whether an icon
+  // file sits somewhere in the tree. On Windows the icon is not shipped as a
+  // separate file at all -- `electron-builder` overwrites the icon resource
+  // group embedded in the .exe -- so "is there an .ico in the tree" has the
+  // same answer for a correct and an incorrect build, and a check phrased that
+  // way stays red after the icon is wired up correctly. That is what this
+  // assertion used to do.
+  //
+  // The reference is the stock Electron binary's own icon group, which is what
+  // "the default icon" means concretely. Comparing the packaged bytes against
+  // `build/icon.ico` instead would only prove the configuration and the build
+  // agree with each other, and they can agree while both being wrong.
+  //
+  // Only trees of platforms the manifest calls "built" are judged: an unpacked
+  // directory can survive from an earlier run on a platform this run declares
+  // it did not build, and judging that would be judging someone else's input.
+  //
+  // Linux is out of scope for the byte comparison on purpose: its icon is not
+  // embedded in the executable but written into the AppImage's icon theme, so
+  // the equivalent check needs the AppImage and cannot run on this host. That
+  // is a gap in coverage, not a pass -- see the manifest's platform state,
+  // which reports Linux as not built here.
+  await judge("the packaged icon is not the Electron default", async () => {
+    // Half one: the configuration must hand the builder a real icon. If these
+    // are missing the builder has nothing to embed and silently falls back.
+    for (const file of BUILT_IN_ICONS) {
+      if (!existsSync(file)) return `${path.relative(REPO_ROOT, file)} is missing`;
+    }
+
+    const stock = readIconResources(REFERENCE_ICON);
+    if (stock.length === 0) {
+      // An unreadable reference is an unjudged claim, not a pass.
+      return `cannot read an icon resource from ${path.relative(REPO_ROOT, REFERENCE_ICON)}`;
+    }
+    const stockDigests = new Set(stock.map((icon) => digest(icon)));
+
+    /** @type {string[]} */
+    const judged = [];
+    for (const tree of manifest.trees ?? []) {
+      const platform = tree.startsWith("win-")
+        ? "win32"
+        : tree.startsWith("linux-")
+          ? "linux"
+          : null;
+      if (platform === null || manifest.platforms?.[platform]?.state !== "built") continue;
+      if (platform !== "win32") continue;
+
       const root = path.join(RELEASE_DIR, tree);
       if (!existsSync(root)) continue;
-      // Only the top level: the default icon appears as the application icon
-      // resource, not somewhere inside the bundled engine.
-      const { readdir } = await import("node:fs/promises");
-      for (const entry of await readdir(root, { withFileTypes: true })) {
-        if (entry.isFile() && /\.(ico|png|icns)$/i.test(entry.name)) {
-          icons.push(path.join(root, entry.name));
+      const executables = (await readdir(root, { withFileTypes: true }))
+        .filter((entry) => entry.isFile() && /[.]exe$/i.test(entry.name))
+        .map((entry) => path.join(root, entry.name));
+
+      for (const file of executables) {
+        const shipped = readIconResources(file);
+        if (shipped.length === 0) continue;
+        judged.push(path.relative(RELEASE_DIR, file));
+        // Every embedded icon must be one we supplied. One stock icon left over
+        // is enough to say the default is (partly) what shipped, so the test is
+        // "nothing matches the stock group", not "something differs".
+        if (shipped.some((icon) => stockDigests.has(digest(icon)))) {
+          return `${path.relative(RELEASE_DIR, file)} still contains a stock Electron icon resource`;
         }
       }
     }
-    // electron-builder reports "default Electron icon is used" in its own log;
-    // the honest machine check is that the packaged icon bytes differ from the
-    // Electron distribution's. There are none in this tree, which is the
-    // finding, not a pass.
-    if (icons.length === 0)
-      return "no icon resource in the packaged tree: the builder used its default";
+
+    // A platform reported as built but leaving nothing to read means the
+    // evidence is absent, which is not the same as the claim holding.
+    if (judged.length === 0 && manifest.platforms?.win32?.state === "built") {
+      return "win32 is built but no unpacked executable carries an icon resource";
+    }
+
     return null;
   });
 

@@ -36,6 +36,12 @@ out/
 build/
 *.tsbuildinfo
 *.tgz
+# The packaging resources are source, not output, even though electron-builder
+# calls the directory "buildResources". `build/` above is a broad rule written
+# for build output, and without this exception the icons never reach a clone --
+# the builder then falls back to the stock Electron icon, which it reports only
+# as a warning. A clean checkout has to produce the same package as this one.
+!apps/desktop/build/
 
 # --- Test and coverage artifacts -------------------------------------------
 coverage/
