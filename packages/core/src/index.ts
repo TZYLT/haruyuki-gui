@@ -41,3 +41,11 @@ export * from "./merge/index.js";
 export * from "./port/host-port";
 export * from "./port/headless-host-port";
 export * from "./supervision/index.js";
+
+// The capability availability verdict (docs/62 §6.3, docs/63 §4.3). Exported by
+// name rather than by wildcard: `isVersionAtLeast` and `isOffered` are the
+// module's own helpers, and widening them to the package contract would promise
+// two things nobody asked for. The consumer is the command gate, which lives in
+// a later item; until then this row is the contract, not a rendering.
+export { availabilityOf } from "./engine/capability/availability.js";
+export type { CapabilityAvailability } from "./engine/capability/availability.js";
