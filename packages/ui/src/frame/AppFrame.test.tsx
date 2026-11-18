@@ -9,7 +9,7 @@
  * by the Electron probe and by hand.
  */
 
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { useEffect, useRef } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { LayoutDoc, LayoutNode, LayoutTab } from "@haruyuki/protocol";
@@ -445,6 +445,27 @@ describe("AppFrame", () => {
 
     expect(new Set(ids).size).toBe(2);
     expect(params).toEqual(["tree", "tree"]);
+  });
+
+  it("opens the page picker from a non-empty layout and closes it after a pick", async () => {
+    // The empty state's picker only exists while the dock has no panels; a
+    // saved three-panel layout would otherwise have no way to open a fourth page.
+    render(
+      <LocaleProvider locale="en">
+        <AppFrame registry={registry()} doc={doc} revision={1} onLayoutChange={vi.fn()} />
+      </LocaleProvider>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Open page" }));
+
+    const picker = screen.getByRole("dialog", { name: "Open a page" });
+    fireEvent.click(within(picker).getByRole("button", { name: "Files" }));
+
+    expect(state.addPanel).toHaveBeenCalledTimes(1);
+    expect(
+      (state.addPanel.mock.calls[0]?.[0] as { params: { pageId: string } }).params.pageId,
+    ).toBe("tree");
+    expect(screen.queryByRole("dialog", { name: "Open a page" })).toBeNull();
   });
 
   it("keeps a closed unknown tab in the document as hidden", () => {
