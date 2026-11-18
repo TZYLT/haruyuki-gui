@@ -1,0 +1,69 @@
+{
+  "note": "Message types this version does not model (summary, event, system) degrade to unknown blocks with their raw payload, in source order, instead of being dropped.",
+  "cases": [
+    {
+      "name": "summary event and system messages become unknown blocks in order",
+      "path": "history",
+      "input": [
+        {
+          "id": "summary-1",
+          "message_type": "summary",
+          "content": "Earlier: the group discussed widgets."
+        },
+        {
+          "id": "event-1",
+          "message_type": "event",
+          "event_type": "turn_started",
+          "content": null
+        },
+        {
+          "id": "system-1",
+          "message_type": "system",
+          "content": "engine note"
+        }
+      ],
+      "expect": [
+        {
+          "id": "summary-1:unknown:0",
+          "messageId": "summary-1",
+          "runId": null,
+          "role": "system",
+          "type": "unknown",
+          "rawType": "summary",
+          "raw": {
+            "id": "summary-1",
+            "message_type": "summary",
+            "content": "Earlier: the group discussed widgets."
+          }
+        },
+        {
+          "id": "event-1:unknown:0",
+          "messageId": "event-1",
+          "runId": null,
+          "role": "system",
+          "type": "unknown",
+          "rawType": "event",
+          "raw": {
+            "id": "event-1",
+            "message_type": "event",
+            "event_type": "turn_started",
+            "content": null
+          }
+        },
+        {
+          "id": "system-1:unknown:0",
+          "messageId": "system-1",
+          "runId": null,
+          "role": "system",
+          "type": "unknown",
+          "rawType": "system",
+          "raw": {
+            "id": "system-1",
+            "message_type": "system",
+            "content": "engine note"
+          }
+        }
+      ]
+    }
+  ]
+}

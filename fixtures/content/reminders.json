@@ -1,0 +1,76 @@
+{
+  "note": "System reminders are context for the agent, never user prose. A whole reminder contributes nothing, a mixed reminder leaves its prose, a reminder-only array part is skipped, and several reminders are all removed because the match is global and non-greedy.",
+  "cases": [
+    {
+      "name": "a whole reminder produces no span",
+      "path": "notice",
+      "input": "<system-reminder>machine: example-host\ntime: 09:00</system-reminder>",
+      "expect": []
+    },
+    {
+      "name": "prose around a reminder stays one span",
+      "path": "notice",
+      "input": "Before <system-reminder>hidden context</system-reminder>after.",
+      "expect": [
+        {
+          "kind": "text",
+          "text": "Before after."
+        }
+      ]
+    },
+    {
+      "name": "a reminder-only array part is skipped but a later part survives",
+      "path": "notice",
+      "input": [
+        {
+          "type": "text",
+          "text": "<system-reminder>context only</system-reminder>"
+        },
+        {
+          "type": "text",
+          "text": "Visible question."
+        },
+        {
+          "type": "image",
+          "source": {
+            "type": "url",
+            "url": "https://example.test/shot.png"
+          }
+        }
+      ],
+      "expect": [
+        {
+          "kind": "text",
+          "text": "Visible question."
+        }
+      ]
+    },
+    {
+      "name": "a reminder inside an array text part leaves the prose around it",
+      "path": "notice",
+      "input": [
+        {
+          "type": "text",
+          "text": "Keep <system-reminder>x</system-reminder>this"
+        }
+      ],
+      "expect": [
+        {
+          "kind": "text",
+          "text": "Keep this"
+        }
+      ]
+    },
+    {
+      "name": "several reminders are all removed",
+      "path": "notice",
+      "input": "<system-reminder>a</system-reminder>one<system-reminder>b</system-reminder>two",
+      "expect": [
+        {
+          "kind": "text",
+          "text": "onetwo"
+        }
+      ]
+    }
+  ]
+}

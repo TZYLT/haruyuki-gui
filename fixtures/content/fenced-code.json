@@ -1,0 +1,165 @@
+{
+  "note": "Fenced code on the live path: the scanner sees one delta frame at a time, an opener is only real once its newline arrives, and an unclosed fence is still complete once the message is.",
+  "cases": [
+    {
+      "name": "a ts fence keeps its info string and the code verbatim",
+      "path": "live-text",
+      "input": {
+        "messageId": "live-code",
+        "runId": "run-code",
+        "frames": [
+          {
+            "text": "Here is the helper:\n```ts\nconst add = (a: number, b: number) => a + b;\n"
+          },
+          {
+            "text": "```\n"
+          },
+          {
+            "text": "It returns the sum.\n"
+          }
+        ]
+      },
+      "expect": [
+        {
+          "id": "live-code:text:0",
+          "messageId": "live-code",
+          "runId": "run-code",
+          "role": "assistant",
+          "type": "text",
+          "text": "Here is the helper:\n",
+          "flavor": "markdown",
+          "status": "complete"
+        },
+        {
+          "id": "live-code:code:0",
+          "messageId": "live-code",
+          "runId": "run-code",
+          "role": "assistant",
+          "type": "code",
+          "text": "const add = (a: number, b: number) => a + b;\n",
+          "info": "ts",
+          "closed": true,
+          "status": "complete"
+        },
+        {
+          "id": "live-code:text:1",
+          "messageId": "live-code",
+          "runId": "run-code",
+          "role": "assistant",
+          "type": "text",
+          "text": "It returns the sum.\n",
+          "flavor": "markdown",
+          "status": "complete"
+        }
+      ]
+    },
+    {
+      "name": "tilde and unclosed fences both become code blocks",
+      "path": "live-text",
+      "input": {
+        "messageId": "live-tilde",
+        "runId": "run-code",
+        "frames": [
+          {
+            "text": "Intro\n~~~\nplain body\n~~~\nThen:\n```\nunclosed line"
+          }
+        ]
+      },
+      "expect": [
+        {
+          "id": "live-tilde:text:0",
+          "messageId": "live-tilde",
+          "runId": "run-code",
+          "role": "assistant",
+          "type": "text",
+          "text": "Intro\n",
+          "flavor": "markdown",
+          "status": "complete"
+        },
+        {
+          "id": "live-tilde:code:0",
+          "messageId": "live-tilde",
+          "runId": "run-code",
+          "role": "assistant",
+          "type": "code",
+          "text": "plain body\n",
+          "info": "",
+          "closed": true,
+          "status": "complete"
+        },
+        {
+          "id": "live-tilde:text:1",
+          "messageId": "live-tilde",
+          "runId": "run-code",
+          "role": "assistant",
+          "type": "text",
+          "text": "Then:\n",
+          "flavor": "markdown",
+          "status": "complete"
+        },
+        {
+          "id": "live-tilde:code:1",
+          "messageId": "live-tilde",
+          "runId": "run-code",
+          "role": "assistant",
+          "type": "code",
+          "text": "unclosed line",
+          "info": "",
+          "closed": false,
+          "status": "complete"
+        }
+      ]
+    },
+    {
+      "name": "inline backticks and a four-space indent are not fences",
+      "path": "live-text",
+      "input": {
+        "messageId": "live-inline",
+        "runId": "run-code",
+        "frames": [
+          {
+            "text": "Use `npm test` inline.\n\n    indented line is still prose\n"
+          }
+        ]
+      },
+      "expect": [
+        {
+          "id": "live-inline:text:0",
+          "messageId": "live-inline",
+          "runId": "run-code",
+          "role": "assistant",
+          "type": "text",
+          "text": "Use `npm test` inline.\n\n    indented line is still prose\n",
+          "flavor": "markdown",
+          "status": "complete"
+        }
+      ]
+    },
+    {
+      "name": "a four-backtick fence keeps a three-backtick line inside",
+      "path": "live-text",
+      "input": {
+        "messageId": "live-long-fence",
+        "runId": "run-code",
+        "frames": [
+          {
+            "text": "````md\n```ts\ninner\n```\n````\n"
+          }
+        ]
+      },
+      "expect": [
+        {
+          "id": "live-long-fence:code:0",
+          "messageId": "live-long-fence",
+          "runId": "run-code",
+          "role": "assistant",
+          "type": "code",
+          "text": "```ts\ninner\n```\n",
+          "info": "md",
+          "closed": true,
+          "status": "complete"
+        }
+      ]
+    }
+  ]
+}

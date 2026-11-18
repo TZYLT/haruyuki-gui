@@ -1,0 +1,98 @@
+{
+  "note": "Task notifications inside user content: the summary becomes the title, the result becomes the body, entities are decoded once, an agent-only result is dropped whole, a notification quoted inside a reminder vanishes with it, and the transcript pointer line is consumed.",
+  "cases": [
+    {
+      "name": "a notification between two paragraphs keeps its place",
+      "path": "notice",
+      "input": "Please check the job.\n<task-notification>\n<summary>Build finished</summary>\n<result>exit 0 &amp; cache warm</result>\n</task-notification>\nThanks.",
+      "expect": [
+        {
+          "kind": "text",
+          "text": "Please check the job."
+        },
+        {
+          "kind": "notice",
+          "category": "task-notification",
+          "title": "Build finished",
+          "text": "exit 0 & cache warm"
+        },
+        {
+          "kind": "text",
+          "text": "Thanks."
+        }
+      ]
+    },
+    {
+      "name": "an agent-only result is dropped and the prose around it survives",
+      "path": "notice",
+      "input": "<task-notification>\n<summary>Hidden</summary>\n<result>secret <system-reminder>internal context</system-reminder></result>\n</task-notification>\nVisible text",
+      "expect": [
+        {
+          "kind": "text",
+          "text": "Visible text"
+        }
+      ]
+    },
+    {
+      "name": "a notification quoted inside a reminder disappears with it",
+      "path": "notice",
+      "input": "hello\n<system-reminder>context <task-notification><summary>S</summary><result>R</result></task-notification></system-reminder>\nworld",
+      "expect": [
+        {
+          "kind": "text",
+          "text": "hello\n\nworld"
+        }
+      ]
+    },
+    {
+      "name": "the transcript pointer line is consumed with the notification",
+      "path": "notice",
+      "input": "Task done.\n<task-notification>\n<summary>Run</summary>\n<result>pass</result>\n</task-notification>\nFull transcript available at: /tmp/x/transcript.txt\n",
+      "expect": [
+        {
+          "kind": "text",
+          "text": "Task done."
+        },
+        {
+          "kind": "notice",
+          "category": "task-notification",
+          "title": "Run",
+          "text": "pass"
+        }
+      ]
+    },
+    {
+      "name": "a notification in a user turn becomes a notice block after the prose",
+      "path": "history",
+      "input": [
+        {
+          "id": "user-notice",
+          "message_type": "user_message",
+          "content": "Finished.\n<task-notification>\n<summary>Deploy</summary>\n<result>ok</result>\n</task-notification>"
+        }
+      ],
+      "expect": [
+        {
+          "id": "user-notice:text:0",
+          "messageId": "user-notice",
+          "runId": null,
+          "role": "user",
+          "type": "text",
+          "text": "Finished.",
+          "flavor": "markdown",
+          "status": "complete"
+        },
+        {
+          "id": "user-notice:notice:0",
+          "messageId": "user-notice",
+          "runId": null,
+          "role": "user",
+          "type": "notice",
+          "category": "task-notification",
+          "title": "Deploy",
+          "text": "ok"
+        }
+      ]
+    }
+  ]
+}

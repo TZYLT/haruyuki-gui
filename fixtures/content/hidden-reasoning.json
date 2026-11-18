@@ -1,0 +1,37 @@
+{
+  "note": "Hidden reasoning is agent-only thinking: it must never surface as a reasoning block, and the visible answer that follows it must stay intact.",
+  "cases": [
+    {
+      "name": "hidden reasoning produces no block and the visible answer survives",
+      "path": "history",
+      "input": [
+        {
+          "id": "hidden-1",
+          "message_type": "hidden_reasoning_message",
+          "run_id": "run-h",
+          "content": {
+            "reasoning": "private chain of thought"
+          }
+        },
+        {
+          "id": "visible-1",
+          "message_type": "assistant_message",
+          "run_id": "run-h",
+          "content": "Visible answer.\n"
+        }
+      ],
+      "expect": [
+        {
+          "id": "visible-1:text:0",
+          "messageId": "visible-1",
+          "runId": "run-h",
+          "role": "assistant",
+          "type": "text",
+          "text": "Visible answer.\n",
+          "flavor": "markdown",
+          "status": "complete"
+        }
+      ]
+    }
+  ]
+}

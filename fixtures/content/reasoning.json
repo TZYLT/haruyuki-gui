@@ -1,0 +1,220 @@
+{
+  "note": "Reasoning segments. Numbered fragments are rebuilt in sequence order, a retransmitted sequence number keeps the first copy, unnumbered fragments keep arrival order, and a segment keeps the position it was first seen in.",
+  "cases": [
+    {
+      "name": "fragments are rebuilt in sequence order",
+      "path": "reasoning",
+      "input": {
+        "messages": [
+          {
+            "id": "msg-r1:reasoning:0",
+            "messageType": "reasoning_message",
+            "role": "assistant",
+            "runId": "run-r",
+            "body": {
+              "reasoning": " world",
+              "seq_id": 2
+            }
+          },
+          {
+            "id": "msg-r1:reasoning:0",
+            "messageType": "reasoning_message",
+            "role": "assistant",
+            "runId": "run-r",
+            "body": {
+              "reasoning": "hello",
+              "seq_id": 1
+            }
+          }
+        ]
+      },
+      "expect": [
+        {
+          "id": "msg-r1:reasoning:0",
+          "messageId": "msg-r1",
+          "runId": "run-r",
+          "role": "assistant",
+          "type": "reasoning",
+          "text": "hello world"
+        }
+      ],
+      "emitted": [
+        " world",
+        "hello world"
+      ]
+    },
+    {
+      "name": "a retransmitted sequence number keeps the first copy",
+      "path": "reasoning",
+      "input": {
+        "messages": [
+          {
+            "id": "msg-r2:reasoning:0",
+            "messageType": "reasoning_message",
+            "role": "assistant",
+            "runId": "run-r",
+            "body": {
+              "reasoning": "Step one. ",
+              "seq_id": 0
+            }
+          },
+          {
+            "id": "msg-r2:reasoning:0",
+            "messageType": "reasoning_message",
+            "role": "assistant",
+            "runId": "run-r",
+            "body": {
+              "reasoning": "Step one. (again)",
+              "seq_id": 0
+            }
+          }
+        ]
+      },
+      "expect": [
+        {
+          "id": "msg-r2:reasoning:0",
+          "messageId": "msg-r2",
+          "runId": "run-r",
+          "role": "assistant",
+          "type": "reasoning",
+          "text": "Step one. "
+        }
+      ],
+      "emitted": [
+        "Step one. "
+      ]
+    },
+    {
+      "name": "fragments without a sequence number keep arrival order",
+      "path": "reasoning",
+      "input": {
+        "messages": [
+          {
+            "id": "loose-1",
+            "messageType": "reasoning_message",
+            "role": "assistant",
+            "runId": "run-r",
+            "body": {
+              "reasoning": "First. "
+            }
+          },
+          {
+            "id": "loose-1",
+            "messageType": "reasoning_message",
+            "role": "assistant",
+            "runId": "run-r",
+            "body": {
+              "reasoning": "Second."
+            }
+          }
+        ]
+      },
+      "expect": [
+        {
+          "id": "loose-1:reasoning:0",
+          "messageId": "loose-1",
+          "runId": "run-r",
+          "role": "assistant",
+          "type": "reasoning",
+          "text": "First. Second."
+        }
+      ],
+      "emitted": [
+        "First. ",
+        "First. Second."
+      ]
+    },
+    {
+      "name": "a late segment does not reorder an earlier one",
+      "path": "reasoning",
+      "input": {
+        "messages": [
+          {
+            "id": "msg-r3:reasoning:1",
+            "messageType": "reasoning_message",
+            "role": "assistant",
+            "runId": "run-r",
+            "body": {
+              "reasoning": "Second segment.",
+              "seq_id": 0
+            }
+          },
+          {
+            "id": "msg-r3:reasoning:0",
+            "messageType": "reasoning_message",
+            "role": "assistant",
+            "runId": "run-r",
+            "body": {
+              "reasoning": "First segment.",
+              "seq_id": 0
+            }
+          }
+        ]
+      },
+      "expect": [
+        {
+          "id": "msg-r3:reasoning:1",
+          "messageId": "msg-r3",
+          "runId": "run-r",
+          "role": "assistant",
+          "type": "reasoning",
+          "text": "Second segment."
+        },
+        {
+          "id": "msg-r3:reasoning:0",
+          "messageId": "msg-r3",
+          "runId": "run-r",
+          "role": "assistant",
+          "type": "reasoning",
+          "text": "First segment."
+        }
+      ],
+      "emitted": [
+        "Second segment.",
+        "First segment."
+      ]
+    },
+    {
+      "name": "a later run id is kept and a null does not erase it",
+      "path": "reasoning",
+      "input": {
+        "messages": [
+          {
+            "id": "msg-r4:reasoning:0",
+            "messageType": "reasoning_message",
+            "role": "assistant",
+            "runId": null,
+            "body": {
+              "reasoning": "A",
+              "seq_id": 0
+            }
+          },
+          {
+            "id": "msg-r4:reasoning:0",
+            "messageType": "reasoning_message",
+            "role": "assistant",
+            "runId": "run-late",
+            "body": {
+              "reasoning": "B",
+              "seq_id": 1
+            }
+          }
+        ]
+      },
+      "expect": [
+        {
+          "id": "msg-r4:reasoning:0",
+          "messageId": "msg-r4",
+          "runId": "run-late",
+          "role": "assistant",
+          "type": "reasoning",
+          "text": "AB"
+        }
+      ],
+      "emitted": [
+        "A",
+        "AB"
+      ]
+    }
+  ]
+}

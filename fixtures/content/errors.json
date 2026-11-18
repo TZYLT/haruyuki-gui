@@ -1,0 +1,79 @@
+{
+  "note": "Engine error messages: the readable text becomes the block message, the class becomes errorType, and a malformed body contributes only the fields it actually has.",
+  "cases": [
+    {
+      "name": "flat error fields become one error block",
+      "path": "history",
+      "input": [
+        {
+          "id": "err-1",
+          "message_type": "error_message",
+          "error_type": "rate_limit",
+          "message": "Rate limit exceeded",
+          "detail": "retry after 30s"
+        }
+      ],
+      "expect": [
+        {
+          "id": "err-1:error:0",
+          "messageId": "err-1",
+          "runId": null,
+          "role": "system",
+          "type": "error",
+          "message": "Rate limit exceeded",
+          "errorType": "rate_limit",
+          "detail": "retry after 30s"
+        }
+      ]
+    },
+    {
+      "name": "a nested error object contributes all three fields",
+      "path": "history",
+      "input": [
+        {
+          "id": "err-2",
+          "message_type": "error_message",
+          "error": {
+            "message": "Provider unavailable",
+            "type": "upstream",
+            "detail": "502"
+          }
+        }
+      ],
+      "expect": [
+        {
+          "id": "err-2:error:0",
+          "messageId": "err-2",
+          "runId": null,
+          "role": "system",
+          "type": "error",
+          "message": "Provider unavailable",
+          "errorType": "upstream",
+          "detail": "502"
+        }
+      ]
+    },
+    {
+      "name": "an error without fields invents no wording",
+      "path": "history",
+      "input": [
+        {
+          "id": "err-3",
+          "message_type": "error_message"
+        }
+      ],
+      "expect": [
+        {
+          "id": "err-3:error:0",
+          "messageId": "err-3",
+          "runId": null,
+          "role": "system",
+          "type": "error",
+          "message": "",
+          "errorType": null,
+          "detail": null
+        }
+      ]
+    }
+  ]
+}

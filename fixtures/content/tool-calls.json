@@ -1,0 +1,373 @@
+{
+  "note": "Tool-call assembly. One block per call, arguments append but a complete record replaces, a plural return closes several calls, the client end marker is not a closing edge, an orphan result keeps its payload, and turn.finished is the only incomplete signal.",
+  "cases": [
+    {
+      "name": "the client end marker does not close the call",
+      "path": "tools",
+      "input": {
+        "messages": [
+          {
+            "id": "tc-a1",
+            "messageType": "tool_call_message",
+            "role": "tool",
+            "runId": "run-7",
+            "body": {
+              "tool_call_id": "call-1",
+              "name": "shell",
+              "arguments": "{\"cmd\":\""
+            }
+          },
+          {
+            "id": "tc-a2",
+            "messageType": "tool_call_message",
+            "role": "tool",
+            "runId": "run-7",
+            "body": {
+              "tool_call_id": "call-1",
+              "name": "shell",
+              "arguments": "ls -la\"}"
+            }
+          },
+          {
+            "id": "tc-a3",
+            "messageType": "client_tool_end",
+            "role": "tool",
+            "runId": "run-7",
+            "body": {
+              "tool_call_id": "call-1",
+              "status": "success"
+            }
+          }
+        ]
+      },
+      "expect": [
+        {
+          "id": "tool:call-1",
+          "messageId": "tc-a1",
+          "runId": "run-7",
+          "role": "tool",
+          "type": "tool_call",
+          "toolCallId": "call-1",
+          "name": "shell",
+          "argumentsText": "{\"cmd\":\"ls -la\"}",
+          "result": null,
+          "status": "running",
+          "orphan": false
+        }
+      ]
+    },
+    {
+      "name": "a final return after the end marker closes the call",
+      "path": "tools",
+      "input": {
+        "messages": [
+          {
+            "id": "tc-a1",
+            "messageType": "tool_call_message",
+            "role": "tool",
+            "runId": "run-7",
+            "body": {
+              "tool_call_id": "call-1",
+              "name": "shell",
+              "arguments": "{\"cmd\":\""
+            }
+          },
+          {
+            "id": "tc-a2",
+            "messageType": "tool_call_message",
+            "role": "tool",
+            "runId": "run-7",
+            "body": {
+              "tool_call_id": "call-1",
+              "name": "shell",
+              "arguments": "ls -la\"}"
+            }
+          },
+          {
+            "id": "tc-a3",
+            "messageType": "client_tool_end",
+            "role": "tool",
+            "runId": "run-7",
+            "body": {
+              "tool_call_id": "call-1",
+              "status": "success"
+            }
+          },
+          {
+            "id": "tc-a4",
+            "messageType": "tool_return_message",
+            "role": "tool",
+            "runId": "run-7",
+            "body": {
+              "tool_call_id": "call-1",
+              "status": "success",
+              "tool_return": "file-a.txt\nfile-b.txt\n"
+            }
+          }
+        ]
+      },
+      "expect": [
+        {
+          "id": "tool:call-1",
+          "messageId": "tc-a1",
+          "runId": "run-7",
+          "role": "tool",
+          "type": "tool_call",
+          "toolCallId": "call-1",
+          "name": "shell",
+          "argumentsText": "{\"cmd\":\"ls -la\"}",
+          "result": "file-a.txt\nfile-b.txt\n",
+          "status": "success",
+          "orphan": false
+        }
+      ]
+    },
+    {
+      "name": "a plural return closes several calls in body order",
+      "path": "tools",
+      "input": {
+        "messages": [
+          {
+            "id": "tc-b1",
+            "messageType": "tool_call_message",
+            "role": "tool",
+            "runId": "run-8",
+            "body": {
+              "tool_calls": [
+                {
+                  "tool_call_id": "call-a",
+                  "name": "read",
+                  "arguments": "{\"path\":\"a\"}"
+                },
+                {
+                  "tool_call_id": "call-b",
+                  "name": "read",
+                  "arguments": "{\"path\":\"b\"}"
+                }
+              ]
+            }
+          },
+          {
+            "id": "tc-b2",
+            "messageType": "tool_return_message",
+            "role": "tool",
+            "runId": "run-8",
+            "body": {
+              "tool_returns": [
+                {
+                  "tool_call_id": "call-a",
+                  "status": "success",
+                  "tool_return": "contents-a"
+                },
+                {
+                  "tool_call_id": "call-b",
+                  "status": "error",
+                  "tool_return": "missing-b"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "expect": [
+        {
+          "id": "tool:call-a",
+          "messageId": "tc-b1",
+          "runId": "run-8",
+          "role": "tool",
+          "type": "tool_call",
+          "toolCallId": "call-a",
+          "name": "read",
+          "argumentsText": "{\"path\":\"a\"}",
+          "result": "contents-a",
+          "status": "success",
+          "orphan": false
+        },
+        {
+          "id": "tool:call-b",
+          "messageId": "tc-b1",
+          "runId": "run-8",
+          "role": "tool",
+          "type": "tool_call",
+          "toolCallId": "call-b",
+          "name": "read",
+          "argumentsText": "{\"path\":\"b\"}",
+          "result": "missing-b",
+          "status": "error",
+          "orphan": false
+        }
+      ]
+    },
+    {
+      "name": "an approval gate is left by a client start and closed by the return",
+      "path": "tools",
+      "input": {
+        "messages": [
+          {
+            "id": "tc-c1",
+            "messageType": "approval_request_message",
+            "role": "tool",
+            "runId": "run-9",
+            "body": {
+              "tool_call": {
+                "tool_call_id": "call-c",
+                "name": "write",
+                "arguments": "{\"path\":\"a\"}"
+              }
+            }
+          },
+          {
+            "id": "tc-c2",
+            "messageType": "client_tool_end",
+            "role": "tool",
+            "runId": "run-9",
+            "body": {
+              "tool_call_id": "call-c",
+              "status": "success"
+            }
+          },
+          {
+            "id": "tc-c3",
+            "messageType": "client_tool_start",
+            "role": "tool",
+            "runId": "run-9",
+            "body": {
+              "tool_call_id": "call-c",
+              "tool_args": "{\"path\":\"a\",\"mode\":\"append\"}"
+            }
+          },
+          {
+            "id": "tc-c4",
+            "messageType": "tool_return_message",
+            "role": "tool",
+            "runId": "run-9",
+            "body": {
+              "tool_call_id": "call-c",
+              "status": "success",
+              "tool_return": "written"
+            }
+          }
+        ]
+      },
+      "expect": [
+        {
+          "id": "tool:call-c",
+          "messageId": "tc-c1",
+          "runId": "run-9",
+          "role": "tool",
+          "type": "tool_call",
+          "toolCallId": "call-c",
+          "name": "write",
+          "argumentsText": "{\"path\":\"a\",\"mode\":\"append\"}",
+          "result": "written",
+          "status": "success",
+          "orphan": false
+        }
+      ]
+    },
+    {
+      "name": "an orphan result keeps its payload and flags the block",
+      "path": "tools",
+      "input": {
+        "messages": [
+          {
+            "id": "tc-d1",
+            "messageType": "tool_return_message",
+            "role": "tool",
+            "runId": "run-10",
+            "body": {
+              "tool_call_id": "call-orphan",
+              "status": "error",
+              "tool_return": "lost output"
+            }
+          }
+        ]
+      },
+      "expect": [
+        {
+          "id": "tool:call-orphan",
+          "messageId": "tc-d1",
+          "runId": "run-10",
+          "role": "tool",
+          "type": "tool_call",
+          "toolCallId": "call-orphan",
+          "name": null,
+          "argumentsText": "",
+          "result": "lost output",
+          "status": "error",
+          "orphan": true
+        }
+      ]
+    },
+    {
+      "name": "an unfinished call is incomplete when its turn finishes",
+      "path": "tools",
+      "input": {
+        "messages": [
+          {
+            "id": "tc-e1",
+            "messageType": "tool_call_message",
+            "role": "tool",
+            "runId": "run-11",
+            "body": {
+              "tool_call_id": "call-open",
+              "name": "fetch",
+              "arguments": "{}"
+            }
+          }
+        ],
+        "turnFinished": "run-11"
+      },
+      "expect": [
+        {
+          "id": "tool:call-open",
+          "messageId": "tc-e1",
+          "runId": "run-11",
+          "role": "tool",
+          "type": "tool_call",
+          "toolCallId": "call-open",
+          "name": "fetch",
+          "argumentsText": "{}",
+          "result": null,
+          "status": "incomplete",
+          "orphan": false
+        }
+      ]
+    },
+    {
+      "name": "a turn from another run does not close the call",
+      "path": "tools",
+      "input": {
+        "messages": [
+          {
+            "id": "tc-e2",
+            "messageType": "tool_call_message",
+            "role": "tool",
+            "runId": "run-11",
+            "body": {
+              "tool_call_id": "call-open",
+              "name": "fetch",
+              "arguments": "{}"
+            }
+          }
+        ],
+        "turnFinished": "run-other"
+      },
+      "expect": [
+        {
+          "id": "tool:call-open",
+          "messageId": "tc-e2",
+          "runId": "run-11",
+          "role": "tool",
+          "type": "tool_call",
+          "toolCallId": "call-open",
+          "name": "fetch",
+          "argumentsText": "{}",
+          "result": null,
+          "status": "running",
+          "orphan": false
+        }
+      ]
+    }
+  ]
+}
