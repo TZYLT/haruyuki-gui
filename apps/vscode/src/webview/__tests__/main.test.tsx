@@ -46,15 +46,19 @@ describe("webview entry", () => {
     // The module mounts on import, which is the behaviour under test.
     await import("../main.js");
 
+    // Every claim is a condition to wait for, not an assumption to assert after
+    // one. The dock mounts asynchronously: the frame element and its rail labels
+    // appear before the page tabs do, so a wait on "something rendered" resolves
+    // on a tree that has not drawn the pages yet. Waiting on the last thing that
+    // appears is waiting on the mount; waiting on the first is waiting on a
+    // coincidence, and under a loaded runner the coincidence goes the other way.
     await waitFor(() => {
-      expect(container.childElementCount).toBeGreaterThanOrEqual(1);
+      // A wrapper alone is not a mount: the frame has to hold the sample pages.
+      expect(container.querySelector(".hz-frame")).not.toBeNull();
+      expect(container.textContent).toContain("Conversation");
+      expect(container.textContent).toContain("Navigation");
+      expect(container.textContent).toContain("Files");
     });
-
-    // A wrapper alone is not a mount: the frame has to hold the sample pages.
-    expect(container.querySelector(".hz-frame")).not.toBeNull();
-    expect(container.textContent).toContain("Conversation");
-    expect(container.textContent).toContain("Navigation");
-    expect(container.textContent).toContain("Files");
   });
 
   it("mountWebview mounts into any container and unmounts cleanly", async () => {
