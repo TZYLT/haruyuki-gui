@@ -40,6 +40,8 @@ export interface RendererBridgeOptions {
   onNotice: (notice: TerminalNotice) => void;
   /** Optional; called when the ready invoke rejects. */
   onReadyError?: (error: unknown) => void;
+  /** Optional; called once when the current generation's handshake is accepted. */
+  onAccepted?: () => void;
   /** Optional; the bulk `layout.snapshot` route, once the frame host is mounted. */
   onLayoutSnapshot?: (body: LayoutSnapshotBody) => void;
 }
@@ -63,6 +65,7 @@ export function createRendererBridge(options: RendererBridgeOptions): RendererBr
 
   const unsubscribes: Array<() => void> = [];
   let disposed = false;
+  let accepted = false;
 
   const subscribe = (channel: string, listener: (payload: unknown) => void): void => {
     unsubscribes.push(bridge.on(channel, listener));
@@ -74,6 +77,15 @@ export function createRendererBridge(options: RendererBridgeOptions): RendererBr
       if (disposed || typeof payload !== "string") return;
 
       entry.handle(payload);
+
+      // `bridge.ready` is the c2s half; `bridge.accept` is the existing s2c
+      // fact that this generation's handshake succeeded. Reading the type here
+      // costs one parse and saves every consumer from inferring acceptance from
+      // the absence of a reject.
+      if (!accepted && readFrameType(payload) === "bridge.accept") {
+        accepted = true;
+        options.onAccepted?.();
+      }
 
       if (channel === BRIDGE_CHANNEL_NAMES.frameDeliver.bulk) {
         const layout = readLayoutBody(payload);
@@ -147,6 +159,21 @@ function assertBoot(boot: BridgeBoot): void {
 
   if (!Number.isFinite(boot.frameProtocolVersion)) {
     throw new RangeError("bridge boot: frameProtocolVersion must be finite");
+  }
+}
+
+/** Read the frame type out of one serialized frame; null when it cannot be read. */
+function readFrameType(payload: string): string | null {
+  try {
+    const parsed: unknown = JSON.parse(payload);
+
+    if (typeof parsed !== "object" || parsed === null) return null;
+
+    const t = (parsed as Record<string, unknown>)["t"];
+
+    return typeof t === "string" ? t : null;
+  } catch {
+    return null;
   }
 }
 

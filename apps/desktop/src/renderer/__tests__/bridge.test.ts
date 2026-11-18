@@ -67,6 +67,10 @@ function termFrame(text: string): string {
   });
 }
 
+function controlFrame(t: string): string {
+  return JSON.stringify({ v: 1, ch: "control", seq: 1, t, body: {} });
+}
+
 describe("createRendererBridge", () => {
   it("sends bridge.ready as the first invoke", async () => {
     const { surface, invoke } = fakeBridge();
@@ -119,6 +123,71 @@ describe("createRendererBridge", () => {
     });
 
     expect(onNotice).toHaveBeenCalledWith({ terminal_id: "t1", droppedBytes: 4096 });
+  });
+
+  it("reports bridge.accept once, even when the frame is repeated", () => {
+    const { surface, handlers } = fakeBridge();
+    const { terminal } = fakeTerminal();
+    const onAccepted = vi.fn();
+
+    createRendererBridge({
+      bridge: surface,
+      boot: BOOT,
+      terminal,
+      onNotice: () => {},
+      onAccepted,
+    });
+
+    const listener = handlers.get(BRIDGE_CHANNEL_NAMES.frameDeliver.control)?.[0];
+
+    // `bridge.ready` is c2s; `bridge.accept` is the s2c fact that the current
+    // generation's handshake succeeded. A duplicate must not restart whatever
+    // the caller starts on acceptance.
+    listener?.(controlFrame("bridge.accept"));
+    listener?.(controlFrame("bridge.accept"));
+
+    expect(onAccepted).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not report acceptance on a reject or an unrelated frame", () => {
+    const { surface, handlers } = fakeBridge();
+    const { terminal } = fakeTerminal();
+    const onAccepted = vi.fn();
+
+    createRendererBridge({
+      bridge: surface,
+      boot: BOOT,
+      terminal,
+      onNotice: () => {},
+      onAccepted,
+    });
+
+    const listener = handlers.get(BRIDGE_CHANNEL_NAMES.frameDeliver.control)?.[0];
+
+    listener?.(controlFrame("bridge.reject"));
+    listener?.(controlFrame("app.ping"));
+
+    expect(onAccepted).not.toHaveBeenCalled();
+  });
+
+  it("does not report acceptance after dispose", () => {
+    const { surface, handlers } = fakeBridge();
+    const { terminal } = fakeTerminal();
+    const onAccepted = vi.fn();
+
+    const bridge = createRendererBridge({
+      bridge: surface,
+      boot: BOOT,
+      terminal,
+      onNotice: () => {},
+      onAccepted,
+    });
+    const listener = handlers.get(BRIDGE_CHANNEL_NAMES.frameDeliver.control)?.[0];
+
+    bridge.dispose();
+    listener?.(controlFrame("bridge.accept"));
+
+    expect(onAccepted).not.toHaveBeenCalled();
   });
 
   it("ignores deliveries after dispose", () => {
