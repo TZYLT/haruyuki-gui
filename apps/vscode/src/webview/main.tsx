@@ -18,14 +18,13 @@
  * once the UI package owns one.
  */
 
-import { StrictMode, useState, type ReactElement } from "react";
+import { StrictMode, type ReactElement } from "react";
 import { createRoot } from "react-dom/client";
-import type { LayoutDoc } from "@haruyuki/protocol";
 
 import { AppFrame, LocaleProvider } from "@haruyuki/ui";
 
-import { applyLayoutChange, readLayout } from "./layout.js";
 import { createRegistry } from "./registry.js";
+import { useBridgeNotice, useLayout, webviewTransport } from "./transport.js";
 
 /**
  * The locale this panel renders in.
@@ -41,24 +40,25 @@ const WEBVIEW_LOCALE = "en";
 export const WEBVIEW_ROOT_ID = "root";
 
 /**
- * The frame, wired to the in-memory document.
+ * The frame, wired to the layout store.
  *
- * The document lives in React state so a change repaints, and in the layout
- * module so a reader without React can ask what is open. Both are updated from
- * the one callback, in that order: the store keeps the document the frame will
- * compare against, and the state update is what makes it render.
+ * The document lives in an external store rather than in React state, because
+ * two readers need the same answer at different times: the frame compares the
+ * document it was handed by reference against the one it applied, and a change
+ * that lands between a render and its effect must still repaint. Both are what
+ * `useSyncExternalStore` guarantees and what a state pair updated from a
+ * callback does not.
  *
- * The revision only ever moves locally. It exists because the frame treats a
- * `doc` prop as foreign until it is told something changed, and because the
- * save path this shell will grow needs a revision to be based on; no save path
- * is wired yet, so nothing is persisted.
+ * The revision only ever moves locally: it exists because the frame treats a
+ * `doc` prop as foreign until it is told something changed. No save path is
+ * wired in this build, so a change is not persisted -- see `transport.ts` for
+ * why that is stated rather than approximated.
  *
  * @returns the frame inside its locale provider
  */
 export function WebviewApp(): ReactElement {
-  const [layout, setLayout] = useState<{ readonly doc: LayoutDoc; readonly revision: number }>(
-    () => ({ doc: readLayout(), revision: 0 }),
-  );
+  const layout = useLayout();
+  const banner = useBridgeNotice();
   const registry = createRegistry();
 
   return (
@@ -67,8 +67,9 @@ export function WebviewApp(): ReactElement {
         registry={registry}
         doc={layout.doc}
         revision={layout.revision}
+        {...(banner === undefined ? {} : { banner })}
         onLayoutChange={(doc) => {
-          setLayout((current) => ({ doc: applyLayoutChange(doc), revision: current.revision + 1 }));
+          webviewTransport().layout.setDoc(doc);
         }}
       />
     </LocaleProvider>
