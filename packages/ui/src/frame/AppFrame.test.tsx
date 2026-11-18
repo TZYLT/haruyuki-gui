@@ -292,7 +292,24 @@ describe("AppFrame", () => {
     expect(state.props).not.toBeNull();
     expect(state.props?.["components"]).toHaveProperty("__page__");
     expect(state.props?.["tabComponents"]).toHaveProperty("__tab__");
+    expect(state.props?.["theme"]).toMatchObject({ className: "dockview-theme-light" });
     expect(state.fromJSON).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses the dark dock theme when the shell is dark", () => {
+    document.documentElement.setAttribute("data-theme", "dark");
+
+    try {
+      render(
+        <LocaleProvider locale="en">
+          <AppFrame registry={registry()} doc={doc} revision={1} onLayoutChange={vi.fn()} />
+        </LocaleProvider>,
+      );
+
+      expect(state.props?.["theme"]).toMatchObject({ className: "dockview-theme-dark" });
+    } finally {
+      document.documentElement.removeAttribute("data-theme");
+    }
   });
 
   it("does not re-apply an identical document on a later render", async () => {

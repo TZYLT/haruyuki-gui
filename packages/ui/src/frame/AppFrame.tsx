@@ -40,10 +40,13 @@ import {
   type DockviewApi,
   type DockviewGroupPanel,
   type DockviewReadyEvent,
+  type DockviewTheme,
   type GetTabContextMenuItemsParams,
   type IDockviewPanel,
 } from "dockview-react";
 import type { LayoutDoc } from "@haruyuki/protocol";
+
+import { readTheme } from "../tokens/index.js";
 
 import "dockview-react/dist/styles/dockview.css";
 import "./styles.css";
@@ -97,6 +100,27 @@ export interface AppFrameProps {
 /** A fresh tab id; layout tab ids are opaque and only need to be unique. */
 let nextTab = 0;
 
+/**
+ * Dockview's own themes, declared here because the package exports the
+ * `DockviewTheme` type but not these two constants.
+ *
+ * Without an explicit theme the component falls back to `abyss`, a dark purple
+ * preset: it wins over the shell's `data-theme="light"` because it is applied to
+ * the dock's own root, and a light shell would then contain a dark grid with
+ * light rails. The dock has to follow the shell's mode, not its own default.
+ */
+const DOCK_THEME_LIGHT: DockviewTheme = {
+  name: "light",
+  className: "dockview-theme-light",
+  colorScheme: "light",
+};
+
+const DOCK_THEME_DARK: DockviewTheme = {
+  name: "dark",
+  className: "dockview-theme-dark",
+  colorScheme: "dark",
+};
+
 /** @param panel a dockview panel @returns its page id, or the empty string */
 function pageIdOfPanel(panel: IDockviewPanel | undefined): string {
   const params = panel?.params as { pageId?: unknown } | undefined;
@@ -107,6 +131,9 @@ function pageIdOfPanel(panel: IDockviewPanel | undefined): string {
 /** Render the dock and its pages. */
 export function AppFrame(props: AppFrameProps): ReactElement {
   const t = useT();
+  // Read once per render: the renderer applies the boot theme before mount and
+  // has no in-window theme switch, so the dock cannot lag a mode change here.
+  const dockTheme = readTheme().mode === "dark" ? DOCK_THEME_DARK : DOCK_THEME_LIGHT;
   const activity = useMemo(() => createActivityStore(), []);
   const apiRef = useRef<DockviewApi | null>(null);
   const latest = useRef<LayoutDoc>(props.doc);
@@ -703,6 +730,7 @@ export function AppFrame(props: AppFrameProps): ReactElement {
           >
             <DockviewReact
               className="hz-frame__dock"
+              theme={dockTheme}
               components={{ __page__: PageHost }}
               tabComponents={{ __tab__: PageTab }}
               onReady={onReady}
