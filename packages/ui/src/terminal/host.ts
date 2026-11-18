@@ -38,7 +38,14 @@
  *   refuses to resurrect it.
  */
 
+import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
+
+/** A terminal's size in cells. */
+export interface TerminalDimensions {
+  readonly cols: number;
+  readonly rows: number;
+}
 
 /** The `<style>` element this module owns, so installation stays idempotent. */
 const STYLE_ELEMENT_ID = "haruyuki-ui-xterm";
@@ -105,6 +112,23 @@ export interface TerminalHost {
    * {@link dispose} this is false and cannot become true again.
    */
   readonly isOpen: boolean;
+
+  /**
+   * Recompute the terminal's cell grid from its container's current box.
+   *
+   * Separate from `open` because the two answer different questions: `open` is
+   * "paint into this node", this is "how big is it now". A caller drives it from
+   * wherever it learns the box changed, and gets `null` when there is no mounted
+   * container to measure.
+   *
+   * The addon needs a laid-out box. Under jsdom (and under any real window
+   * before first layout) `clientWidth` is 0, `fit()` declines to answer rather
+   * than writing `cols: 0`, and this returns `null` -- reporting a zero grid as
+   * a measurement is how a terminal ends up one column wide.
+   *
+   * @returns the measured size, or null when nothing can be measured
+   */
+  measure(): TerminalDimensions | null;
 
   /**
    * Tear the terminal down and release its DOM.
@@ -199,6 +223,9 @@ export function createTerminalHost(options: TerminalHostOptions): TerminalHost {
   /** The container this host mounted into; `null` before {@link open}. */
   let container: HTMLElement | null = null;
 
+  /** Loaded lazily: a fit needs a laid-out box, and a host may never get one. */
+  let fit: FitAddon | null = null;
+
   /** Set once {@link TerminalHost.dispose} has run, so the host cannot be reused. */
   let disposed = false;
 
@@ -233,11 +260,36 @@ export function createTerminalHost(options: TerminalHostOptions): TerminalHost {
       terminal.open(target);
     },
 
+    measure(): TerminalDimensions | null {
+      if (disposed || container === null) return null;
+
+      // `fit()` writes the grid onto the instance and reaches the parent box
+      // through internals that only exist after `open`, hence the guard above.
+      // `proposeDimensions` is the addon's own "what would a fit produce", so
+      // asking it first means a container with no layout never reaches `fit`.
+      if (fit === null) {
+        fit = new FitAddon();
+        fit.activate(terminal);
+      }
+
+      const proposed = fit.proposeDimensions();
+
+      if (proposed === undefined || proposed.cols <= 0 || proposed.rows <= 0) {
+        return null;
+      }
+
+      fit.fit();
+
+      return { cols: terminal.cols, rows: terminal.rows };
+    },
+
     dispose(): void {
       if (disposed) return;
 
       disposed = true;
       container = null;
+      fit?.dispose();
+      fit = null;
       terminal.dispose();
     },
   };

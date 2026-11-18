@@ -222,6 +222,16 @@ function dispatchPaste(text: string): Event {
   return event;
 }
 
+/**
+ * The live `ResizeObserver` callbacks, so a test can make the box change.
+ *
+ * The stub used to be inert, which made "a resize is reported" unassertable: the
+ * panel subscribed to an observer that never called back, and every test passed
+ * because nothing was driven rather than because the wiring worked. Recording the
+ * callbacks is what turns that into a claim that can fail.
+ */
+let resizeCallbacks: (() => void)[] = [];
+
 beforeEach(() => {
   // jsdom implements neither, and xterm calls both while opening.
   vi.stubGlobal("matchMedia", () => ({
@@ -233,9 +243,13 @@ beforeEach(() => {
     dispatchEvent: () => false,
   }));
 
+  resizeCallbacks = [];
   vi.stubGlobal(
     "ResizeObserver",
     class {
+      constructor(callback: () => void) {
+        resizeCallbacks.push(callback);
+      }
       observe(): void {}
       unobserve(): void {}
       disconnect(): void {}
@@ -243,9 +257,19 @@ beforeEach(() => {
   );
 });
 
+/**
+ * Make the panel's box change, as a dock divider drag would.
+ *
+ * @returns nothing; the callbacks run synchronously
+ */
+function resizeBox(): void {
+  for (const callback of [...resizeCallbacks]) callback();
+}
+
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  resizeCallbacks = [];
 });
 
 describe("TerminalPanel: it mounts the terminal it was given a sheet for", () => {
@@ -279,6 +303,76 @@ describe("TerminalPanel: it mounts the terminal it was given a sheet for", () =>
     expect(screenElement().children).toHaveLength(1);
     expect(screenElement().querySelector(".xterm")).not.toBeNull();
   });
+});
+
+describe("TerminalPanel: the engine is told when the box changes", () => {
+  it("sends no resize when the box cannot be measured", () => {
+    // jsdom has no layout, so every container measures 0x0. `measure()` answers
+    // `null` for that rather than a zero grid, and a zero grid must never reach
+    // the engine: `terminal.resize` with `cols: 0` is a PTY asked to wrap at no
+    // columns. This asserts the silent half of the wiring -- that "could not
+    // measure" produces no frame at all.
+    const harness = renderPanel();
+
+    resizeBox();
+
+    expect(harness.commands.filter((command) => command.name === "terminal.resize")).toEqual([]);
+  });
+
+  it("reports the measured grid to the engine", async () => {
+    // The measurement itself cannot run here: `addon-fit` reads computed styles
+    // and a cell size, and jsdom has neither, so `host.measure()` answers `null`
+    // by design. So this replaces the measurement -- not the wiring -- with the
+    // one value a real window would produce, and asserts the frame that leaves.
+    // Without this, "the panel subscribes to an observer" would be the whole
+    // claim, and a panel that measured and then sent nothing would pass it.
+    // The host is built inside the effect, so the replacement is at the module
+    // the effect imports from rather than at the component.
+    // What the next measurement will say, so the test can make the box grow.
+    let measured = { cols: 80, rows: 24 };
+
+    const hostModule = await import("./host.js");
+    const createHost = hostModule.createTerminalHost;
+    const spy = vi.spyOn(hostModule, "createTerminalHost").mockImplementation((options) => {
+      return Object.assign(createHost(options), { measure: () => measured });
+    });
+
+    try {
+      const harness = renderPanel();
+      const resizes = (): TerminalCommand[] =>
+        harness.commands.filter((command) => command.name === "terminal.resize");
+
+      // The mount measures once, so the first frame already carries a grid rather
+      // than waiting for the observer's first asynchronous callback.
+      expect(resizes()[0]?.args).toMatchObject({ terminalId: "t-1", cols: 80, rows: 24 });
+
+      // A dock divider moves: the next measurement differs and the engine hears
+      // about it. This is the whole point of the wiring -- the PTY otherwise keeps
+      // the size it was spawned with forever.
+      measured = { cols: 132, rows: 40 };
+      resizeBox();
+
+      expect(resizes().at(-1)?.args).toMatchObject({ terminalId: "t-1", cols: 132, rows: 40 });
+
+      // An observer reports more often than the grid moves (a sub-cell pixel
+      // change fits to the same cols/rows), so the same size twice is one frame.
+      const before = resizes().length;
+      resizeBox();
+
+      expect(resizes()).toHaveLength(before);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("observes its own container rather than the window", () => {
+    // The panel changes size when a dock divider moves, which fires no window
+    // event. If the effect had listened on `window`, the count here would be 0.
+    renderPanel();
+
+    expect(resizeCallbacks.length).toBeGreaterThan(0);
+  });
+
 });
 
 describe("TerminalPanel: the engine's bytes have a road to the screen", () => {

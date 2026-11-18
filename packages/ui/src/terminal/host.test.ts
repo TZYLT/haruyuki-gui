@@ -378,6 +378,51 @@ describe("createTerminalHost", () => {
     host.dispose();
   });
 
+  it("reports no measurement before it is mounted", () => {
+    // The engine asks for a size as soon as the panel exists, so this is not a
+    // defensive branch: `fit()` reaches the parent box through internals that
+    // are only built by `open`, and a `null` here is what stops a resize for an
+    // unmounted panel from being sent as `cols: 0`.
+    const host = createTerminalHost({ css: MINIMAL_STYLESHEET, doc: document });
+
+    expect(host.measure()).toBeNull();
+
+    host.dispose();
+  });
+
+  it("reports no measurement after it is disposed", () => {
+    // The observer is disconnected on the same tick as the unmount, but a
+    // callback already queued still runs; a disposed host answering with a size
+    // would resize a session that no longer has a panel.
+    const container = mountPoint();
+    const host = createTerminalHost({ css: MINIMAL_STYLESHEET, doc: document });
+
+    host.open(container);
+    host.dispose();
+
+    expect(host.measure()).toBeNull();
+  });
+
+  it("declines to measure a container with no layout", () => {
+    // jsdom has no layout engine, so every box here is 0x0. That is the same
+    // situation as a real window before first paint, and the point is what the
+    // host does with it: `fit` would propose zero columns, and applying that
+    // would ask the engine for a terminal with no columns at all. A `null`
+    // answer is the difference between "could not measure" and "measured zero".
+    const container = mountPoint();
+    const host = createTerminalHost({ css: MINIMAL_STYLESHEET, doc: document });
+
+    host.open(container);
+
+    expect(host.measure()).toBeNull();
+    // And the grid it already had is untouched -- a failed measurement must not
+    // write anything onto the instance.
+    expect(host.terminal.cols).toBe(80);
+    expect(host.terminal.rows).toBe(24);
+
+    host.dispose();
+  });
+
   it("passes its own options to the terminal", () => {
     const host = createTerminalHost({
       css: MINIMAL_STYLESHEET,

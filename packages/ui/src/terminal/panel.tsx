@@ -44,12 +44,12 @@ import { useCallback, useEffect, useRef, useState, type ReactElement } from "rea
 import type { TerminalRouter } from "../bridge/terminal.js";
 import { Dialog } from "../components/index.js";
 import { useT } from "../i18n/index.js";
-import { killTerminal, sendInput, spawnTerminal } from "./commands.js";
+import { killTerminal, resizeTerminal, sendInput, spawnTerminal } from "./commands.js";
 import type { CommandFailure, CommandOutcome, CommandSender } from "./commands.js";
 import { translateKey, translatePaste } from "./exit.js";
 import { createTerminalHost } from "./host.js";
 import { attachTerminalOutput } from "./output.js";
-import type { TerminalHost } from "./host.js";
+import type { TerminalDimensions, TerminalHost } from "./host.js";
 import type { TerminalPhase } from "./state.js";
 import { reducePhase } from "./state.js";
 import type { TerminalPanelState, TerminalSignal } from "./state.js";
@@ -562,6 +562,49 @@ export function TerminalPanel({
     container.addEventListener("compositionend", onCompositionEnd, true);
     container.addEventListener("paste", onPaste as EventListener, true);
 
+    // Tell the engine the new grid whenever the box changes. Without this the PTY
+    // keeps the size `spawnTerminal` was given forever, so a pane the user drags
+    // wider still wraps its long lines at the old width and the shell's idea of
+    // the cursor's column disagrees with where the glyphs land.
+    //
+    // Driven by `ResizeObserver` rather than a window `resize` listener: the panel
+    // can change size because a dock divider moved, which fires no window event at
+    // all. The observer fires once on observe, which is also the first fit -- the
+    // one that replaces the spawn-time guess.
+    //
+    // `lastSize` de-duplicates, because an observer reports more than the grid
+    // moves: a sub-cell pixel change fits to the same cols/rows, and a resize per
+    // pixel dragged is a frame per pixel dragged.
+    let lastSize: TerminalDimensions | null = null;
+
+    const applyMeasuredSize = (): void => {
+      const measured = host.measure();
+
+      if (measured === null) return;
+      if (lastSize !== null && lastSize.cols === measured.cols && lastSize.rows === measured.rows) {
+        return;
+      }
+
+      lastSize = measured;
+
+      // Not phase-gated on purpose (see `resizeTerminal`): the first measurement
+      // legitimately names a session that may not exist yet, and the engine drops
+      // a resize for an unknown terminal instead of failing it.
+      void resizeTerminal(send, { terminalId, cols: measured.cols, rows: measured.rows }).then(
+        (outcome) => {
+          settleCommand(outcome, stateRef.current.phase);
+        },
+      );
+    };
+
+    const resizeObserver =
+      typeof ResizeObserver === "undefined" ? null : new ResizeObserver(applyMeasuredSize);
+
+    resizeObserver?.observe(container);
+    // An observer is only notified asynchronously, and a panel that mounts into an
+    // already-sized box must not wait one animation frame to be correct.
+    applyMeasuredSize();
+
     // The wire that carries the engine's bytes onto the screen. Registered here
     // rather than in a second effect so it shares this host's lifetime exactly: a
     // sink outliving its emulator would confirm output that was painted into a
@@ -582,6 +625,7 @@ export function TerminalPanel({
           });
 
     return () => {
+      resizeObserver?.disconnect();
       container.removeEventListener("compositionstart", onCompositionStart, true);
       container.removeEventListener("compositionend", onCompositionEnd, true);
       container.removeEventListener("paste", onPaste as EventListener, true);
