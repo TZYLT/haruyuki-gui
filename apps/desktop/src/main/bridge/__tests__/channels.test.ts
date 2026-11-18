@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  ABOUT_INFO_CHANNEL,
+  ABOUT_OPEN_CHANNEL,
   CHANNEL_ALLOWLIST,
   BRIDGE_CHANNEL_NAMES,
   BRIDGE_VERSION as SHARED_VERSION,
   DIAGNOSTICS_CHANNELS,
   DROPPED_FILES_CHANNEL,
+  UPDATE_CHECK_CHANNEL,
   validateChannelName,
 } from "../../../shared/bridge.js";
 import {
@@ -46,11 +49,11 @@ describe("D3 channel names", () => {
     }
   });
 
-  it("keeps the allowlist at exactly D3's eight, D2's one, D4's three and G1's five", () => {
+  it("keeps the allowlist at exactly D3's eight, D2's one, D4's three, G1's five and the about window's three", () => {
     // The channels in the list this item does not own: D2's dropped-file report, D4's
-    // three diagnostics commands and G1's five runtime channels. The comparison stays
-    // exact rather than "contains": an unnoticed extra entry is the failure this
-    // assertion exists to catch.
+    // three diagnostics commands, G1's five runtime channels and the three the about
+    // window added. The comparison stays exact rather than "contains": an unnoticed
+    // extra entry is the failure this assertion exists to catch.
     expect([...CHANNEL_ALLOWLIST].sort()).toEqual(
       [
         ...D3_CHANNELS,
@@ -63,6 +66,9 @@ describe("D3 channel names", () => {
         "bridge:control.runtime.pick",
         "bridge:control.runtime.reset",
         "bridge:control.runtime.status",
+        UPDATE_CHECK_CHANNEL,
+        ABOUT_INFO_CHANNEL,
+        ABOUT_OPEN_CHANNEL,
       ].sort(),
     );
   });

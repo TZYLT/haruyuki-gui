@@ -64,6 +64,25 @@ const EXCLUDED_DIRS = new Set([
   "docs",
 ]);
 
+/**
+ * Repo-relative directories skipped by full path, not by name.
+ *
+ * Both are produced by the packaging pipeline and both contain a copy of the
+ * engine's own sources, so scanning them reports the engine's unresolved imports
+ * as ours - and the verdict would then depend on whether somebody happened to
+ * package, not on whether this code has a boundary violation.
+ *
+ * By path rather than by name because the names are ordinary words: the shell
+ * keeps its runtime modules under `apps/desktop/src/main/runtime`, and skipping
+ * every directory called `runtime` would quietly stop checking seven real source
+ * files while still reporting PASS.
+ */
+const EXCLUDED_PATHS = new Set([
+  "apps/desktop/release",
+  "apps/desktop/runtime",
+  "apps/desktop/runtime-lock.json",
+]);
+
 /** File extensions that count as source. */
 const SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".mts", ".cts", ".js", ".mjs", ".cjs"]);
 
@@ -181,6 +200,13 @@ function walk(directory, root, files) {
     const absolute = path.posix.join(directory, entry.name);
 
     if (entry.isSymbolicLink()) {
+      continue;
+    }
+
+    // Checked before the directory-name rule and against the repo-relative path,
+    // so a generated tree is skipped wherever it appears and a real source
+    // directory that happens to share its name is still scanned.
+    if (EXCLUDED_PATHS.has(toPosix(path.posix.relative(root, absolute)))) {
       continue;
     }
 
