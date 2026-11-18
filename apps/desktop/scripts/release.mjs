@@ -186,6 +186,14 @@ export const ERROR_PREFIX = {
   tagTaken: "error: version conflict: tag exists",
   /** The tag list could not be read, so the answer is unknown. */
   tagUnknown: "error: version conflict: tag list unreadable",
+  /**
+   * The only requested target cannot be done on this machine (exit 3).
+   *
+   * Distinct from every `2` above on purpose: those mean "nothing was attempted
+   * and something is wrong with the request or the tree", this one means
+   * "nothing was attempted and nothing is wrong - this box lacks the route".
+   */
+  cannotBuild: "error: cannot build here",
 };
 
 /**
@@ -621,6 +629,109 @@ export function isWrittenDocument(file) {
 }
 
 /**
+ * Is this process already inside the container that builds Linux?
+ *
+ * Detected by marker file, not by "am I on Linux" and not by asking Docker: the
+ * image has no daemon inside it, so `docker info` fails there. A host check on
+ * top of that would call a Linux workstation capable (it is not - the toolchain
+ * lives in the image) and call the container incapable (it is the one place that
+ * can), which is backwards in both directions.
+ *
+ * @param {(path: string) => boolean} [exists]
+ * @returns {boolean}
+ */
+export function insideContainer(exists = existsSync) {
+  return exists("/.dockerenv") || exists("/run/.containerenv");
+}
+
+/**
+ * Can the Linux route run here: either we are in the container, or a container
+ * can be started.
+ *
+ * Two separate failures, one answer: the `docker` command missing, and the
+ * daemon not answering it. Both mean the Linux build cannot run from here, which
+ * is what the caller needs to know. Which of the two it was is printed, not
+ * returned, so the caller cannot accidentally treat one as recovery.
+ *
+ * @param {(command: string, args: string[], cwd: string) => {status: number|null}} [spawn]
+ * @param {(path: string) => boolean} [exists]
+ * @returns {boolean}
+ */
+export function containerAvailable(spawn = spawnProbe, exists = existsSync) {
+  // Already inside: the work can be done right here, and no daemon is involved.
+  if (insideContainer(exists)) return true;
+  try {
+    return spawn("docker", ["info"], REPO_ROOT).status === 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The probe behind `containerAvailable`, bounded so a wedged daemon cannot stall
+ * the command: a machine that takes a minute to say "no" is a machine that says
+ * nothing useful.
+ *
+ * @param {string} command
+ * @param {string[]} args
+ * @param {string} cwd
+ * @returns {{status: number|null}}
+ */
+function spawnProbe(command, args, cwd) {
+  return spawnSync(command, args, {
+    cwd,
+    encoding: "utf8",
+    stdio: "ignore",
+    timeout: 20_000,
+    shell: process.platform === "win32" && !/\.exe$/i.test(command),
+  });
+}
+
+/**
+ * What this command line can and cannot do here, decided before any work starts.
+ *
+ * Linux has one route in this item: the container. So "asked for Linux only, and
+ * no container" is a single fact with a single answer - `3`, "the only requested
+ * target cannot be done on this machine" - and it holds on every host platform,
+ * because the host being Linux does not provide the toolchain the route needs.
+ *
+ * `3` is deliberately narrow. It is not "the build did not work": a container
+ * that exists and then fails is a failure, `1`, and turning that into `3` would
+ * tell the reader the machine was incapable when it was not. And it never
+ * applies when another target was also requested - then the run has something
+ * else to do, and its verdict is about what it did, not about what was missing.
+ *
+ * @param {{ targets: string[], linuxNotBuilt: string|null }} options
+ * @param {{ available: boolean }} container
+ * @returns {{code: number, message: string}|null} the refusal, or null to run
+ */
+export function targetDecision(options, container) {
+  const linuxOnly = options.targets.length === 1 && options.targets[0] === "linux";
+  if (!linuxOnly) return null;
+  if (container.available) return null;
+
+  // Nothing is attempted, so nothing can fail: `1` would report a build that
+  // never started, and `2` would claim a bad command line. Only `3` says what
+  // happened - this machine cannot produce the one target that was asked for.
+  const stated =
+    options.linuxNotBuilt === null
+      ? ""
+      : ` You also passed --linux-not-built=${options.linuxNotBuilt}; that explains a ` +
+        `missing artifact from a run that happened, and this run cannot start one, ` +
+        `so the reason is not recorded.`;
+
+  return {
+    code: 3,
+    message:
+      `--linux-only was requested, and the Linux build has no route here without a ` +
+      `container: docker is not on PATH or its daemon does not answer. This is not a ` +
+      `build failure - nothing was attempted. Install Docker and run again, or ask for ` +
+      `both platforms (dropping --linux-only), which records Linux as ` +
+      `skipped (not-required) instead.${stated}`,
+  };
+}
+
+/**
  * The arguments `manifest.mjs` is called with, from what this run decided.
  *
  * The requested targets have to travel: without them the manifest cannot tell
@@ -709,6 +820,7 @@ async function roundTwo(options) {
  * @param {{
  *   versionConflict?: () => Promise<{prefix: string, message: string}|null>,
  *   previousBuildNote?: () => Promise<{message: string}|{unreadable: string}|null>,
+ *   container?: () => boolean,
  *   roundOne?: (options: object) => Promise<number>,
  *   roundTwo?: (options: object) => Promise<number>,
  *   stderr?: (text: string) => void,
@@ -737,6 +849,17 @@ export async function runPipeline(argv, deps = {}) {
   if (conflict !== null) {
     stderr(`${conflict.prefix}\n${conflict.message}\n`);
     return 2;
+  }
+
+  // Also before any step: whether this machine can produce the target at all is
+  // a property of the machine, not of the build, and finding it out after a
+  // twenty-minute runtime stage would be finding it out too late.
+  const decision = targetDecision(options, {
+    available: (deps.container ?? containerAvailable)(),
+  });
+  if (decision !== null) {
+    stderr(`${ERROR_PREFIX.cannotBuild} ${decision.message}\n`);
+    return decision.code;
   }
 
   // A leftover document for this same version is a warning, never a refusal:

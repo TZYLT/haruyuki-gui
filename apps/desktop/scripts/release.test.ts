@@ -17,6 +17,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { platformStates } from "./manifest.mjs";
 import {
+  containerAvailable,
   dereferenceTree,
   ERROR_PREFIX,
   isWrittenDocument,
@@ -29,6 +30,7 @@ import {
   runPipeline,
   scanArtifacts,
   scanTrees,
+  targetDecision,
   UsageError,
   versionConflict,
 } from "./release.mjs";
@@ -341,7 +343,157 @@ describe("previousBuildNote", () => {
   });
 });
 
+describe("targetDecision", () => {
+  it("answers 3 for linux-only when there is no container to build it in", () => {
+    // The one exit code nothing had ever asked for. Linux has a single route in
+    // this item - the container - so asking for it on a box without one is "this
+    // machine cannot do the only thing requested", not a build that broke.
+    const decision = targetDecision(
+      { targets: ["linux"], linuxNotBuilt: null },
+      {
+        available: false,
+      },
+    );
+
+    expect(decision?.code).toBe(3);
+  });
+
+  it("does not answer 3 when the container is there", () => {
+    // Machine is capable: whatever happens next is about the build, so the
+    // verdict must come from the build and not from here.
+    const decision = targetDecision(
+      { targets: ["linux"], linuxNotBuilt: null },
+      {
+        available: true,
+      },
+    );
+
+    expect(decision).toBeNull();
+  });
+
+  it("never answers 3 when another target was also requested", () => {
+    // There is other work to do, so the run's verdict is about what it did.
+    // `3` here would replace a real result with "this machine could not".
+    for (const targets of [["win32"], ["win32", "linux"]]) {
+      expect(targetDecision({ targets, linuxNotBuilt: null }, { available: false })).toBeNull();
+    }
+  });
+
+  it("says the target cannot be built here rather than that the build failed", () => {
+    const decision = targetDecision(
+      { targets: ["linux"], linuxNotBuilt: null },
+      {
+        available: false,
+      },
+    );
+
+    // A reader who sees "failed" will go looking for a broken build that never
+    // started; the message has to say nothing was attempted.
+    expect(decision?.message).toContain("nothing was attempted");
+    expect(decision?.message).not.toContain("build failure.");
+  });
+});
+
+describe("containerAvailable", () => {
+  it("reads the probe's answer rather than trusting a platform check", () => {
+    // Deliberately not `process.platform`: a Linux host without Docker is
+    // exactly the case that must come out as unavailable, and a host check
+    // would call it capable.
+    expect(
+      containerAvailable(
+        () => ({ status: 0 }),
+        () => false,
+      ),
+    ).toBe(true);
+    expect(
+      containerAvailable(
+        () => ({ status: 1 }),
+        () => false,
+      ),
+    ).toBe(false);
+  });
+
+  it("treats a probe that cannot run at all as no container", () => {
+    // `docker` is not on PATH: the spawn throws, which is the most common way
+    // this machine has no container, and it must not crash the command.
+    expect(
+      containerAvailable(
+        () => {
+          throw new Error("ENOENT");
+        },
+        () => false,
+      ),
+    ).toBe(false);
+  });
+
+  it("is available from inside the container, where no daemon exists to ask", () => {
+    // The image has no Docker in it. Asking the daemon there answers "no" about
+    // the one place that can do the work - which would turn the only working
+    // route into an exit 3.
+    expect(
+      containerAvailable(
+        () => ({ status: 1 }),
+        (p) => p === "/.dockerenv",
+      ),
+    ).toBe(true);
+    expect(
+      containerAvailable(
+        () => ({ status: 1 }),
+        (p) => p === "/run/.containerenv",
+      ),
+    ).toBe(true);
+  });
+});
+
 describe("runPipeline", () => {
+  it("returns 3 and starts no round when linux is the only target and there is no container", async () => {
+    const calls: string[] = [];
+    const lines: string[] = [];
+
+    const code = await runPipeline(["--linux-only"], {
+      versionConflict: async () => null,
+      previousBuildNote: async () => null,
+      container: () => false,
+      roundOne: async () => {
+        calls.push("roundOne");
+        return 0;
+      },
+      roundTwo: async () => {
+        calls.push("roundTwo");
+        return 0;
+      },
+      stderr: (text) => lines.push(text),
+    });
+
+    expect(code).toBe(3);
+    // Decided before any work: a twenty-minute runtime stage is not the place to
+    // discover the machine lacks the route.
+    expect(calls).toEqual([]);
+    expect(lines.join("").startsWith(`${ERROR_PREFIX.cannotBuild} `)).toBe(true);
+  });
+
+  it("runs when the same request has a container, because the machine can do it", async () => {
+    const calls: string[] = [];
+
+    const code = await runPipeline(["--linux-only"], {
+      versionConflict: async () => null,
+      previousBuildNote: async () => null,
+      container: () => true,
+      roundOne: async () => {
+        calls.push("roundOne");
+        return 0;
+      },
+      roundTwo: async () => {
+        calls.push("roundTwo");
+        return 0;
+      },
+      stderr: () => {},
+    });
+
+    expect(code).toBe(0);
+    expect(calls).toEqual(["roundOne", "roundTwo"]);
+  });
+
   it("stops before the first step when the version is already published", async () => {
     const calls: string[] = [];
     const lines: string[] = [];
@@ -374,6 +526,7 @@ describe("runPipeline", () => {
     const code = await runPipeline([], {
       versionConflict: async () => null,
       previousBuildNote: async () => null,
+      container: () => true,
       roundOne: async () => {
         calls.push("roundOne");
         return 0;
@@ -398,6 +551,7 @@ describe("runPipeline", () => {
       previousBuildNote: async () => ({
         message: "release/release-manifest.json already describes 0.1.0: builtAt=T1 commit=C1",
       }),
+      container: () => true,
       roundOne: async () => {
         calls.push("roundOne");
         return 0;
@@ -423,6 +577,7 @@ describe("runPipeline", () => {
     const code = await runPipeline([], {
       versionConflict: async () => null,
       previousBuildNote: async () => ({ unreadable: "release/release-manifest.json is not JSON" }),
+      container: () => true,
       roundOne: async () => 0,
       roundTwo: async () => 0,
       stderr: (text) => lines.push(text),
@@ -438,6 +593,7 @@ describe("runPipeline", () => {
     const code = await runPipeline([], {
       versionConflict: async () => null,
       previousBuildNote: async () => null,
+      container: () => true,
       roundOne: async () => {
         calls.push("roundOne");
         return 2;
