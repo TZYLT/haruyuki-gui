@@ -46,12 +46,23 @@ export * from "./layout/layout-doc.js";
 export * from "./layout/layout-frame.js";
 
 /**
+/**
  * The conversation content contract: the block union a surface draws and the
  * update envelope a conversation store files under one message. Plain data
  * only; the model that produces blocks and the store that keeps turns live in
  * @haruyuki/core.
  */
 export * from "./content/index.js";
+
+/**
+ * The session contract: the nine entity shapes a renderer folds state into, the
+ * derived views it renders, the codes it maps to its own wording, and the
+ * selector request/result pair the store answers on a control frame.
+ *
+ * Types only. The store that produces them lives in @haruyuki/core.
+ */
+export * from "./session/types.js";
+export * from "./session/select.js";
 
 /**
  * The typed capability layer (docs/62 §6.1, docs/63 §3.1): one row per
