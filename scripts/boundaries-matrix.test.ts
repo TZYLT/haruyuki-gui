@@ -166,6 +166,15 @@ const RED_CASES: Array<[string, string]> = [
   ["red-r7-ui-protocol-relative", "R7"],
   ["red-r7-ui-protocol-namespace", "R7"],
   ["red-r7-ui-protocol-partial", "R7"],
+  // R7: every remaining form that carries no enumerable binding names -- a
+  // default import, require(), a dynamic import() and `export * from` -- is an
+  // unbounded value import of the whole module, so the allow-list cannot apply.
+  // Keeping one fixture per form is what makes "names === null" a rule rather
+  // than an assumption: R6 already covered these forms and R7 did not.
+  ["red-r7-ui-protocol-default", "R7"],
+  ["red-r7-ui-protocol-require", "R7"],
+  ["red-r7-ui-protocol-dynamic-import", "R7"],
+  ["red-r7-ui-protocol-star-export", "R7"],
   // R8 / R9: the app shells must not import each other.
   ["red-r8-desktop-vscode", "R8"],
   ["red-r9-vscode-desktop", "R9"],
@@ -190,6 +199,9 @@ const GREEN_CASES: string[] = [
   "green-r6-r7-type-only-forms",
   // R7 relaxation: the enumerated constant tables of protocol are importable.
   "green-r7-ui-protocol-const",
+  // R7 relaxation: a named re-export of an allow-listed constant stays green,
+  // so the allow-list is about *which* names cross, not about the clause form.
+  "green-r7-ui-protocol-named-reexport",
   // A-2 / R6 / R7: a type-position import() and typeof import() are type-only.
   "green-r6-r7-type-position",
   // A-2: core->protocol, ui->{protocol,core} type-only, desktop/vscode->all.
