@@ -57,24 +57,22 @@ const WHICH: keyof typeof ENTRIES =
   process.env["HARUYUKI_BUILD_ENTRY"] === "preload" ? "preload" : "main";
 
 /**
- * Anchor for `@haruyuki/core`'s `createRequire(import.meta.url)`.
+ * Anchor for the core package's `createRequire(import.meta.url)`.
  *
- * The main bundle is CommonJS, so Vite turns `import.meta` into `{}` and
- * `createRequire(undefined)` throws before the first window exists. The probe
- * build already replaces this with the core package location; the main build
- * did not, which is why a green probe suite could not catch the shell failing
- * to launch (`E-128`). This is the same anchor, not a second convention.
+ * Removing this anchor was attempted and reverted. The reason it cannot go yet is
+ * that nothing in this bundle imports the frame sender on its own: the supervision
+ * code imports reclaim and evidence primitives from the package root, and the root
+ * re-exports the engine transport, whose first module-level statement is
+ * `createRequire(import.meta.url)`. This bundle is CommonJS, so `import.meta` becomes
+ * an empty object and `createRequire` throws `ERR_INVALID_ARG_VALUE` while the module
+ * is still loading -- before the window, before the logger, before any error code.
+ * Measured twice on this machine with the identical trace; the `./bridge` subpath does
+ * not help here, because no file in the bundle imports it.
  *
- * The absolute path is a development-tree fact. G2's packaged build must copy
- * `ws` next to the bundle or externalise it with a packaged anchor; that is
- * recorded as a packaging debt rather than guessed at here.
- *
- * This is E-132's temporary convergence for the main build. D3 carried a narrower
- * `resolve.alias` for a while ("main only needs core's bridge module"), but D4's
- * supervision code imports core's reclaim/evidence primitives from the package root,
- * so the root import is now correct and the alias is gone. The durable fix is a
- * `"./bridge"` subpath on `@haruyuki/core` for the sender's half, plus a packaged
- * anchor for this define (G2's packaging debt); until then this is the one anchor.
+ * The absolute path is a development-tree fact. Packaging has to copy the websocket
+ * client next to the bundle or replace this anchor with one derived from the installed
+ * layout, and this define can be deleted only once the main process no longer reaches
+ * the engine transport transitively. Both halves are the same open debt.
  */
 const CORE_PACKAGE_JSON = path.resolve(import.meta.dirname, "../../packages/core/package.json");
 
@@ -103,10 +101,10 @@ export default defineConfig({
       },
     },
   },
-  // `@haruyuki/core` resolves `ws` through `createRequire(import.meta.url)`.
-  // In this CJS bundle `import.meta` is `{}`, so anchor it where `ws` actually
-  // lives (`packages/core`) instead of letting module load throw. The preload
-  // build has no such call, but the define is harmless there.
+  // The core package resolves the websocket client through
+  // `createRequire(import.meta.url)`. In this CommonJS bundle `import.meta` is `{}`,
+  // so anchor it where that client actually lives instead of letting module load
+  // throw. Kept after the removal attempt failed twice; see the comment above.
   define: {
     "import.meta.url": `require("node:url").pathToFileURL(${JSON.stringify(
       CORE_PACKAGE_JSON,
