@@ -56,6 +56,7 @@ import {
   type WebviewBridge,
   type VsCodeApi,
 } from "./bridge.js";
+import { faultOf, type ShellFaultAction, type FaultInput } from "./errors/fault.js";
 import { applyLayoutChange, readLayout } from "./layout.js";
 
 /** The layout document plus the revision the frame compares against. */
@@ -285,6 +286,37 @@ export function useBridge(): BridgeSnapshot {
   const bridge = webviewTransport().bridge;
 
   return useSyncExternalStore<BridgeSnapshot>(bridge.subscribe, bridge.snapshot, bridge.snapshot);
+}
+
+/**
+ * The shell fault the panel should render, or `undefined` when there is none.
+ *
+ * Read from the same store as {@link useBridge}, so a phase and its failure can
+ * never disagree: the transport hands on what the bridge accepted, and the rule
+ * for when that is a page lives in `./errors/fault.ts`.
+ *
+ * @returns the failure, or `undefined` while the shell is not faulted
+ */
+export function useShellFault(): FaultInput | undefined {
+  const snapshot = useBridge();
+
+  return faultOf({
+    phase: snapshot.status?.phase ?? null,
+    failure: snapshot.status?.failure,
+  });
+}
+
+/**
+ * Send one answer from the fault page back to the host.
+ *
+ * Bound to the bridge rather than to an `AppFrame` slot: the answers on that page
+ * reach the editor's own surfaces, which the bridge's action message already
+ * carries.
+ *
+ * @param action the action name the page decided on
+ */
+export function sendShellFaultAction(action: ShellFaultAction): void {
+  webviewTransport().bridge.sendAction(action);
 }
 
 /**

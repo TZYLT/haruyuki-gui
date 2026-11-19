@@ -26,7 +26,14 @@ import { AppFrame, LocaleProvider } from "@haruyuki/ui";
 import { applyElementLocale } from "../shared/i18n.js";
 import { createRegistry } from "./registry.js";
 import { applyShellTheme } from "./theme.js";
-import { useBridgeNotice, useLayout, webviewTransport } from "./transport.js";
+import { ShellFault } from "./errors/ShellFault.js";
+import {
+  sendShellFaultAction,
+  useBridgeNotice,
+  useLayout,
+  useShellFault,
+  webviewTransport,
+} from "./transport.js";
 
 /**
  * The locale this panel renders in comes from the document.
@@ -75,10 +82,21 @@ export interface WebviewAppProps {
 export function WebviewApp({ locale }: WebviewAppProps): ReactElement {
   const layout = useLayout();
   const banner = useBridgeNotice();
+  const fault = useShellFault();
   const registry = createRegistry();
 
   return (
     <LocaleProvider locale={locale}>
+      {/*
+        The fault page and the frame are composed, not substituted. The frame is
+        rendered either way and its document is never touched here: a fault owns
+        the state area and leaves the user's arrangement exactly as it was, so a
+        reconnect finds it intact. That is the whole difference between this and
+        an error screen that replaces the workspace.
+      */}
+      {fault === undefined ? null : (
+        <ShellFault failure={fault} onAction={(action) => sendShellFaultAction(action)} />
+      )}
       <AppFrame
         registry={registry}
         doc={layout.doc}

@@ -70,6 +70,18 @@ export const RUNTIME_FAILURE_KINDS = [
   "start-failed",
   "crash",
   "internal",
+  /**
+   * The engine was found, but not the build this shell was measured against.
+   * A distinct kind because it is a question rather than a dead end: the page
+   * offers to connect anyway, and the host needs to know what it is offering.
+   */
+  "untested-engine",
+  /**
+   * No folder is open, so there is no working directory the engine may write in.
+   * An offered answer exists (the home directory) and it is the user's to give,
+   * which is why this is not folded into `start-failed`.
+   */
+  "no-workspace",
 ] as const;
 
 /** One kind of runtime failure. */
@@ -81,11 +93,33 @@ export type RuntimeFailureKind = (typeof RUNTIME_FAILURE_KINDS)[number];
  * `detail` is a human sentence for the status page and the log; it is never
  * parsed for control flow. `logPath` points at the child's captured stderr when
  * there is one, because that is where the user has to look next.
+ *
+ * The optional fields below are the facts the page has to *show* rather than
+ * restate: which directories were searched, which entries a folder is missing,
+ * which two versions were compared, where the offered degradation would run.
+ * They are data, not sentences, because a page that printed `detail` would show
+ * one English string under a header in another language -- and a page that
+ * parsed `detail` to recover them would be reading prose for control flow.
+ *
+ * Every one of them is optional and none of them changes an existing field, so a
+ * producer that knows nothing about them still emits a valid failure.
  */
 export type RuntimeFailure = {
   readonly kind: RuntimeFailureKind;
   readonly detail: string;
   readonly logPath?: string;
+  /** Directories the engine search looked in, in the order it tried them. */
+  readonly searchedPaths?: readonly string[];
+  /** Entries the chosen folder has to hold and does not, e.g. `haruyuki.js`. */
+  readonly missingEntries?: readonly string[];
+  /** The folder that was inspected and refused, absolute. */
+  readonly candidateDir?: string;
+  /** Build this shell was measured against, for the untested pair. */
+  readonly expectedVersion?: string;
+  /** Build the engine reports, for the untested pair. */
+  readonly actualVersion?: string;
+  /** Where the no-workspace degradation would run, when one is offered. */
+  readonly homeDir?: string;
 };
 
 /** The `init` the host sends exactly once per child. */
@@ -263,6 +297,14 @@ function isNonEmptyString(value: unknown): value is string {
 /** @returns whether the value is a string or absent */
 function isOptionalString(value: unknown): value is string | undefined {
   return value === undefined || typeof value === "string";
+}
+
+/** @returns whether the value is a list of strings, or absent */
+function isOptionalStringList(value: unknown): value is readonly string[] | undefined {
+  return (
+    value === undefined ||
+    (Array.isArray(value) && value.every((entry: unknown) => typeof entry === "string"))
+  );
 }
 
 /** @returns whether the value is one of the closed set */
@@ -579,6 +621,17 @@ function narrowStatus(raw: Record<string, unknown>): NarrowResult<CoreToHost> {
       return refuse("status.failure.kind is unknown");
     if (typeof failure.detail !== "string") return refuse("status.failure.detail is not a string");
     if (!isOptionalString(failure.logPath)) return refuse("status.failure.logPath is not a path");
+    if (!isOptionalString(failure.candidateDir))
+      return refuse("status.failure.candidateDir is not a path");
+    if (!isOptionalString(failure.expectedVersion))
+      return refuse("status.failure.expectedVersion is not a version");
+    if (!isOptionalString(failure.actualVersion))
+      return refuse("status.failure.actualVersion is not a version");
+    if (!isOptionalString(failure.homeDir)) return refuse("status.failure.homeDir is not a path");
+    if (!isOptionalStringList(failure.searchedPaths))
+      return refuse("status.failure.searchedPaths is not a list of paths");
+    if (!isOptionalStringList(failure.missingEntries))
+      return refuse("status.failure.missingEntries is not a list of names");
   }
 
   const engineVersion = raw.engineVersion;
@@ -599,7 +652,26 @@ function narrowStatus(raw: Record<string, unknown>): NarrowResult<CoreToHost> {
       : {
           kind: failure.kind as RuntimeFailureKind,
           detail: failure.detail as string,
+          // Rebuilt field by field, never spread: a future field added to the
+          // message but not to this list would be silently dropped here, and the
+          // symptom would look exactly like the failure the page never received.
           ...(failure.logPath === undefined ? {} : { logPath: failure.logPath as string }),
+          ...(failure.searchedPaths === undefined
+            ? {}
+            : { searchedPaths: [...(failure.searchedPaths as readonly string[])] }),
+          ...(failure.missingEntries === undefined
+            ? {}
+            : { missingEntries: [...(failure.missingEntries as readonly string[])] }),
+          ...(failure.candidateDir === undefined
+            ? {}
+            : { candidateDir: failure.candidateDir as string }),
+          ...(failure.expectedVersion === undefined
+            ? {}
+            : { expectedVersion: failure.expectedVersion as string }),
+          ...(failure.actualVersion === undefined
+            ? {}
+            : { actualVersion: failure.actualVersion as string }),
+          ...(failure.homeDir === undefined ? {} : { homeDir: failure.homeDir as string }),
         };
 
   return {

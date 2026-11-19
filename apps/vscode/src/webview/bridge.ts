@@ -45,6 +45,8 @@
  */
 
 import { createFrameEntry, type FrameEntry } from "@haruyuki/ui";
+
+import { narrowStatusFailure, type StatusFailure } from "./errors/fault.js";
 import type { CommandCall, CommandReply } from "@haruyuki/core";
 import type { FrameChannel } from "@haruyuki/protocol";
 
@@ -162,10 +164,21 @@ export interface ReplyMessage {
   readonly reply: CommandReply;
 }
 
-/** Host to webview: the core's phase, as the host last observed it. */
+/**
+ * Host to webview: the core's phase, as the host last observed it.
+ *
+ * The failure fields are the same ones `RuntimeFailure` carries, re-declared
+ * here rather than imported: this module speaks the panel's message family, and
+ * the family is a wire contract with its own narrowing. What matters is that
+ * they are carried at all -- a page that learns only `failed` can say something
+ * went wrong and nothing else, and "nothing else" is the state this was fixed
+ * from.
+ */
 export interface StatusMessage {
   readonly kind: "status";
   readonly phase: string;
+  /** Why the phase is `failed`. Absent for every other phase. */
+  readonly failure?: StatusFailure;
 }
 
 /** Every message this panel accepts from its host. */
@@ -763,7 +776,14 @@ function narrowHostMessage(raw: unknown): HostMessage | null {
 
       if (typeof phase !== "string" || phase.length === 0) return null;
 
-      return { kind: "status", phase };
+      const failure = narrowStatusFailure(raw["failure"]);
+
+      // A `failed` phase with no readable failure is refused rather than carried
+      // without one: the page would have a heading and nothing under it, and
+      // whatever arrives next would be explained by a phase it no longer matches.
+      if (phase === "failed" && failure === undefined) return null;
+
+      return failure === undefined ? { kind: "status", phase } : { kind: "status", phase, failure };
     }
 
     default:
