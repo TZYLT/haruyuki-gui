@@ -12,7 +12,7 @@
  */
 
 import { fork, spawn, type ChildProcess } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -97,7 +97,30 @@ runCoreMain({
   });
 
   writeFileSync(path.join(root, "entry.mjs"), launcher, "utf8");
+
+  // `ws` is external to the bundle, exactly as the shipped build leaves it, so
+  // the child resolves it from beside its own file. The artifact sits next to
+  // `dist/node_modules/ws`; this copy has to mirror that layout or the bundle
+  // loads and then dies on a dependency the real install always provides.
+  copyRuntimeDependency();
 });
+
+/**
+ * Put `ws` where the bundle resolves it from.
+ *
+ * Resolved from `@haruyuki/core`'s manifest rather than spelled as a path under
+ * `packages/core/node_modules`, for the reason the build script gives: pnpm's
+ * layout is an install detail, the dependency is `ws`.
+ */
+function copyRuntimeDependency(): void {
+  const requireFromCore = createRequire(
+    path.join(APP_ROOT, "..", "..", "packages", "core", "package.json"),
+  );
+  const wsDir = path.dirname(requireFromCore.resolve("ws/package.json"));
+  const target = path.join(root, "node_modules", "ws");
+
+  cpSync(wsDir, target, { recursive: true, dereference: true });
+}
 
 afterAll(async () => {
   for (const host of hosts) {
