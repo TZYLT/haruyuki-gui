@@ -16,7 +16,7 @@
  */
 
 import { createRequire } from "node:module";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -114,6 +114,17 @@ runCoreMain({
   });
 
   writeFileSync(path.join(root, "entry.mjs"), launcher, "utf8");
+
+  // `ws` stays external in the bundle, exactly as the shipped build leaves it,
+  // so the child resolves it from beside its own file. The artifact sits next to
+  // `dist/node_modules/ws`; this copy mirrors that layout instead of assuming a
+  // single file is self-contained.
+  const requireFromCore = createRequire(
+    path.join(APP_ROOT, "..", "..", "packages", "core", "package.json"),
+  );
+  const wsDir = path.dirname(requireFromCore.resolve("ws/package.json"));
+
+  cpSync(wsDir, path.join(root, "node_modules", "ws"), { recursive: true, dereference: true });
 });
 
 afterAll(async () => {
