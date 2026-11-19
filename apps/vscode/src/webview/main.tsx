@@ -23,6 +23,9 @@ import { createRoot } from "react-dom/client";
 
 import { AppFrame, LocaleProvider } from "@haruyuki/ui";
 
+// Before the frame's own stylesheet, so the shell's fill rules are in place for
+// the first layout the dock measures. See the file for why a webview needs them.
+import "./shell.css";
 import { applyElementLocale } from "../shared/i18n.js";
 import { createRegistry } from "./registry.js";
 import { applyShellTheme } from "./theme.js";

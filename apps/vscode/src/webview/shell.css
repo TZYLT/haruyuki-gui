@@ -1,0 +1,39 @@
+/*
+ * The webview shell's own layout, and nothing else.
+ *
+ * The frame is written for a container that fills the window: `.hz-frame` is a
+ * flex item with `flex: 1 1 auto`, so it takes the height its parent gives it
+ * and no more. A document that gives it none collapses it to the height of its
+ * content -- which is where the side rails, having tabs to draw, stay visible
+ * while the dock area, having none until it mounts, has zero height and the
+ * pages never appear.
+ *
+ * The desktop shell answers the same question with a `100vh` wrapper in its
+ * entry. A webview cannot: it is a document inside the editor's panel, not a
+ * window, so the chain from the root element down has to be told to fill it.
+ *
+ * No colours and no component styling live here; those come from the design
+ * tokens that dockview maps through its own variables. A rule in this file that
+ * set a colour would be a second palette.
+ */
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+#root {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+/* The frame and the fault page share the column: the frame keeps its share
+   whether or not a fault is showing, because a fault covers the state area and
+   never takes the workspace away. */
+#root > * {
+  min-height: 0;
+}
