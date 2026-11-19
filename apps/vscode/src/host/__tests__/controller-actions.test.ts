@@ -201,6 +201,8 @@ function options(overrides: Partial<ControllerOptions> = {}): ControllerOptions 
       event: (code: string) => lines.push(code),
       failure: (code: string) => lines.push(code),
       show: () => lines.push("LOG_SHOWN"),
+      // A stand-in that never fails drops nothing.
+      droppedLines: 0,
     },
     status: statusDouble(),
     createPanel: (link) => panel.double(link),

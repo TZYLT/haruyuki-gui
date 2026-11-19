@@ -247,6 +247,7 @@ function options(overrides: Partial<ControllerOptions> = {}): ControllerOptions 
       event: (code: string) => lines.push(code),
       failure: (code: string) => lines.push(code),
       show: () => undefined,
+      droppedLines: 0,
     },
     status: statusDouble(),
     createPanel: (link) => panel.double(link),
@@ -506,6 +507,7 @@ describe("controller: the assembly", () => {
           },
           failure: (code: string) => lines.push(code),
           show: () => undefined,
+          droppedLines: 0,
         },
       }),
     );
