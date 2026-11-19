@@ -23,7 +23,15 @@
  * root, and this file never deletes recursively (route doc 08 section 5.1).
  */
 import { spawnSync } from "node:child_process";
-import { cpSync, mkdtempSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  cpSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -131,6 +139,17 @@ function currentGitDir(): string {
   const dotGit = path.join(REPO_ROOT, ".git");
 
   if (statSync(dotGit).isDirectory()) {
+    return dotGit;
+  }
+
+  // A worktree's `.git` names an absolute path on the machine that created it.
+  // When that path is not here - a copy verified on another machine - the honest
+  // answer is the copy's own repository, not a throw: the tests that use this
+  // run a temporary engine and want to tell it which history to read, and any
+  // readable history answers that. Throwing here made three tests fail on a peer
+  // for a reason none of them is about.
+  const pointer = /^gitdir:\s*(.+)$/m.exec(readFileSync(dotGit, "utf8"))?.[1]?.trim();
+  if (pointer !== undefined && !existsSync(path.resolve(REPO_ROOT, pointer))) {
     return dotGit;
   }
 

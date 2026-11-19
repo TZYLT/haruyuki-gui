@@ -215,7 +215,15 @@ describe("localTagExists", () => {
     // tagged that version - so it passed here and failed on the machine that
     // does the releases. Asking what git lists, then requiring the probe to
     // agree both ways, is a claim about the probe rather than about the machine.
-    const listed = execFileSync("git", ["tag", "--list"], { encoding: "utf8" })
+    // A checkout that carries no history can make this throw; that is not a
+    // verdict about the probe, so it is read as "nothing to compare".
+    const listed = (() => {
+      try {
+        return execFileSync("git", ["tag", "--list"], { encoding: "utf8" });
+      } catch {
+        return "";
+      }
+    })()
       .split("\n")
       .map((line) => line.trim())
       .filter((line) => line.length > 0);
@@ -223,6 +231,8 @@ describe("localTagExists", () => {
     for (const tag of listed.slice(0, 3)) {
       expect(localTagExists(tag), `git lists ${tag} but the probe denies it`).toBe(true);
     }
+    // A checkout may legitimately carry no tags at all, so the negative case is
+    // a name chosen not to exist rather than one assumed to be unused.
     expect(localTagExists("v0.0.0-no-such-release")).toBe(false);
   });
 });
