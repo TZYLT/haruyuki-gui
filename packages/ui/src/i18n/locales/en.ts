@@ -332,6 +332,22 @@ export const en = {
   "error.runtimeActual": "Actual sha256",
   "error.runtimeLogPath": "Log directory",
 
+  // ------------------------------------------------------------- shell faults
+  // What the editor shell says when it cannot bring the interface up. Each
+  // sentence names the thing that is wrong and what the reader can do about it;
+  // none of them promises that a retry will work, because whether it does
+  // depends on something outside this window.
+  "error.runtimeMissingTitle": "Haruyuki engine not found",
+  "error.runtimeSearchedPaths": "Looked in: {paths}",
+  "error.runtimeInvalidTitle": "This folder is not a usable engine",
+  "error.runtimeInvalidMissing": "Missing: {entries}",
+  "error.runtimeUntestedTitle": "This engine version has not been tested",
+  "error.runtimeUntestedVersions": "Expected {expected}, found {actual}",
+  "error.runtimeConnectAnyway": "Connect anyway",
+  "error.workspaceMissingTitle": "No folder is open",
+  "error.workspaceMissingRisk": "Starting in {homeDir} lets the engine write its files there.",
+  "error.workspaceUseHomeDir": "I understand the risk; use the home directory",
+
   // -------------------------------------------------------------- reconnect
   // Wording states only what is known: a connection is being re-established, a
   // number of approvals stopped being answerable, older messages exist. Nothing

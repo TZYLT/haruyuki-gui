@@ -75,6 +75,11 @@ const COMPONENT_DIRS = [
   // looks like a key" hole this rule exists to avoid. With the boundary, those
   // identifiers are not references, and this directory adds only real ones.
   "apps/desktop/src/main",
+  // The editor shell's webview renders the fault pages. Added in the same change
+  // as its first `t()` call, for the reason the rule documents above: a consumer
+  // that is not listed makes both "asked for but undeclared" and "declared but
+  // unread" report clean.
+  "apps/vscode/src/webview",
 ];
 
 /** The catalogues under comparison. English is the reference. */

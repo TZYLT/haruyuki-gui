@@ -272,6 +272,18 @@ export const zhCN = {
   "error.runtimeActual": "实际 sha256",
   "error.runtimeLogPath": "日志目录",
 
+  // ------------------------------------------------------------- shell faults
+  "error.runtimeMissingTitle": "未找到 Haruyuki 引擎",
+  "error.runtimeSearchedPaths": "已查找：{paths}",
+  "error.runtimeInvalidTitle": "这个目录不是可用的引擎",
+  "error.runtimeInvalidMissing": "缺少：{entries}",
+  "error.runtimeUntestedTitle": "该引擎版本未经测试",
+  "error.runtimeUntestedVersions": "期望版本 {expected}，实际版本 {actual}",
+  "error.runtimeConnectAnyway": "仍要连接",
+  "error.workspaceMissingTitle": "当前没有打开文件夹",
+  "error.workspaceMissingRisk": "在主目录 {homeDir} 中启动后，引擎会把文件写入该目录。",
+  "error.workspaceUseHomeDir": "了解风险并使用主目录",
+
   // -------------------------------------------------------------- reconnect
   "component.reconnect.reconnecting": "正在重新连接",
   "component.reconnect.staleApprovals":
