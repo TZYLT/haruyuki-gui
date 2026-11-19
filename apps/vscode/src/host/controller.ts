@@ -557,7 +557,36 @@ export function createController(options: ControllerOptions): Controller {
   }
 
   /** Resolve, then start: the whole of a first start and of every plain retry. */
+  /**
+   * The start that is currently resolving, if one is.
+   *
+   * A second answer that arrives while the first is still reading the setting
+   * joins that start rather than beginning a rival. The child is a process and
+   * the engine behind it is another, so two forks for one click is two engines
+   * and two sockets, and only one of them is reachable to stop.
+   */
+  let starting: Promise<void> | null = null;
+
   async function startOnce(): Promise<void> {
+    // Joined, not dropped: a caller that asked for a start is answered by the
+    // one already running, which is the same outcome it asked for.
+    if (starting !== null) {
+      await starting;
+
+      return;
+    }
+
+    starting = resolveAndStart();
+
+    try {
+      await starting;
+    } finally {
+      starting = null;
+    }
+  }
+
+  /** The start itself: resolve the engine, then fork it once. */
+  async function resolveAndStart(): Promise<void> {
     const engine = await pickEngine();
 
     if (engine === null) return;
