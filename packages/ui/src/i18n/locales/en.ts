@@ -277,9 +277,6 @@ export const en = {
   "page.topbar.paste": "Paste",
   "page.topbar.selectAll": "Select all",
   "page.topbar.resetLayout": "Reset layout",
-  "page.topbar.about": "About",
-  "page.topbar.aboutTitle": "About Haruyuki",
-  "page.topbar.version": "Version {version}",
 
   "page.frame.sideRail.title": "Side rail",
   "page.frame.sideRail.left": "Left rail",

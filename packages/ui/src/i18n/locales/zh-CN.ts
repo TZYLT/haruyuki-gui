@@ -220,9 +220,6 @@ export const zhCN = {
   "page.topbar.paste": "粘贴",
   "page.topbar.selectAll": "全选",
   "page.topbar.resetLayout": "重置布局",
-  "page.topbar.about": "关于",
-  "page.topbar.aboutTitle": "关于 Haruyuki",
-  "page.topbar.version": "版本 {version}",
 
   "page.frame.sideRail.title": "侧轨",
   "page.frame.sideRail.left": "左侧轨",

@@ -21,7 +21,6 @@ export type EditAction = "undo" | "redo" | "cut" | "copy" | "paste" | "selectAll
 
 /** What the shell supplies. */
 export interface TopBarProps {
-  readonly version: string;
   readonly hasSettings: boolean;
   readonly hasUpdates: boolean;
   readonly onOpenSettings?: () => void;
@@ -35,7 +34,6 @@ export interface TopBarProps {
 export function TopBar(props: TopBarProps): ReactElement {
   const t = useT();
   const [menu, setMenu] = useState<"edit" | "help" | null>(null);
-  const [about, setAbout] = useState(false);
   const [resetOpen, setResetOpen] = useState(false);
   const root = useRef<HTMLElement | null>(null);
 
@@ -117,16 +115,6 @@ export function TopBar(props: TopBarProps): ReactElement {
             >
               {t("page.topbar.resetLayout")}
             </button>
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => {
-                setMenu(null);
-                setAbout(true);
-              }}
-            >
-              {t("page.topbar.about")}
-            </button>
           </div>
         )}
       </div>
@@ -148,10 +136,6 @@ export function TopBar(props: TopBarProps): ReactElement {
           </button>
         )}
       </div>
-
-      <Dialog open={about} onOpenChange={setAbout} title={t("page.topbar.aboutTitle")}>
-        <p>{t("page.topbar.version", { version: props.version })}</p>
-      </Dialog>
 
       <Dialog
         open={resetOpen}

@@ -10,7 +10,7 @@ import { TopBar } from "./TopBar.js";
 function view(overrides: Partial<React.ComponentProps<typeof TopBar>> = {}) {
   return render(
     <LocaleProvider locale="en">
-      <TopBar version="1.2.3" hasSettings={false} hasUpdates={false} {...overrides} />
+      <TopBar hasSettings={false} hasUpdates={false} {...overrides} />
     </LocaleProvider>,
   );
 }
@@ -37,6 +37,19 @@ describe("TopBar", () => {
     expect(screen.getByRole("button", { name: "Export diagnostics" })).toBeTruthy();
   });
 
+  it("offers no about entry of its own", async () => {
+    // The requirement names one way into the about window, and it is the Help
+    // menu's item that opens the real, read-only window. This bar also had one -
+    // a dialog showing a version and nothing else - so two entries led to two
+    // different answers under the same name. A user found the thin one first and
+    // reported the build as broken, which from where they stood it was.
+    view({ onResetLayout: () => undefined });
+
+    await userEvent.click(screen.getByRole("button", { name: "Help" }));
+
+    expect(screen.queryByRole("menuitem", { name: "About" })).toBeNull();
+  });
+
   it("routes edit actions and closes the menu", async () => {
     const onEditAction = vi.fn();
     view({ onEditAction });
@@ -46,14 +59,5 @@ describe("TopBar", () => {
 
     expect(onEditAction).toHaveBeenCalledWith("undo");
     expect(screen.queryByRole("menuitem", { name: "Undo" })).toBeNull();
-  });
-
-  it("opens the about dialog with the version", async () => {
-    view();
-
-    await userEvent.click(screen.getByRole("button", { name: "Help" }));
-    await userEvent.click(screen.getByRole("menuitem", { name: "About" }));
-
-    expect(await screen.findByText("Version 1.2.3")).toBeTruthy();
   });
 });

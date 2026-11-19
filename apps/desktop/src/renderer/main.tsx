@@ -657,7 +657,6 @@ function Shell(): ReactElement {
             <>
               <div style={{ display: "flex", flexDirection: "column", height: "100vh" }}>
                 <TopBar
-                  version={boot.bridge.appVersion}
                   hasSettings={frameRegistry.get("settings") !== undefined}
                   hasUpdates={false}
                   onExportDiagnostics={() => {
