@@ -170,6 +170,16 @@ export type VSCodeHostPortOptions = {
   readonly secrets: SecretStorageLike;
   /** `context.globalStorageUri.fsPath`: the parent of the four roots. */
   readonly storageRoot: string;
+  /**
+   * Create one directory and its parents.
+   *
+   * Required rather than optional: the four roots are composed here and exist
+   * nowhere until something makes them, and VS Code documents `globalStorageUri`
+   * as a directory the extension creates. A temp root that is missing fails the
+   * engine's token write before the engine is even spawned, which reaches the
+   * user as a start failure with nothing visible to act on.
+   */
+  readonly ensureDirectory: (absPath: string) => void;
   /** `vscode.Uri.file`, injected so this module needs no runtime VS Code import. */
   readonly toFileUri: (absPath: string) => UriLike;
   /** The engine interpreter. Defaults to this process's own executable. */
@@ -197,6 +207,19 @@ export function createVSCodeHostPort(options: VSCodeHostPortOptions): VSCodeHost
     cache: join(options.storageRoot, CACHE_DIR),
     temp: join(options.storageRoot, TEMP_DIR),
   };
+
+  // The roots are created once, here, rather than at each use: the token write
+  // runs in the core child and cannot ask the shell to make a directory, so a
+  // root that does not exist yet is a failure the child can only report.
+  for (const root of [paths.userData, paths.logs, paths.cache, paths.temp]) {
+    try {
+      options.ensureDirectory(root);
+    } catch (error) {
+      // Reported and not thrown: the shell can still open its panel and show
+      // what went wrong, which is strictly better than failing to activate.
+      log?.(`could not create ${root}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
 
   const secure = createHostSecretStore(options.secrets);
 

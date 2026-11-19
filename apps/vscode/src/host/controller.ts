@@ -143,6 +143,14 @@ export interface ControllerOptions {
   };
   /** `context.globalStorageUri.fsPath`: the parent of the four roots. */
   readonly storageRoot: string;
+  /**
+   * Create one directory and its parents.
+   *
+   * The four roots hang off `storageRoot` and exist nowhere until something
+   * makes them. Injected rather than reached for, so this file keeps no
+   * filesystem import and its assembly stays testable without one.
+   */
+  readonly ensureDirectory: (absPath: string) => void;
   /** `vscode.Uri.file`, injected so this file needs no editor import. */
   readonly toFileUri: (absPath: string) => { toString(): string };
   /** `vscode.env.language`, written onto the document by the panel host. */
@@ -309,6 +317,7 @@ export function createController(options: ControllerOptions): Controller {
   const port = createVSCodeHostPort({
     secrets: options.secrets,
     storageRoot: options.storageRoot,
+    ensureDirectory: options.ensureDirectory,
     toFileUri: options.toFileUri,
     log: (line) => {
       log.write(line);

@@ -351,6 +351,30 @@ setInterval(() => {}, 1000);
 });
 
 describe("subscriptions", () => {
+  it("turns the child's stderr into log lines instead of discarding it", async () => {
+    // The sentence a dying child writes last is usually the only explanation a
+    // user gets for a panel that refuses to start, so draining the pipe has to
+    // mean capturing it, not swallowing it.
+    const entry = makeChild(`
+process.on("message", (message) => {
+  if (message.kind !== "init") return;
+
+  process.stderr.write("the token file could not be written\\n");
+  process.send({ kind: "ready" });
+});
+`);
+    const host = hostFor(entry);
+    const logs: string[] = [];
+
+    host.onLog((log) => logs.push(log.line));
+
+    await host.start(INIT);
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    expect(logs.join("\n")).toContain("the token file could not be written");
+  });
+
   it("delivers frames, status and logs to their own subscribers", async () => {
     const entry = makeChild(`
 process.on("message", (message) => {

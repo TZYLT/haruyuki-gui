@@ -229,6 +229,8 @@ function options(overrides: Partial<ControllerOptions> = {}): ControllerOptions 
       delete: async () => undefined,
     },
     storageRoot: "/storage",
+    // The roots are made by the shell in production; a test has no filesystem.
+    ensureDirectory: () => undefined,
     toFileUri: (absPath) => ({ toString: () => `file://${absPath}` }),
     locale: "zh-cn",
     // A workspace folder, so a case that does reach `start` has a directory to

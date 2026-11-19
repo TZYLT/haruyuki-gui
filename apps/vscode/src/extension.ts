@@ -31,6 +31,7 @@
  *   icon an entry point at all.
  */
 
+import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 
 import * as vscode from "vscode";
@@ -279,6 +280,14 @@ export function activate(context: vscode.ExtensionContext): void {
     extensionPath: context.extensionUri.fsPath,
     secrets: context.secrets,
     storageRoot: context.globalStorageUri.fsPath,
+    // VS Code documents `globalStorageUri` as a directory the extension creates,
+    // so the parent and its four roots are made before anything uses them. The
+    // engine's token file is written from the core child, which cannot ask the
+    // shell to create a directory, so a missing root there is a start failure
+    // with nothing on screen to explain it.
+    ensureDirectory: (absPath) => {
+      mkdirSync(absPath, { recursive: true });
+    },
     toFileUri: (absPath) => vscode.Uri.file(absPath),
     locale: vscode.env.language,
     // Read at start rather than at activation: the user may have opened a folder

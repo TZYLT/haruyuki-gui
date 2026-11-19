@@ -84,6 +84,8 @@ function makePort(overrides: { log?: (line: string) => void } = {}) {
   const port = createVSCodeHostPort({
     secrets: storage,
     storageRoot: "/storage",
+    // The roots are made by the shell in production; a test has no filesystem.
+    ensureDirectory: () => undefined,
     toFileUri: (absPath) => ({ toString: () => `file://${absPath}` }),
     execPath: "/usr/bin/node",
     env: { PATH: "/usr/bin", NODE_OPTIONS: "--require inherited-hook", FLAG: undefined },
@@ -94,6 +96,28 @@ function makePort(overrides: { log?: (line: string) => void } = {}) {
 }
 
 describe("the VSCode host port", () => {
+  it("creates the four roots it composes, because nothing else will", () => {
+    // `globalStorageUri` is documented as a directory the extension creates. The
+    // engine's token file is written from the core child, which cannot ask the
+    // shell for a directory, so a root that does not exist is a start failure
+    // with nothing on screen to explain it.
+    const made: string[] = [];
+
+    createVSCodeHostPort({
+      secrets: fakeStorage().storage,
+      storageRoot: "/storage",
+      ensureDirectory: (dir) => made.push(dir),
+      toFileUri: (absPath) => ({ toString: () => `file://${absPath}` }),
+    });
+
+    expect(made).toEqual([
+      join("/storage", "userData"),
+      join("/storage", "logs"),
+      join("/storage", "cache"),
+      join("/storage", "temp"),
+    ]);
+  });
+
   it("answers all six capability flags, refusing the two window operations", () => {
     const { port } = makePort();
 

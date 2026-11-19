@@ -292,8 +292,14 @@ export class CoreProcessHost implements CoreHost {
     // Both stdout pipes are drained: the core relays the engine's stderr through
     // them, and a pipe nobody reads fills up and then blocks the child's event
     // loop for good.
+    //
+    // Drained is not the same as discarded. The core and the engine behind it
+    // report their own failures on stderr -- a spawn that did not happen, a
+    // token file that could not be written -- and that sentence is the only
+    // explanation a user gets for a panel that refuses to start. It therefore
+    // becomes log lines, attributed to the child they came from.
     child.stdout?.resume();
-    child.stderr?.resume();
+    this.relayStderr(child);
 
     child.on("message", (message: unknown) => {
       // A replaced child's late message must not be attributed to the current
@@ -688,6 +694,35 @@ export class CoreProcessHost implements CoreHost {
   /** Hand a line to the log subscribers. */
   private emitLog(line: string): void {
     for (const listener of [...this.logListeners]) listener({ kind: "log", line });
+  }
+
+  /**
+   * Turn the child's stderr into log lines.
+   *
+   * The pipe is read whatever happens, so nothing the child writes can block it;
+   * what arrives is forwarded as it is rather than parsed, because this process
+   * has no business interpreting another process's diagnostics. A line that
+   * outlives the child's lifetime still reaches the listeners, which is the
+   * whole reason it is captured: the last thing a dying child says is usually
+   * the explanation.
+   *
+   * @param child the forked child, already assigned to `this.child`
+   */
+  private relayStderr(child: ChildProcess): void {
+    const stderr = child.stderr;
+
+    if (stderr === null || stderr === undefined) return;
+
+    stderr.setEncoding("utf8");
+    stderr.on("data", (chunk: string) => {
+      for (const line of chunk.split(/\r?\n/)) {
+        if (line.trim() !== "") this.emitLog(`[stderr] ${line}`);
+      }
+    });
+    stderr.on("error", () => {
+      // A broken pipe on a child that is already gone is not a failure to
+      // report and not one a shell can act on.
+    });
   }
 }
 
