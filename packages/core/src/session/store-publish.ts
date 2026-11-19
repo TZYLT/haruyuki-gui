@@ -217,17 +217,107 @@ export function createPublisher(deps: PublisherDeps): Publisher {
    * cannot advance the revision here. Turns come first: a turn also moves its
    * conversation's list and its "may be missing content" mark.
    */
-  const patchOf = (): SnapshotPatch => {
+  const patchOf = (): {
+    readonly patch: SnapshotPatch;
+    readonly moved: ReadonlyMap<SnapshotMapField, readonly string[]>;
+  } => {
     // The patch is written field by field here; the contract's shape is readonly
     // because a published snapshot is, and this is the one place that assembles
     // it before it is published.
     const patch: Record<string, unknown> = {};
     const published = builder.get() as Readonly<Record<string, unknown>>;
 
+    /**
+     * Which keys moved, per field, gathered as the patch is written.
+     *
+     * A field in the patch says "something of this kind changed", which is all a
+     * bookmark needs and not enough for a subscriber: a page watching one
+     * conversation must not be told that another conversation's turn arrived.
+     * Collecting the keys here is free - the two maps being compared are already
+     * in hand - so the notification can name what moved instead of a whole kind.
+     */
+    const moved = new Map<SnapshotMapField, readonly string[]>();
+
+    /**
+     * The id a subscription is scoped by, for one row of one field.
+     *
+     * Most maps are keyed by the same id their readers narrow on. Two are not:
+     * turns are keyed by their own ref while a page narrows on the conversation,
+     * and blocks are keyed by block id while a page narrows on the turn that
+     * holds them. Sending the map key for those would match no subscriber at
+     * all - quieter than the bug being fixed, and worse, because the value would
+     * simply stop arriving.
+     */
+    const scopeIdOf = <V>(field: SnapshotMapField, key: string, value: V): string => {
+      if (field === "turns") {
+        const conversationId = (value as { readonly conversationId?: unknown } | null)
+          ?.conversationId;
+
+        return typeof conversationId === "string" && conversationId !== "" ? conversationId : key;
+      }
+
+      if (field === "blocks") {
+        const turnRef = (value as { readonly turnRef?: unknown } | null)?.turnRef;
+
+        return typeof turnRef === "string" && turnRef !== "" ? turnRef : key;
+      }
+
+      return key;
+    };
+
+    /** Remember one id that moved, once per field. */
+    const noteMoved = <V>(field: SnapshotMapField, key: string, value: V): void => {
+      const scopeId = scopeIdOf(field, key, value);
+
+      if (scopeId === "") {
+        return;
+      }
+
+      const held = moved.get(field);
+
+      if (held === undefined) {
+        moved.set(field, [scopeId]);
+
+        return;
+      }
+
+      if (!held.includes(scopeId)) {
+        moved.set(field, [...held, scopeId]);
+      }
+    };
+
     /** Put a field in the patch, unless every one of its rows is already there. */
     const keep = <V>(field: SnapshotMapField, candidate: ReadonlyMap<string, V>): void => {
-      if (!sameMap(candidate, published[field] as ReadonlyMap<string, V>)) {
-        patch[field] = candidate;
+      const previous = published[field] as ReadonlyMap<string, V> | undefined;
+
+      if (previous !== undefined && sameMap(candidate, previous)) {
+        return;
+      }
+
+      patch[field] = candidate;
+
+      // A field that had no rows before is wholly new; nothing to compare, and
+      // every key in it is one a subscriber has not seen.
+      if (previous === undefined) {
+        for (const [key, value] of candidate) {
+          noteMoved(field, key, value);
+        }
+
+        return;
+      }
+
+      for (const [key, value] of candidate) {
+        if (previous.get(key) !== value) {
+          noteMoved(field, key, value);
+        }
+      }
+
+      // A row that disappeared still moved: a page scoped to it has to hear that
+      // its value is gone, or it would keep drawing the last one it was sent.
+      for (const [key, value] of previous) {
+        if (!candidate.has(key)) {
+          noteMoved(field, key, value);
+        }
       }
     };
 
@@ -273,6 +363,20 @@ export function createPublisher(deps: PublisherDeps): Publisher {
       }
 
       keep("conversations", held);
+
+      // A conversation that left the latest complete list keeps its entity and
+      // its last readable row: only its state changes, and that state lives on
+      // the table rather than on the published row. So the map comparison above
+      // sees nothing move, and without this a page watching that conversation
+      // would never be told it is gone - it would keep drawing the row it was
+      // last sent for the life of the tab.
+      for (const conversationId of conversations.gone()) {
+        const entity = held.get(conversationId);
+
+        if (entity !== undefined) {
+          noteMoved("conversations", conversationId, entity);
+        }
+      }
     }
 
     if (dirty.has("agents")) {
@@ -328,7 +432,7 @@ export function createPublisher(deps: PublisherDeps): Publisher {
     // are the shape's way of saying "not named", so the assembled value is a
     // patch even though the two spellings differ on whether a field may be
     // `undefined`.
-    return patch as SnapshotPatch;
+    return { patch: patch as SnapshotPatch, moved };
   };
 
   /**
@@ -341,7 +445,7 @@ export function createPublisher(deps: PublisherDeps): Publisher {
     }
 
     const before = builder.revision;
-    const patch = patchOf();
+    const { patch, moved } = patchOf();
     const fields = Object.keys(patch) as SnapshotMapField[];
 
     dirty.clear();
@@ -358,7 +462,12 @@ export function createPublisher(deps: PublisherDeps): Publisher {
 
     // Only the watchers of what moved are told, and only after the revision they
     // would read has advanced: a frame stamped with a stale revision is dropped.
-    const sent = subscriptions.notify(fields);
+    //
+    // The report names the ids, not just the kinds. Naming only the kind would
+    // wake every subscriber of it - a page watching one conversation would be
+    // re-run because another conversation's turn arrived - and at a few hundred
+    // changes a second that is the whole window re-rendering per change.
+    const sent = subscriptions.notify(Object.fromEntries(moved));
 
     // Every live subscription this publication did not have to answer: nothing it
     // reads moved. A change that touches one conversation must not cost a frame

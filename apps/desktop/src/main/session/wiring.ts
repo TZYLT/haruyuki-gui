@@ -75,6 +75,41 @@ const REQUEST_TYPES: ReadonlySet<string> = new Set([
   "session.select",
 ]);
 
+/**
+ * The largest a single control frame may be, in UTF-8 bytes.
+ *
+ * The control channel carries one frame per message and never batches, so a body
+ * over this size has nowhere to go: it cannot be split across frames, and it must
+ * not be cut, because a half-drawn list is worse than a list drawn a moment
+ * later. A result that would exceed the limit is therefore not pushed at all -
+ * the page asks for it with `session.select`, whose answer travels on the
+ * request's own correlation id and has no such ceiling.
+ *
+ * The number is the channel's, not this module's choice; it is named here so the
+ * one place that measures and the tests that pin it read the same constant.
+ */
+export const VIEW_FRAME_LIMIT_BYTES = 16 * 1024;
+
+/**
+ * Selectors a page asks for, rather than has pushed at it.
+ *
+ * These three answer with one turn's or one conversation's content, so what they
+ * return grows with how much the engine has written rather than with how much of
+ * it the reader has on screen. That is why the selector contract's carrier
+ * column names a one-shot select for them: a push of one is a push whose size
+ * nobody can bound in advance.
+ *
+ * A subscription to one of these is still recorded - a conversation's watcher and
+ * the unread badge hang off the subscription table, and a re-subscribe must still
+ * replace the instance it replaces - but it never becomes a push frame. Nothing
+ * is withheld: the same value is available in full from `session.select`.
+ */
+const ON_DEMAND_SELECTORS: ReadonlySet<string> = new Set([
+  "entity.turns",
+  "entity.blocks",
+  "entity.subagents",
+]);
+
 /** A non-empty string, or `null`. */
 function readText(value: unknown): string | null {
   return typeof value === "string" && value !== "" ? value : null;
@@ -156,24 +191,32 @@ export function createSessionWiring(options: SessionWiringOptions): SessionWirin
   let disposed = false;
 
   /**
-   * Emit one store answer as its own control frame.
+   * Emit one store answer as its own control frame, when it belongs on the push
+   * path at all and fits the control channel.
    *
    * The body is the store's result plus the instance it belongs to; the
    * correlation id rides on the envelope, because that is where the renderer
    * matches an answer to the request that asked for it.
    *
-   * No size is measured here, deliberately. A `session.view` body is a selector's
-   * return value plus four scalars, so its size is a consequence of the shape the
-   * selectors are frozen to return - not a runtime property a gate at this layer
-   * could influence. The measurement already exists where it belongs: the payload
-   * probe replays a recording through the real selector set and compares each
-   * view type against the control-channel limit, and the largest (navigation) sits
-   * far below it. Intercepting here would change the contract rather than protect
-   * it: refusing a subscription would turn a push into a pull the page never asked
-   * for, and the page would draw nothing while waiting for a frame that is not
-   * coming.
+   * Two answers never become a frame here, and neither one loses anything:
+   *
+   * - **A selector carried on demand.** Its value grows with the conversation,
+   *   not with what is on screen, so the contract hands it to a one-shot select.
+   *   The subscription itself is still made: the watcher and the unread badge
+   *   live on the subscription table, and a page that asks for the value gets it
+   *   in full from `session.select`.
+   * - **A result whose serialized frame is over {@link VIEW_FRAME_LIMIT_BYTES}.**
+   *   The size is measured on the bytes that would actually be sent, not
+   *   estimated from the shape: a turn with hundreds of blocks is small in
+   *   description and large in fact. Over the limit the frame is withheld rather
+   *   than cut - a truncated list draws a page that is wrong without saying so,
+   *   while the whole value is still one `session.select` away.
    */
   function emitView(request: SelectRequest, reqId: string, result: SelectResult): void {
+    if (ON_DEMAND_SELECTORS.has(request.selector)) {
+      return;
+    }
+
     const body: SessionViewBody = { ...result, instanceId: request.instanceId };
     const frame: ControlFrame<"session.view", SessionViewBody> = {
       v: 1,
@@ -183,6 +226,13 @@ export function createSessionWiring(options: SessionWiringOptions): SessionWirin
       body,
       reqId,
     };
+
+    // Measured on the serialized frame, because that is what the channel carries:
+    // the envelope's fields grow and shrink with the selector's params too, and an
+    // estimate of the body alone would be a second, quieter answer to "how big".
+    if (Buffer.byteLength(JSON.stringify(frame), "utf8") > VIEW_FRAME_LIMIT_BYTES) {
+      return;
+    }
 
     send(frame);
   }
@@ -317,6 +367,19 @@ export function createSessionWiring(options: SessionWiringOptions): SessionWirin
       // A recognised frame with an unusable body is still ours: consuming it
       // keeps a malformed request from being echoed back to the renderer as a
       // frame no consumer expects.
+      //
+      // A one-shot select is the exception that must still answer. Its caller is
+      // waiting on the correlation id, so consuming the request without a frame
+      // would leave that wait open for the life of the page - the one outcome
+      // worse than a refusal. The refusal arm already exists for a request whose
+      // shape cannot be read, so a body that is not even a record travels on it.
+      if (type === "session.select") {
+        select({}, reqId);
+      }
+
+      // A subscription and its cancellation are not answered on the correlation
+      // id: they are state held by the table, and a request that could not be
+      // read asked for no state. Nothing is left waiting on them.
       return true;
     }
 

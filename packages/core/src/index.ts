@@ -55,6 +55,7 @@ export * from "./port/headless-host-port";
  * half that owns the state and the rules derived from it.
  */
 export * from "./session/store.js";
+export * from "./session/burst-scheduler.js";
 export * from "./session/capability-gate.js";
 
 export * from "./supervision/index.js";

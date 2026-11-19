@@ -158,6 +158,12 @@ export type SubscriptionStats = {
   readonly epoch: number;
   /** Conversations with at least one active view instance. */
   readonly watched: number;
+  /**
+   * Updates swallowed by a burst window because a newer one arrived for the
+   * same instance inside it. Distinct from `unchanged`, which counts re-runs
+   * whose value had not moved at all.
+   */
+  readonly coalesced: number;
 };
 
 /** What the table needs from its owner. */
@@ -174,7 +180,45 @@ export interface SubscriptionTableOptions {
   readonly unread?: UnreadBridge;
   /** The connection generation to start from. */
   readonly epoch?: number;
+  /**
+   * Defer a call by a number of milliseconds, handing back its canceller.
+   *
+   * Absent means no burst window at all: a change reaches its subscriptions the
+   * moment it is reported, one frame per change. Present, the frames caused by a
+   * burst on one instance are gathered into {@link PUSH_WINDOW_MS} and answered
+   * with the last value only, so a producer emitting faster than a page can
+   * usefully draw does not cost a frame per change.
+   */
+  readonly schedule?: (fn: () => void, ms: number) => () => void;
+  /**
+   * Reading the clock, used to notice a window whose timer has not returned.
+   *
+   * Only consulted when {@link schedule} is given. Absent, the wall clock is
+   * used.
+   */
+  readonly now?: () => number;
 }
+
+/**
+ * How long one instance's updates are gathered before the last of them is sent.
+ *
+ * Chosen to sit above a display refresh and below the point where a burst looks
+ * like a freeze: at 200 updates a second, one instance is answered about four
+ * times a second instead of two hundred.
+ */
+export const PUSH_WINDOW_MS = 250;
+
+/** One instance's open window: the newest value waiting, and its timer. */
+type BurstBucket = {
+  /** The entry whose newest value the window will send. */
+  entry: Entry;
+  /** When the window opened, on the clock the table was given. */
+  readonly openedAt: number;
+  /** Cancels the timer that would close this window, while one is armed. */
+  cancel: (() => void) | null;
+  /** Which timer owns this window; a stale one may not close it. */
+  ticket: number;
+};
 
 /** The subscription table a session store keeps. */
 export interface SubscriptionTable {
@@ -298,7 +342,15 @@ export function createSubscriptionTable(options: SubscriptionTableOptions): Subs
     selectFailed: 0,
     emitFailed: 0,
     rebases: 0,
+    coalesced: 0,
   };
+
+  /** Deferring a call and cancelling it, or nothing when no window is wanted. */
+  const schedule = options.schedule ?? null;
+  const clock = options.now ?? Date.now;
+
+  /** How many timers have been armed, so a stale callback can tell it is stale. */
+  let tickets = 0;
 
   /** Tell the badge whether a conversation is watched; a broken badge is not fatal. */
   const reportWatched = (conversationId: string, active: boolean): void => {
@@ -469,6 +521,129 @@ export function createSubscriptionTable(options: SubscriptionTableOptions): Subs
   };
 
   /**
+   * Instances with a window open, oldest window first.
+   *
+   * One instance is one bucket: a second report inside the same window replaces
+   * the entry the bucket will answer for, so the window sends the newest value
+   * and never a queue of stale ones.
+   */
+  const pending = new Map<string, BurstBucket>();
+
+  /** Cancel one bucket's timer and forget it; the caller decides who hears what. */
+  const closeBucket = (bucket: BurstBucket): void => {
+    const cancel = bucket.cancel;
+
+    bucket.cancel = null;
+
+    if (cancel === null) {
+      return;
+    }
+
+    try {
+      cancel();
+    } catch {
+      // A canceller that throws leaves its callback to notice the stale ticket,
+      // which is why the ticket exists rather than trusting the cancellation.
+    }
+  };
+
+  /** Send the newest value one window gathered, unless a newer window owns it. */
+  const expire = (instanceId: string, ticket: number): void => {
+    const bucket = pending.get(instanceId);
+
+    if (bucket === undefined || bucket.ticket !== ticket) {
+      return;
+    }
+
+    bucket.cancel = null;
+
+    // A timer may return before its window has actually run out - a coarse or
+    // impatient scheduler. Sending then would answer twice inside one window,
+    // so the window is re-armed for the time it has left instead.
+    const remaining = PUSH_WINDOW_MS - (clock() - bucket.openedAt);
+
+    if (remaining > 0) {
+      const next = ticket + 1;
+
+      tickets = next;
+      bucket.ticket = next;
+      bucket.cancel =
+        schedule?.(() => {
+          expire(instanceId, next);
+        }, remaining) ?? null;
+
+      return;
+    }
+
+    pending.delete(instanceId);
+    push(bucket.entry);
+  };
+
+  /** Close every open window without sending what it gathered. */
+  const discardPending = (): void => {
+    for (const [instanceId, bucket] of pending) {
+      pending.delete(instanceId);
+      closeBucket(bucket);
+    }
+  };
+
+  /**
+   * Ask for one entry to be answered, through a window when one is wanted.
+   *
+   * With no window this is `push`, unchanged: a change is one frame. With a
+   * window, the first report opens it and every later report for the same
+   * instance folds into the one frame it will send.
+   */
+  const requestPush = (entry: Entry): boolean => {
+    if (schedule === null) {
+      return push(entry);
+    }
+
+    const open = pending.get(entry.instanceId);
+
+    if (open !== undefined) {
+      // Folding a report into a window that has not sent yet: the value this
+      // report replaced will never be drawn, which is the cost the window buys
+      // its lower frame rate with. The newest value is the one worth sending.
+      counts.coalesced += 1;
+      open.entry = entry;
+
+      return true;
+    }
+
+    const ticket = tickets + 1;
+
+    tickets = ticket;
+
+    const bucket: BurstBucket = {
+      entry,
+      openedAt: clock(),
+      cancel: null,
+      ticket,
+    };
+
+    pending.set(entry.instanceId, bucket);
+
+    bucket.cancel = schedule(() => {
+      expire(entry.instanceId, ticket);
+    }, PUSH_WINDOW_MS);
+
+    return true;
+  };
+
+  /** Drop one instance's open window, without sending it. */
+  const abandon = (instanceId: string): void => {
+    const bucket = pending.get(instanceId);
+
+    if (bucket === undefined) {
+      return;
+    }
+
+    pending.delete(instanceId);
+    closeBucket(bucket);
+  };
+
+  /**
    * Whether a subscription reads any of the entities that moved.
    *
    * A kind with no ids means "somewhere in this kind", which reaches every
@@ -586,6 +761,10 @@ export function createSubscriptionTable(options: SubscriptionTableOptions): Subs
       if (previous !== undefined) {
         entries.delete(seen);
         counts.replaced += 1;
+
+        // A window opened for the subscription being replaced would send its
+        // entry to the retired sink; the replacement sends its own first frame.
+        abandon(seen);
       }
 
       // A replacement that keeps the same conversation and the same claim is not
@@ -609,7 +788,8 @@ export function createSubscriptionTable(options: SubscriptionTableOptions): Subs
       entries.set(seen, entry);
 
       // The very first frame, sent before `subscribe` returns. Waiting for a
-      // change would leave a page that just mounted showing nothing.
+      // change would leave a page that just mounted showing nothing, and a
+      // window would leave it showing nothing for a quarter of a second.
       push(entry);
 
       let released = false;
@@ -632,6 +812,7 @@ export function createSubscriptionTable(options: SubscriptionTableOptions): Subs
         }
 
         entries.delete(seen);
+        abandon(seen);
         unwatch(seen, current.watchedConversation);
       };
     },
@@ -650,7 +831,7 @@ export function createSubscriptionTable(options: SubscriptionTableOptions): Subs
           continue;
         }
 
-        if (push(entry)) {
+        if (requestPush(entry)) {
           sent += 1;
         }
       }
@@ -660,6 +841,13 @@ export function createSubscriptionTable(options: SubscriptionTableOptions): Subs
 
     rebaseEpoch(next) {
       const wanted = readEpoch(next);
+
+      // A reconnect is not a burst. Whatever a window had gathered is dropped
+      // rather than sent: the loop below re-answers every live subscription from
+      // the value it holds now, so sending the gathered value first would send
+      // the same frame twice, the first of them carrying a generation the page
+      // has already stopped waiting for.
+      discardPending();
 
       epoch = wanted ?? epoch + 1;
       counts.rebases += 1;
@@ -693,6 +881,7 @@ export function createSubscriptionTable(options: SubscriptionTableOptions): Subs
         rebases: counts.rebases,
         epoch,
         watched: watchers.size,
+        coalesced: counts.coalesced,
       };
     },
   };

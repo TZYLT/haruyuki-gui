@@ -9,19 +9,29 @@
  *   silence the subscription that replaced it;
  * - a reconnect re-sends every live subscription carrying the new generation;
  * - a conversation becoming watched empties its badge once, on the edge only;
- * - a change reaches the subscriptions that read that entity, and no others.
+ * - a change reaches the subscriptions that read that entity, and no others;
+ * - a burst of changes on one instance is gathered into one frame per window,
+ *   and the frame that is sent carries the newest value in it.
  *
  * Two of these were confirmed by breaking the module on purpose - keeping the
  * replaced subscription alive, and clearing the badge on every arrival instead of
  * on the edge - and each break turns exactly the intended case red.
+ *
+ * The burst cases run on a hand-driven clock: `setTimeout` would make the suite
+ * wait a quarter of a second per case and would still not say when the window
+ * opened.
  */
 
 import { describe, expect, it } from "vitest";
 
 import type { SelectRequest, SelectResult } from "@haruyuki/protocol";
 
+import { createBurstScheduler } from "./burst-scheduler.js";
+import { createSessionStore } from "./store.js";
 import {
+  PUSH_WINDOW_MS,
   createSubscriptionTable,
+  type SelectEmit,
   type ChangedEntities,
   type SubscriptionTable,
   type UnreadBridge,
@@ -46,12 +56,77 @@ type Harness = {
 };
 
 /**
+ * A clock nobody advances but the test.
+ *
+ * `schedule` stores the callback and refuses to run it, which is the only way a
+ * case can say both "the window has not closed yet" and "now it has" without
+ * waiting. Advancing to a deadline runs every callback due by then, because a
+ * real timer queue would.
+ */
+function fakeClock(): {
+  readonly now: () => number;
+  readonly schedule: (fn: () => void, ms: number) => () => void;
+  /** Move time forward, running the callbacks that come due on the way. */
+  advance(ms: number): void;
+  /** How many callbacks are waiting. */
+  pending(): number;
+} {
+  let at = 0;
+  let armed = 0;
+  const queue = new Map<number, { due: number; fn: () => void }>();
+  let nextHandle = 0;
+
+  const run = (ms: number): void => {
+    at += ms;
+
+    for (const [handle, job] of [...queue]) {
+      if (job.due > at) {
+        continue;
+      }
+
+      queue.delete(handle);
+      armed -= 1;
+      job.fn();
+    }
+  };
+
+  return {
+    now: () => at,
+    schedule: (fn, ms) => {
+      nextHandle += 1;
+      armed += 1;
+
+      const handle = nextHandle;
+
+      queue.set(handle, { due: at + ms, fn });
+
+      return () => {
+        if (!queue.delete(handle)) {
+          return;
+        }
+
+        armed -= 1;
+      };
+    },
+    advance: run,
+    pending: () => armed,
+  };
+}
+
+/**
  * Build a table whose selector run answers from a mutable map.
  *
  * The generation the fake hands back is always 0: stamping the real one is the
  * table's job, and a fake that already knew it could hide a missing stamp.
  */
-function harness(options: { unread?: UnreadBridge; epoch?: number } = {}): Harness {
+function harness(
+  options: {
+    unread?: UnreadBridge;
+    epoch?: number;
+    schedule?: (fn: () => void, ms: number) => () => void;
+    now?: () => number;
+  } = {},
+): Harness {
   const held = new Map<string, { value: unknown; revision: number }>();
   const runs = new Map<string, number>();
   let revisionCounter = 0;
@@ -76,6 +151,8 @@ function harness(options: { unread?: UnreadBridge; epoch?: number } = {}): Harne
     // option is absent when the test wants no badge at all.
     ...(options.unread === undefined ? {} : { unread: options.unread }),
     ...(options.epoch === undefined ? {} : { epoch: options.epoch }),
+    ...(options.schedule === undefined ? {} : { schedule: options.schedule }),
+    ...(options.now === undefined ? {} : { now: options.now }),
   });
 
   return {
@@ -615,5 +692,295 @@ describe("unusable input is skipped, never thrown", () => {
     shouldThrow = false;
     expect(table.rebaseEpoch(1)).toBe(1);
     expect(sink.frames.map((frame) => frame.epoch)).toEqual([0, 1]);
+  });
+});
+
+describe("a burst on one instance is gathered into one frame per window", () => {
+  it("sends the newest value once per window and counts what it swallowed", () => {
+    const clock = fakeClock();
+    const harnessed = harness({ schedule: clock.schedule, now: clock.now });
+    const sink = collect();
+    const params = { turnRef: "t-1" };
+
+    harnessed.set("entity.blocks", params, [{ blockId: "b-1", text: "0" }]);
+    harnessed.table.subscribe(request("tab-1", "entity.blocks", params), sink.emit);
+
+    // The first frame is on the wire before `subscribe` returned, and it did not
+    // have to wait for a window.
+    expect(sink.frames).toHaveLength(1);
+    expect(clock.pending()).toBe(0);
+
+    // Two hundred updates inside one window, as a fast producer would send them.
+    for (let index = 1; index <= 200; index += 1) {
+      harnessed.set("entity.blocks", params, [{ blockId: "b-1", text: String(index) }]);
+      harnessed.table.notify(["blocks"]);
+    }
+
+    // Nothing has been sent yet: the window is still open, and one timer is
+    // armed for the instance rather than two hundred.
+    expect(sink.frames).toHaveLength(1);
+    expect(clock.pending()).toBe(1);
+
+    clock.advance(PUSH_WINDOW_MS);
+
+    // One frame, carrying the newest value, and 199 updates accounted for.
+    expect(sink.frames).toHaveLength(2);
+    expect(sink.frames[1]?.value).toEqual([{ blockId: "b-1", text: "200" }]);
+    expect(harnessed.table.stats().coalesced).toBe(199);
+    expect(harnessed.table.stats().pushes).toBe(2);
+  });
+
+  it("opens a fresh window per instance, so one busy tab does not silence another", () => {
+    const clock = fakeClock();
+    const harnessed = harness({ schedule: clock.schedule, now: clock.now });
+    const first = collect();
+    const second = collect();
+
+    harnessed.set("entity.blocks", { turnRef: "t-1" }, [{ blockId: "b-1" }]);
+    harnessed.set("entity.blocks", { turnRef: "t-2" }, [{ blockId: "b-2" }]);
+
+    harnessed.table.subscribe(request("tab-1", "entity.blocks", { turnRef: "t-1" }), first.emit);
+    harnessed.table.subscribe(request("tab-2", "entity.blocks", { turnRef: "t-2" }), second.emit);
+
+    harnessed.set("entity.blocks", { turnRef: "t-1" }, [{ blockId: "b-1", text: "a" }]);
+    harnessed.set("entity.blocks", { turnRef: "t-2" }, [{ blockId: "b-2", text: "b" }]);
+
+    harnessed.table.notify(["blocks"]);
+
+    // Two instances, two windows, two timers.
+    expect(clock.pending()).toBe(2);
+
+    clock.advance(PUSH_WINDOW_MS);
+
+    expect(first.frames).toHaveLength(2);
+    expect(second.frames).toHaveLength(2);
+    expect(second.frames[1]?.value).toEqual([{ blockId: "b-2", text: "b" }]);
+  });
+
+  it("still answers a burst once when there is no window at all", () => {
+    // The same construction with no scheduler: this is the path a caller that
+    // injects nothing gets, and it must stay synchronous, one frame per change.
+    const harnessed = harness();
+    const sink = collect();
+    const params = { turnRef: "t-1" };
+
+    harnessed.set("entity.blocks", params, [{ blockId: "b-1", text: "0" }]);
+    harnessed.table.subscribe(request("tab-1", "entity.blocks", params), sink.emit);
+
+    for (let index = 1; index <= 200; index += 1) {
+      harnessed.set("entity.blocks", params, [{ blockId: "b-1", text: String(index) }]);
+      harnessed.table.notify(["blocks"]);
+    }
+
+    // 200 updates, 200 frames: the window is the only thing that would have
+    // absorbed them, so this case fails the moment the window is wired in
+    // unconditionally.
+    expect(sink.frames).toHaveLength(201);
+    expect(harnessed.table.stats().coalesced).toBe(0);
+  });
+
+  it("re-answers on a connection boundary once, without a stale frame first", () => {
+    const clock = fakeClock();
+    const harnessed = harness({ schedule: clock.schedule, now: clock.now });
+    const sink = collect();
+
+    harnessed.set("entity.queue", { conversationId: "c-1" }, { length: 1 });
+    harnessed.table.subscribe(
+      request("tab-1", "entity.queue", { conversationId: "c-1" }),
+      sink.emit,
+    );
+
+    harnessed.set("entity.queue", { conversationId: "c-1" }, { length: 2 });
+    harnessed.table.notify(["queues"]);
+
+    expect(sink.frames).toHaveLength(1);
+
+    // A reconnect is not a burst. The gathered update is dropped rather than
+    // sent under the old generation, and the boundary re-answers once with the
+    // newest value and the new generation.
+    expect(harnessed.table.rebaseEpoch(5)).toBe(1);
+
+    expect(sink.frames).toHaveLength(2);
+    expect(sink.frames[1]).toMatchObject({ epoch: 5, value: { length: 2 } });
+    expect(clock.pending()).toBe(0);
+  });
+
+  it("drops a window whose instance unsubscribed rather than framing a dead page", () => {
+    const clock = fakeClock();
+    const harnessed = harness({ schedule: clock.schedule, now: clock.now });
+    const sink = collect();
+    const params = { turnRef: "t-1" };
+
+    harnessed.set("entity.blocks", params, [{ blockId: "b-1" }]);
+    const off = harnessed.table.subscribe(request("tab-1", "entity.blocks", params), sink.emit);
+
+    harnessed.set("entity.blocks", params, [{ blockId: "b-1", text: "late" }]);
+    harnessed.table.notify(["blocks"]);
+
+    off();
+    clock.advance(PUSH_WINDOW_MS);
+
+    // The page unmounted inside the window; it hears nothing more, and no timer
+    // is left waiting for it.
+    expect(sink.frames).toHaveLength(1);
+    expect(clock.pending()).toBe(0);
+  });
+});
+
+describe("the shipped scheduler drives the same window", () => {
+  it("gathers a real burst on the host timer and lands the newest value", async () => {
+    // The clock is the host's here, on purpose: every other burst case drives a
+    // fake one, so this is the only case that would catch a scheduler that never
+    // armed a timer at all.
+    const scheduler = createBurstScheduler();
+    const harnessed = harness({ schedule: scheduler.schedule, now: scheduler.now });
+    const sink = collect();
+    const params = { turnRef: "t-1" };
+
+    harnessed.set("entity.blocks", params, [{ blockId: "b-1", text: "0" }]);
+    harnessed.table.subscribe(request("tab-1", "entity.blocks", params), sink.emit);
+
+    for (let index = 1; index <= 20; index += 1) {
+      harnessed.set("entity.blocks", params, [{ blockId: "b-1", text: String(index) }]);
+      harnessed.table.notify(["blocks"]);
+    }
+
+    // Nothing yet: the window has not run out.
+    expect(sink.frames).toHaveLength(1);
+
+    await new Promise((resolve) => setTimeout(resolve, PUSH_WINDOW_MS + 60));
+
+    // Well under the twenty updates, and carrying the last of them.
+    expect(sink.frames.length).toBeLessThan(20);
+    expect(sink.frames.at(-1)?.value).toEqual([{ blockId: "b-1", text: "20" }]);
+    expect(harnessed.table.stats().coalesced).toBeGreaterThan(0);
+  });
+});
+
+describe("the window is what absorbs a burst, end to end through the store", () => {
+  /** A store with one agent and one conversation, as the shell seeds it. */
+  function seededStore(deps: Record<string, unknown> = {}) {
+    const store = createSessionStore(deps as never);
+
+    store.ingestAgents([{ id: "agent-a", name: "Agent A" }]);
+    store.ingestConversations(
+      [{ id: "c-1", agent_id: "agent-a", last_message_at: "2026-11-19T00:00:00.000Z" }],
+      { hasMore: false },
+    );
+    store.ingest({
+      conversationId: "c-1",
+      at: 1,
+      subagentId: null,
+      kind: "message.delta",
+      messageId: "m-1",
+      runId: "local-run-1",
+      runSeq: 1,
+      text: "hello",
+      parts: [],
+      first: true,
+      authorAgentId: "agent-a",
+      runtimeAgentId: "agent-a",
+    } as never);
+
+    return store;
+  }
+
+  /** Two instances watching the blocks of the one open turn. */
+  function watched(store: ReturnType<typeof seededStore>, onFrame: SelectEmit) {
+    const turnRef = [...store.getSnapshot().turns.values()][0]?.turnRef ?? "t-1";
+
+    store.subscribe(
+      { instanceId: "tab-1", selector: "entity.blocks", params: { turnRef } },
+      onFrame,
+    );
+    store.subscribe(
+      { instanceId: "tab-2", selector: "entity.blocks", params: { turnRef } },
+      onFrame,
+    );
+
+    return turnRef;
+  }
+
+  /** Stream two hundred content updates, as a fast producer would. */
+  function stream(store: ReturnType<typeof seededStore>): void {
+    for (let index = 0; index < 200; index += 1) {
+      store.ingestContent("c-1", {
+        messageId: "m-1",
+        upserts: [{ id: "b-1", text: `chunk-${index}` }],
+        removes: [],
+      });
+    }
+  }
+
+  it("answers two hundred updates within one window, and counts what it kept", () => {
+    const clock = fakeClock();
+    const store = seededStore({ schedule: clock.schedule, now: clock.now });
+    const frames = collect();
+
+    watched(store, frames.emit);
+
+    const before = frames.frames.length;
+
+    stream(store);
+
+    // Still inside the window: the producer has finished, the page has not been
+    // woken a single time since the burst began.
+    expect(frames.frames.length).toBe(before);
+
+    clock.advance(PUSH_WINDOW_MS);
+
+    // At most one frame per instance, carrying the newest text.
+    expect(frames.frames.length - before).toBeLessThanOrEqual(4);
+    expect(store.stats().pushesCoalesced).toBeGreaterThan(0);
+  });
+
+  it("returns to one frame per update when no scheduler is injected", () => {
+    // The same construction with nothing injected. This is the path a caller
+    // that wants every change delivered synchronously gets, and it is what makes
+    // the case above able to fail: wire the window in unconditionally and this
+    // count collapses.
+    const store = seededStore();
+    const frames = collect();
+
+    watched(store, frames.emit);
+
+    const before = frames.frames.length;
+
+    stream(store);
+
+    expect(frames.frames.length - before).toBeGreaterThan(300);
+  });
+
+  it("answers a direct select immediately, window or not", () => {
+    const clock = fakeClock();
+    const store = seededStore({ schedule: clock.schedule, now: clock.now });
+    const frames = collect();
+    const turnRef = watched(store, frames.emit);
+
+    // Two instances, so two first frames are already on the wire.
+    const before = frames.frames.length;
+
+    stream(store);
+
+    // A read the page asks for is not a change being pushed: it reads the newest
+    // state as it stands and does not wait for a window, which is why a page can
+    // still scroll and re-read while a burst is pending.
+    const during = store.select({
+      instanceId: "tab-3",
+      selector: "entity.blocks",
+      params: { turnRef },
+    });
+
+    expect(during.value).toMatchObject([{ blockId: "b-1", block: { text: "chunk-199" } }]);
+
+    // And asking did not cost the pending windows anything: still one timer per
+    // instance, and no frame sent early.
+    expect(frames.frames.length).toBe(before);
+    expect(clock.pending()).toBe(2);
+
+    clock.advance(PUSH_WINDOW_MS);
+
+    // One frame per instance when the windows close, and no more.
+    expect(frames.frames.length).toBe(before + 2);
   });
 });

@@ -342,6 +342,11 @@ export function createSessionStore(deps: SessionStoreDeps = {}): SessionStore {
       setActive: (conversationId, active) => unread.setActive(conversationId, active),
       clear: (conversationId) => unread.clear(conversationId),
     },
+    // Spread rather than assigned: with `exactOptionalPropertyTypes` a key that
+    // is present and `undefined` is not the same type as an absent key, and an
+    // absent key is how a caller asks for no burst window at all.
+    ...(deps.schedule === undefined ? {} : { schedule: deps.schedule }),
+    ...(deps.now === undefined ? {} : { now: deps.now }),
   });
 
   // The publication half: the caches it holds are what make a row nobody touched
@@ -557,12 +562,13 @@ export function createSessionStore(deps: SessionStoreDeps = {}): SessionStore {
         changesApplied: counts.applied,
         changesIgnored: counts.ignored,
         pushesSent: pushed.pushes,
-        // Frames this layer did not send because nothing the subscription reads
-        // had moved, plus the live subscriptions a publication did not have to
-        // answer at all. This is where a burst is absorbed, and the honest name
-        // for it is the number of pushes that would have been sent without the
-        // structure-sharing snapshot underneath.
-        pushesCoalesced: pushed.unchanged + counts.coalesced,
+        // Two different savings, added because both answer "how many frames did
+        // a page not have to draw": a re-run whose value had not moved at all -
+        // what the structure-sharing snapshot underneath buys - and an update
+        // swallowed by the burst window in favour of a newer one for the same
+        // instance. The second is what a fast producer is absorbed by, and the
+        // subscription table counts it as it happens.
+        pushesCoalesced: pushed.unchanged + pushed.coalesced + counts.coalesced,
         subscriptions: pushed.subscriptions,
         dedupeTurns: dedupe.size,
         viewStates: viewStates.size,

@@ -20,7 +20,7 @@
 
 import type { IpcMain } from "electron";
 
-import { createSessionStore } from "@haruyuki/core";
+import { createBurstScheduler, createSessionStore } from "@haruyuki/core";
 
 import { createLayoutWiring, type LayoutWiring } from "./layout/wiring.js";
 import { DEFAULT_LAYOUT, PAGE_IDS } from "./layout/catalog.js";
@@ -64,8 +64,14 @@ export async function createShellServices(options: {
 
   // One store for the app, not one per engine: it outlives the engine that fed
   // it, and the change consumer below is what keeps it fed across a rebuild.
+  //
+  // The burst scheduler is what keeps a fast producer from costing a frame per
+  // change: without it the store answers every change synchronously, so the
+  // windowing rule would exist only in its own tests while the shipped shell
+  // pushed at event rate. It is passed here rather than defaulted inside the
+  // store so the store stays free of host timers and a test can drive the clock.
   const session = createSessionWiring({
-    store: createSessionStore(),
+    store: createSessionStore({ ...createBurstScheduler() }),
     send: options.host.send,
   });
 

@@ -39,6 +39,24 @@ export type SessionStoreDeps = {
    * one function. A sink passed to `subscribe` is called as well.
    */
   readonly onView?: (body: SessionViewBody) => void;
+
+  /**
+   * Reading the clock, for the burst window a subscription keeps per instance.
+   *
+   * Only consulted when {@link schedule} is given, and only to notice a window
+   * whose timer is late. Absent, the wall clock is used.
+   */
+  readonly now?: () => number;
+
+  /**
+   * Defer one call by a number of milliseconds and return its canceller.
+   *
+   * Absent means no burst window: a change reaches its subscriptions as it
+   * arrives, which is what a caller that wants every frame to be synchronous
+   * gets. Given, a burst on one instance is answered once, carrying the last
+   * value in it, so a fast producer cannot cost a frame per change.
+   */
+  readonly schedule?: (fn: () => void, ms: number) => () => void;
 };
 
 /**
