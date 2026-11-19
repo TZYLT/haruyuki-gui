@@ -153,9 +153,26 @@ describe("translation", () => {
       finalChange({ messageType: "user_message", body: { content: "bye" } }),
     );
 
-    expect(first.id).toBe(contentKey(body));
+    expect(first.id).toBe(contentKey({ messageType: "user_message", body }));
     expect(reordered.id).toBe(first.id);
     expect(other.id).not.toBe(first.id);
+  });
+
+  it("keeps the same body under different message types apart", () => {
+    const body = { content: "hello", extra: [1, 2, 3] };
+
+    const user = toSourceMessage(finalChange({ messageType: "user_message", body }));
+    const assistant = toSourceMessage(finalChange({ messageType: "assistant_message", body }));
+    const replay = toSourceMessage(
+      finalChange({ messageType: "user_message", body: { extra: [1, 2, 3], content: "hello" } }),
+    );
+
+    expect(user.id).toBe(contentKey({ messageType: "user_message", body }));
+    expect(replay.id).toBe(user.id);
+    expect(assistant.id).toBe(contentKey({ messageType: "assistant_message", body }));
+    expect(assistant.id).not.toBe(user.id);
+    expect(user.id).toMatch(/^[0-9a-f]{8}$/);
+    expect(assistant.id).toMatch(/^[0-9a-f]{8}$/);
   });
 
   it("infers the speaker from the message type", () => {

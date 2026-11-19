@@ -24,7 +24,9 @@
  *
  * `ingest` is synchronous and never throws. The in-flight message table is
  * bounded; going over the cap evicts the oldest state and counts the overflow,
- * rather than clearing the table or refusing the change. There is no clock, no
+ * rather than clearing the table or refusing the change. An evicted message is
+ * completed and its blocks are published with the frame that evicted it, so the
+ * consumer never keeps a half message it cannot finish. There is no clock, no
  * randomness, no I/O, no subscription and no output frame here.
  */
 
@@ -46,6 +48,7 @@ import {
   clearReasoning,
   createReasoningAggregator,
   ingestReasoning,
+  releaseReasoning,
   type ReasoningAggregator,
 } from "./reasoning.js";
 import { sanitizeBlock, sanitizeUpdate } from "./sanitize.js";
@@ -85,6 +88,37 @@ const TOOL_MESSAGE_TYPES: ReadonlySet<string> = new Set([
   "client_tool_start",
   "client_tool_end",
 ]);
+
+/**
+ * Message types that are process events, not conversation content.
+ *
+ * The merger only assembles assistant text, so these arrive as `message.final`
+ * too; they belong to the process presentation, and making a block of one would
+ * show the same event twice. The command families are open-ended, so their
+ * shared prefixes are recognised instead of enumerating every member.
+ *
+ * Deliberately absent: `summary_message`, `event_message`, `system_message` and
+ * anything else this version does not know. Those are content types that happen
+ * to be unsupported, so they must still degrade to one unknown block.
+ */
+const PROCESS_MESSAGE_TYPES: ReadonlySet<string> = new Set([
+  "status",
+  "retry",
+  "loop_error",
+  "approval_classification_end",
+  "ping",
+]);
+
+/** Prefixes of the open-ended command process-event families. */
+const PROCESS_MESSAGE_TYPE_PREFIXES: readonly string[] = ["command_", "slash_command_"];
+
+/** Whether a message type is a process event rather than conversation content. */
+function isProcessMessageType(messageType: string): boolean {
+  return (
+    PROCESS_MESSAGE_TYPES.has(messageType) ||
+    PROCESS_MESSAGE_TYPE_PREFIXES.some((prefix) => messageType.startsWith(prefix))
+  );
+}
 
 /** All mutable state of one model instance. */
 type ModelState = {
@@ -201,15 +235,16 @@ function ingestDeltaChange(
   change: MessageDeltaChange,
 ): readonly ContentUpdate[] {
   let message = state.messages.get(change.messageId);
+  const evicted: Block[] = [];
   if (message === undefined) {
-    makeRoomForMessage(state);
+    evicted.push(...makeRoomForMessage(state));
     message = createDeltaState(toSourceDelta(change));
     state.messages.set(message.messageId, message);
     rememberRunMessage(state, message.runId, message.messageId);
   }
 
   const delta = sourceDeltaOf(state, change);
-  return publish(state, ingestDelta(message, delta));
+  return publish(state, [...evicted, ...ingestDelta(message, delta)]);
 }
 
 /**
@@ -243,6 +278,9 @@ function blocksForFinal(state: ModelState, message: SourceMessage): readonly Blo
     case "error_message":
       return [errorBlockOf(message)];
     default:
+      if (isProcessMessageType(message.messageType)) {
+        return [];
+      }
       if (TOOL_MESSAGE_TYPES.has(message.messageType)) {
         return ingestToolMessage(state.tools, message).map((update) => update.block);
       }
@@ -358,16 +396,30 @@ function sourceDeltaOf(state: ModelState, change: MessageDeltaChange): SourceDel
   return delta;
 }
 
-/** Evict the oldest message state while the table is at its cap. */
-function makeRoomForMessage(state: ModelState): void {
+/**
+ * Evict the oldest message states while the table is at its cap.
+ *
+ * An evicted message has content the consumer has already been shown, but not
+ * in its final shape: its last line may still be buffered and its blocks are
+ * still streaming. Completing it here and returning those blocks lets the
+ * caller publish them, so eviction never silently strands half a message. A
+ * later delta for the same id still rebuilds it from the start.
+ */
+function makeRoomForMessage(state: ModelState): readonly Block[] {
+  const evicted: Block[] = [];
   while (state.messages.size >= state.maxInFlightMessages) {
     const oldest = state.messages.keys().next();
     if (oldest.done === true) {
-      return;
+      return evicted;
+    }
+    const message = state.messages.get(oldest.value);
+    if (message !== undefined) {
+      evicted.push(...completeMessage(message));
     }
     forgetMessage(state, oldest.value);
     state.overflows += 1;
   }
+  return evicted;
 }
 
 /** Forget one message state and its run index entry, without emitting removes. */
@@ -414,9 +466,10 @@ function forgetRun(state: ModelState, runId: string | null): void {
   state.runMessages.delete(runId);
 }
 
-/** Drop a consumed message and the finished calls it last touched. */
+/** Drop a consumed message, its finished calls and its reasoning segments. */
 function releaseMessage(state: ModelState, messageId: string): void {
   forgetMessage(state, messageId);
+  releaseReasoning(state.reasoning, messageId);
   // A call whose result has not arrived is kept on purpose: releasing a
   // message must not lose an output that a later message will deliver.
   releaseToolMessage(state.tools, messageId);
@@ -469,7 +522,7 @@ function unknownBlockOf(message: SourceMessage): UnknownBlock {
     runId: message.runId,
     role: message.role,
     type: "unknown",
-    rawType: message.messageType,
+    rawType: message.messageType.length > 0 ? message.messageType : "untyped",
     raw: message.body,
   };
 }

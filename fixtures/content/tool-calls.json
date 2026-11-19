@@ -1,5 +1,5 @@
 {
-  "note": "Tool-call assembly. One block per call, arguments append but a complete record replaces, a plural return closes several calls, the client end marker is not a closing edge, an orphan result keeps its payload, and turn.finished is the only incomplete signal.",
+  "note": "Tool-call assembly. One block per call, arguments append but a complete record replaces, a plural return closes several calls, a later return overwrites an earlier one, the client end marker is not a closing edge, an orphan result keeps its payload, and turn.finished is the only incomplete signal.",
   "cases": [
     {
       "name": "the client end marker does not close the call",
@@ -194,6 +194,62 @@
           "argumentsText": "{\"path\":\"b\"}",
           "result": "missing-b",
           "status": "error",
+          "orphan": false
+        }
+      ]
+    },
+    {
+      "name": "a second return overwrites the first",
+      "path": "tools",
+      "input": {
+        "messages": [
+          {
+            "id": "tc-f1",
+            "messageType": "tool_call_message",
+            "role": "tool",
+            "runId": "run-12",
+            "body": {
+              "tool_call_id": "call-2",
+              "name": "shell",
+              "arguments": "{\"cmd\":\"ls\"}"
+            }
+          },
+          {
+            "id": "tc-f2",
+            "messageType": "tool_return_message",
+            "role": "tool",
+            "runId": "run-12",
+            "body": {
+              "tool_call_id": "call-2",
+              "status": "error",
+              "tool_return": "interim failure"
+            }
+          },
+          {
+            "id": "tc-f3",
+            "messageType": "tool_return_message",
+            "role": "tool",
+            "runId": "run-12",
+            "body": {
+              "tool_call_id": "call-2",
+              "status": "success",
+              "tool_return": "final output"
+            }
+          }
+        ]
+      },
+      "expect": [
+        {
+          "id": "tool:call-2",
+          "messageId": "tc-f1",
+          "runId": "run-12",
+          "role": "tool",
+          "type": "tool_call",
+          "toolCallId": "call-2",
+          "name": "shell",
+          "argumentsText": "{\"cmd\":\"ls\"}",
+          "result": "final output",
+          "status": "success",
           "orphan": false
         }
       ]

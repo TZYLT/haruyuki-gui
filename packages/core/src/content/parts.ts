@@ -13,6 +13,10 @@
  *
  * - ids are `blockIdFor(messageId, type, ordinal)`; `image` and `unknown` count
  *   separately and their ordinals only ever go up;
+ * - a text part at a position not seen yet appends its text to the prose (when
+ *   the caller opts in), in part order, so `[text, image, text]` produces the
+ *   same block order as a one-shot parse instead of folding the trailing text
+ *   into the first block;
  * - a new block is appended at the current end, so parts stay in source order
  *   and prose that arrives after a part starts a new text block (the text
  *   assembler writes into "the last block", and the last block is now a part);
@@ -31,12 +35,19 @@
  * The caller passes the message's *cumulative* part list, the same list the
  * upstream assembly publishes each frame. Positions are therefore stable: the
  * cursor only has to remember which positions it has already handled.
+ *
+ * A caller whose frame also carries the frame's own `text` can opt in to
+ * appending new text positions with `appendNewText: true`; the live adapter
+ * does that when the frame's `text` is exactly the text of its new text parts.
+ * The default records text positions without appending their text, because a
+ * caller that appended the delta's text first (the history path and direct
+ * builder tests do the equivalent) must not append it a second time.
  */
 
 import type { Block, BlockId, ImageBlock, ImageSource, UnknownBlock } from "@haruyuki/protocol";
 
 import type { AssistantPart } from "../merge/types.js";
-import { flushPendingText } from "./blocks.js";
+import { appendText, flushPendingText } from "./blocks.js";
 import { blockIdFor, type MessageState } from "./types.js";
 
 /** One part position that produced a block. */
@@ -49,10 +60,12 @@ export type PartSlot = {
 /**
  * What one message has seen of its cumulative part list.
  *
- * A text or reasoning part records `null`: prose reaches the message through the
- * delta's `text` field, reasoning reaches it through its own message, and
- * `blocks.ts` decides whether prose continues the current block or opens a new
- * one. Every other position records the block it produced.
+ * A text part records `null`: its text was appended to the prose when the
+ * position was first seen (if the caller opted in), and the block it lands in
+ * is the text assembler's decision (continuing the current block or opening one
+ * after a part). Reasoning also records `null`, but its text is never appended:
+ * the thinking arrives as its own reasoning message. Every other position
+ * records the block it produced.
  */
 export type PartsCursor = {
   /** How many positions have been handled; always `slots.length`. */
@@ -71,12 +84,15 @@ export function createPartsCursor(): PartsCursor {
  * Only the positions this cursor has not handled become new blocks; a position
  * seen before either keeps its block (`slot.part === part`, the usual case
  * because the upstream list reuses part objects) or is rebuilt under the same
- * id. Returns the blocks that changed, in first-change order.
+ * id. A new `text` position records its slot; when `appendNewText` is on it
+ * also appends its text to the prose in source order, so the part order decides
+ * the block order. Returns the blocks that changed, in first-change order.
  */
 export function appendParts(
   state: MessageState,
   parts: readonly AssistantPart[],
   cursor: PartsCursor,
+  appendNewText = false,
 ): readonly Block[] {
   // A list shorter than the positions already handled means the message
   // restarted without a reset. The stale tail is dropped and the positions that
@@ -91,11 +107,30 @@ export function appendParts(
 
   for (let index = 0; index < parts.length; index += 1) {
     const part = parts[index];
-    if (part === undefined || part.type === "text" || part.type === "reasoning") {
-      // Prose is assembled from the delta's `text`, never from a part. Reasoning
-      // is the same: the thinking arrives as its own reasoning message, so a
-      // block built here would show it twice. Both record a slot, so positions
-      // stay dense and neither consumes an unknown ordinal.
+    if (part === undefined) {
+      continue;
+    }
+
+    if (part.type === "text") {
+      // A new text position contributes prose here, in the order it appears in
+      // the part list. The delta's `text` is the same text for a real frame,
+      // but a frame may also carry an image between two text parts; appending
+      // the text here is what keeps `[text, image, text]` in that order.
+      if (index >= cursor.seen) {
+        cursor.slots[index] = null;
+        if (appendNewText && typeof part.text === "string") {
+          for (const block of appendText(state, part.text)) {
+            changed.set(block.id, block);
+          }
+        }
+      }
+      continue;
+    }
+
+    if (part.type === "reasoning") {
+      // Reasoning arrives as its own reasoning message, so a block built here
+      // would show it twice. The position is still recorded so later positions
+      // stay dense and reasoning does not consume an unknown ordinal.
       if (index >= cursor.seen) {
         cursor.slots[index] = null;
       }

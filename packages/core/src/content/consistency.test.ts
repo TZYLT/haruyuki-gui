@@ -174,6 +174,28 @@ function liveBlocks(messageId: string, steps: readonly Step[], chunk: Chunker): 
   return settle(foldUpdates(updates));
 }
 
+/**
+ * Feed already-shaped live frames through the facade and fold the result.
+ *
+ * Unlike `liveBlocks`, every frame carries its own `text` and the message's
+ * cumulative `parts`, which is the shape the upstream assembler publishes: the
+ * frame's text is exactly the text its new text parts contribute.
+ */
+function liveFromFrames(
+  messageId: string,
+  frames: readonly { readonly text: string; readonly parts: readonly AssistantPart[] }[],
+): readonly Block[] {
+  const model = createContentModel();
+  const updates: ContentUpdate[] = [];
+
+  for (const frame of frames) {
+    updates.push(...model.ingest(deltaChange(messageId, frame.text, frame.parts)));
+  }
+  updates.push(...model.ingest(completeChange(messageId)));
+
+  return settle(foldUpdates(updates));
+}
+
 /** The same scene as one history page. */
 function oneShotBlocks(messages: readonly SourceMessage[]): readonly Block[] {
   return settle(parseHistoryPage(messages));
@@ -523,4 +545,59 @@ describe("streaming and one-shot produce the same block sequence", () => {
       ]);
     });
   }
+});
+
+/**
+ * A frame's text is the text of *its* new text parts, not a separate stream.
+ * When a frame carries `[image, text "b"]`, the part order must decide the
+ * block order, so the live door may not append the frame's text before folding
+ * the parts in: that would merge "b" into the previous paragraph and put the
+ * image last, while a one-shot parse keeps `[text a, image, text b]`.
+ */
+describe("live frames keep the source part order", () => {
+  it("a later text part after an image keeps the one-shot order (text/image/text)", () => {
+    const frames = [
+      { text: "a", parts: [{ type: "text", text: "a" } as AssistantPart] },
+      {
+        text: "b\n",
+        parts: [
+          { type: "text", text: "a" } as AssistantPart,
+          IMAGE_BASE64,
+          { type: "text", text: "b\n" } as AssistantPart,
+        ],
+      },
+    ];
+
+    const live = liveFromFrames("msg-live-order", frames);
+    const once = oneShotBlocks([assistantContent("msg-live-order", frames[1]?.parts ?? [])]);
+
+    expect(live).toEqual(once);
+    expect(live.map((block) => block.type)).toEqual(["text", "image", "text"]);
+    expect(
+      live.map((block) => (block.type === "text" || block.type === "code" ? block.text : null)),
+    ).toEqual(["a", null, "b\n"]);
+  });
+
+  it("a text part before an image keeps the one-shot order (text before image)", () => {
+    const frames = [
+      { text: "a", parts: [{ type: "text", text: "a" } as AssistantPart] },
+      {
+        text: "b\n",
+        parts: [
+          { type: "text", text: "a" } as AssistantPart,
+          { type: "text", text: "b\n" } as AssistantPart,
+          IMAGE_BASE64,
+        ],
+      },
+    ];
+
+    const live = liveFromFrames("msg-live-order-reverse", frames);
+    const once = oneShotBlocks([
+      assistantContent("msg-live-order-reverse", frames[1]?.parts ?? []),
+    ]);
+
+    expect(live).toEqual(once);
+    expect(live.map((block) => block.type)).toEqual(["text", "image"]);
+    expect(live[0]).toMatchObject({ type: "text", text: "ab\n" });
+  });
 });

@@ -68,6 +68,24 @@ export function clearReasoning(aggregator: ReasoningAggregator): void {
 }
 
 /**
+ * Drop the segments that belong to one consumed message.
+ *
+ * A segment's owner is its parent assistant message when the reasoning id could
+ * be split; when it could not, the reasoning id itself is the owner. Releasing
+ * only that owner gives the memory back without touching another message's
+ * segments. A later fragment for the same reasoning id starts a new segment
+ * with the same block id -- the rebuild the release contract allows -- because
+ * the released text is gone and must not be invented back.
+ */
+export function releaseReasoning(aggregator: ReasoningAggregator, messageId: string): void {
+  for (const [reasoningId, segment] of aggregator.segments) {
+    if (segment.messageId === messageId || segment.reasoningId === messageId) {
+      aggregator.segments.delete(reasoningId);
+    }
+  }
+}
+
+/**
  * `<parent>:reasoning:<segment>` with a parent that may itself contain colons.
  *
  * The greedy prefix plus the anchored numeric tail means `a:b:reasoning:7`

@@ -8,7 +8,7 @@
       "expect": [
         {
           "kind": "text",
-          "text": "Please check the job."
+          "text": "Please check the job.\n"
         },
         {
           "kind": "notice",
@@ -18,7 +18,7 @@
         },
         {
           "kind": "text",
-          "text": "Thanks."
+          "text": "\nThanks."
         }
       ]
     },
@@ -29,7 +29,7 @@
       "expect": [
         {
           "kind": "text",
-          "text": "Visible text"
+          "text": "\nVisible text"
         }
       ]
     },
@@ -47,11 +47,11 @@
     {
       "name": "the transcript pointer line is consumed with the notification",
       "path": "notice",
-      "input": "Task done.\n<task-notification>\n<summary>Run</summary>\n<result>pass</result>\n</task-notification>\nFull transcript available at: /tmp/x/transcript.txt\n",
+      "input": "Task done.\n<task-notification>\n<summary>Run</summary>\n<result>pass</result>\n</task-notification>\nFull transcript available at: https://example.test/transcript.txt\n",
       "expect": [
         {
           "kind": "text",
-          "text": "Task done."
+          "text": "Task done.\n"
         },
         {
           "kind": "notice",
@@ -78,7 +78,7 @@
           "runId": null,
           "role": "user",
           "type": "text",
-          "text": "Finished.",
+          "text": "Finished.\n",
           "flavor": "markdown",
           "status": "complete"
         },

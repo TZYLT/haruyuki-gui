@@ -67,7 +67,7 @@ describe("user messages", () => {
     expect(blocks.map((block) => block.type)).toEqual(["text", "notice"]);
 
     const text = typed(blocks[0], "text");
-    expect(text.text).toBe("hello");
+    expect(text.text).toBe("hello\n\n");
     expect(text.id).toBe("u1:text:0");
     expect(text.status).toBe("complete");
     expect(text.role).toBe("user");
@@ -97,7 +97,7 @@ describe("user messages", () => {
 
     expect(blocks.map((block) => block.type)).toEqual(["text", "image", "text"]);
 
-    expect(typed(blocks[0], "text").text).toBe("first");
+    expect(typed(blocks[0], "text").text).toBe("first\n");
     expect(typed(blocks[0], "text").id).toBe("u2:text:0");
 
     const image = typed(blocks[1], "image");
@@ -107,6 +107,40 @@ describe("user messages", () => {
 
     expect(typed(blocks[2], "text").text).toBe("second");
     expect(typed(blocks[2], "text").id).toBe("u2:text:1");
+  });
+
+  it("joins adjacent text parts into one block with no separator", () => {
+    const blocks = parseHistoryPage(
+      page(
+        userId("u10", [
+          { type: "text", text: "First paragraph." },
+          { type: "text", text: "Second paragraph." },
+        ]),
+      ),
+    );
+
+    expect(blocks.map((block) => block.type)).toEqual(["text"]);
+    const text = typed(blocks[0], "text");
+    expect(text.id).toBe("u10:text:0");
+    expect(text.text).toBe("First paragraph.Second paragraph.");
+  });
+
+  it("flushes the joined text once on each side of a non-text part", () => {
+    const blocks = parseHistoryPage(
+      page(
+        userId("u11", [
+          { type: "text", text: "a" },
+          { type: "text", text: "b" },
+          { type: "image", source: { type: "url", url: "https://example.test/x.png" } },
+          { type: "text", text: "c" },
+          { type: "text", text: "d" },
+        ]),
+      ),
+    );
+
+    expect(blocks.map((block) => block.type)).toEqual(["text", "image", "text"]);
+    expect(typed(blocks[0], "text").text).toBe("ab");
+    expect(typed(blocks[2], "text").text).toBe("cd");
   });
 
   it("produces no block for a message that is only a reminder", () => {
@@ -169,25 +203,25 @@ describe("assistant messages", () => {
   });
 });
 
+const CALL = {
+  id: "c1",
+  message_type: "tool_call_message",
+  role: "tool",
+  tool_call: { tool_call_id: "call_1", name: "Bash", arguments: '{"command":"echo ok"}' },
+  run_id: "run-1",
+};
+
+const RETURN = {
+  id: "r1",
+  message_type: "tool_return_message",
+  role: "tool",
+  tool_call_id: "call_1",
+  status: "success",
+  tool_return: "ok",
+  run_id: "run-1",
+};
+
 describe("tool messages", () => {
-  const CALL = {
-    id: "c1",
-    message_type: "tool_call_message",
-    role: "tool",
-    tool_call: { tool_call_id: "call_1", name: "Bash", arguments: '{"command":"echo ok"}' },
-    run_id: "run-1",
-  };
-
-  const RETURN = {
-    id: "r1",
-    message_type: "tool_return_message",
-    role: "tool",
-    tool_call_id: "call_1",
-    status: "success",
-    tool_return: "ok",
-    run_id: "run-1",
-  };
-
   it("pairs a call with its return into one updated block", () => {
     const blocks = parseHistoryPage(page(CALL, RETURN));
 
@@ -225,7 +259,9 @@ describe("tool messages", () => {
     expect(first).toHaveLength(1);
     expect(second).toHaveLength(1);
 
-    expect(typed(first[0], "tool_call").status).toBe("running");
+    // A history page is finished by definition, so an unclosed call closes as
+    // incomplete here instead of keeping an in-progress card (§4.8).
+    expect(typed(first[0], "tool_call").status).toBe("incomplete");
     expect(typed(first[0], "tool_call").orphan).toBe(false);
     expect(typed(first[0], "tool_call").result).toBeNull();
 
@@ -245,6 +281,41 @@ describe("tool messages", () => {
     expect(tool.id).toBe("tool:call_1");
     expect(tool.result).toBe("ok");
     expect(tool.status).toBe("success");
+  });
+});
+
+describe("page end", () => {
+  it("closes a page that only holds a call as incomplete", () => {
+    const blocks = parseHistoryPage(page(CALL));
+
+    expect(blocks).toHaveLength(1);
+    expect(typed(blocks[0], "tool_call").status).toBe("incomplete");
+  });
+
+  it("leaves a call with a success return as success", () => {
+    const blocks = parseHistoryPage(page(CALL, RETURN));
+
+    expect(blocks).toHaveLength(1);
+    expect(typed(blocks[0], "tool_call").status).toBe("success");
+    expect(typed(blocks[0], "tool_call").result).toBe("ok");
+  });
+
+  it("closes a call whose return carries no status as incomplete", () => {
+    const blocks = parseHistoryPage(
+      page(CALL, {
+        id: "r2",
+        message_type: "tool_return_message",
+        role: "tool",
+        tool_call_id: "call_1",
+        tool_return: "maybe",
+        run_id: "run-1",
+      }),
+    );
+
+    expect(blocks).toHaveLength(1);
+    const tool = typed(blocks[0], "tool_call");
+    expect(tool.result).toBe("maybe");
+    expect(tool.status).toBe("incomplete");
   });
 });
 
@@ -346,6 +417,50 @@ describe("degraded content", () => {
 
     expect(user.map((block) => block.type)).toEqual(["unknown"]);
     expect(typed(user[0], "unknown").rawType).toBe("image");
+  });
+
+  it("treats an object content with a string type as one part", () => {
+    const blocks = parseHistoryPage(
+      page(
+        assistantId("a-obj", { type: "text", text: "nested assistant" }),
+        userId("u-obj", { type: "text", text: "nested user" }),
+        assistantId("u-reason", { type: "reasoning", reasoning: "hidden" }),
+      ),
+    );
+
+    expect(blocks.map((block) => block.type)).toEqual(["text", "text"]);
+    expect(typed(blocks[0], "text").text).toBe("nested assistant");
+    expect(typed(blocks[0], "text").status).toBe("complete");
+    expect(typed(blocks[1], "text").text).toBe("nested user");
+    expect(JSON.stringify(blocks)).not.toContain("hidden");
+  });
+
+  it("turns a content that is neither text nor parts into an unknown block", () => {
+    const entries = [assistantId("a-num", 42), userId("u-obj2", { oops: true })];
+    const blocks = parseHistoryPage(page(...entries));
+
+    expect(blocks.map((block) => block.type)).toEqual(["unknown", "unknown"]);
+
+    const number = typed(blocks[0], "unknown");
+    expect(number.id).toBe("a-num:unknown:0");
+    expect(number.rawType).toBe("assistant_message");
+    expect(number.raw).toEqual(entries[0]);
+
+    const object = typed(blocks[1], "unknown");
+    expect(object.id).toBe("u-obj2:unknown:0");
+    expect(object.rawType).toBe("user_message");
+    expect(object.raw).toEqual(entries[1]);
+  });
+
+  it("keeps an empty content an empty message, not a placeholder", () => {
+    expect(parseHistoryPage(page(assistantId("a-null", null)))).toEqual([]);
+    expect(parseHistoryPage(page(userId("u-missing", undefined)))).toEqual([]);
+  });
+
+  it("reports untyped when a message declares no type", () => {
+    const blocks = parseHistoryPage(page({ id: "no-type-2", content: "No declared type." }));
+
+    expect(typed(blocks[0], "unknown").rawType).toBe("untyped");
   });
 
   it("skips an entry that is not an object and survives an unparseable date", () => {

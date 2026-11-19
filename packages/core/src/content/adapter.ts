@@ -11,10 +11,13 @@
  *    both meanings. A final message with no id gets a content key instead, so
  *    replaying the same payload names the same message.
  * 2. **Block orchestration.** One `MessageState` per message. A delta appends
- *    its text first (the fence scanner may split it into prose and code) and
- *    then folds in the part positions it has not seen. Because both steps
- *    append to "the last block", an image between two paragraphs makes the
- *    following paragraph open a new text block, which is the source order.
+ *    the frame's text and folds in the part positions it has not seen. The text
+ *    is appended through the part positions when the frame's `text` is exactly
+ *    the text of its new text parts (the real shape), so an image between two
+ *    paragraphs makes the following paragraph open a new text block; a frame
+ *    whose parts do not yet carry its text falls back to appending `text`
+ *    first. Because both steps append to "the last block", the source order is
+ *    preserved either way.
  *
  * Idempotence is part of the contract: the *same frame object* delivered twice
  * must not append its text twice. The guard deliberately compares object
@@ -30,7 +33,7 @@
 
 import type { Block, BlockId } from "@haruyuki/protocol";
 
-import type { MergerChange } from "../merge/types.js";
+import type { AssistantPart, MergerChange } from "../merge/types.js";
 import { appendText, completeMessage as finishMessage, createMessageState } from "./blocks.js";
 import { createFenceState } from "./fence.js";
 import { appendParts, createPartsCursor, type PartsCursor } from "./parts.js";
@@ -136,17 +139,24 @@ export function createDeltaState(change: SourceDelta): MessageState {
 /**
  * Ingest one delta frame and return the blocks it created or changed.
  *
- * Text first, then the part positions not seen yet. The returned list is an
- * upsert list -- never the whole message -- and an empty list when the frame
- * was a repeat or carried nothing new.
+ * The frame's `text` is the text of the text parts it added -- that is how the
+ * upstream assembler builds it -- so the part positions decide where the text
+ * goes. When the two agree the text is appended by `appendParts`, in part
+ * order; otherwise (a synthetic frame, or a frame whose parts lag behind its
+ * text) the text is appended first and new text parts only mark their
+ * position. The returned list is an upsert list -- never the whole message --
+ * and an empty list when the frame was a repeat or carried nothing new.
  */
 export function ingestDelta(state: MessageState, change: SourceDelta): readonly Block[] {
   if (isRepeatedFrame(state, change)) {
     return [];
   }
 
-  const changed: Block[] = [...appendText(state, change.text)];
-  changed.push(...appendParts(state, change.parts, cursorFor(state)));
+  const cursor = cursorFor(state);
+  const partsCarryText = textFromNewParts(change.parts, cursor.seen) === change.text;
+  const changed: Block[] = partsCarryText ? [] : [...appendText(state, change.text)];
+
+  changed.push(...appendParts(state, change.parts, cursor, partsCarryText));
   frames.set(state, { change });
 
   return changed;
@@ -212,11 +222,37 @@ function cursorFor(state: MessageState): PartsCursor {
   return created;
 }
 
-/** A message's id, falling back to the payload's stable content key. */
+/**
+ * The text of the text parts this cursor has not handled yet.
+ *
+ * This is the text a real delta carries: the assembler adds its parts and
+ * reports their text together. Empty when the frame added no text part.
+ */
+function textFromNewParts(parts: readonly AssistantPart[], seen: number): string {
+  let text = "";
+
+  for (let index = seen; index < parts.length; index += 1) {
+    const part = parts[index];
+    if (part !== undefined && part.type === "text" && typeof part.text === "string") {
+      text += part.text;
+    }
+  }
+
+  return text;
+}
+
+/**
+ * A message's id, falling back to the payload's stable content key.
+ *
+ * The key covers the message type as well as the body: a page can hold the same
+ * payload as a user message and as an assistant message, and those are two
+ * messages, not one. `contentKey` sorts object keys, so the field order here
+ * does not matter and a replay of the same pair names the same message.
+ */
 function messageIdOf(change: MessageFinalChange): string {
   const id = change.messageId;
   if (typeof id === "string" && id.length > 0) {
     return id;
   }
-  return contentKey(change.body);
+  return contentKey({ messageType: change.messageType, body: change.body });
 }

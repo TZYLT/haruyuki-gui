@@ -1,9 +1,10 @@
 # Content fixtures
 
 Hand-written, synthetic inputs for the content model, one JSON file per message
-class. Nothing here is a recording: every value is invented, so no session,
-token, host name or real path leaks into the corpus. The engine recordings next
-door are **not** reused because their redaction pass can damage closing tags.
+or behavior class. Nothing here is a recording: every value is invented, so no
+session, token, host name or real path leaks into the corpus. The engine
+recordings next door are **not** reused because their redaction pass can damage
+closing tags.
 
 The loader and the exact-output assertions live in
 `packages/core/src/content/fixtures.test.ts`. A fixture file is:
@@ -42,8 +43,10 @@ Rules for a new case:
   spelled out so a block snapshot can be read without running the code;
 - keep values synthetic: no real path, address, host name, token or text.
 
-The test file also enforces the cross-corpus invariants: no prose block carries
+The test file also enforces the cross-corpus invariants: the V-01 classes are
+each proved by a required fixture file, no prose block or notice span carries
 the agent-only XML, an unknown message type always surfaces as an `unknown`
 block, a call with no final return never claims success, ids stay unique, every
-output survives a JSON round trip, and every malformed case degrades instead of
-throwing.
+output survives a strict JSON round trip, and every malformed case degrades
+instead of throwing. A `path` outside the table above is a load error, not a
+silent fallback.

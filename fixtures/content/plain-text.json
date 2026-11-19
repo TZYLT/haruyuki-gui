@@ -1,5 +1,5 @@
 {
-  "note": "Plain prose. Markdown structure is kept exactly as written, user content is trimmed by the display normaliser, and the assistant path keeps its trailing newline.",
+  "note": "Plain prose. Markdown structure is kept exactly as written, user content keeps the author's own whitespace and line endings, and the assistant path keeps its trailing newline.",
   "cases": [
     {
       "name": "a user turn keeps Markdown and a script tag verbatim",

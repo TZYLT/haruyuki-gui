@@ -1,5 +1,5 @@
 {
-  "note": "System reminders are context for the agent, never user prose. A whole reminder contributes nothing, a mixed reminder leaves its prose, a reminder-only array part is skipped, and several reminders are all removed because the match is global and non-greedy.",
+  "note": "System reminders are context for the agent, never user prose. A whole reminder contributes nothing, a mixed reminder leaves its prose, a reminder-only array part is skipped, several reminders are all removed because the match is global and non-greedy, and the history path strips a reminder from a user turn.",
   "cases": [
     {
       "name": "a whole reminder produces no span",
@@ -69,6 +69,29 @@
         {
           "kind": "text",
           "text": "onetwo"
+        }
+      ]
+    },
+    {
+      "name": "a history user turn drops the reminder but keeps its prose",
+      "path": "history",
+      "input": [
+        {
+          "id": "user-reminder",
+          "message_type": "user_message",
+          "content": "Visible question.\n<system-reminder>machine: example-host</system-reminder>"
+        }
+      ],
+      "expect": [
+        {
+          "id": "user-reminder:text:0",
+          "messageId": "user-reminder",
+          "runId": null,
+          "role": "user",
+          "type": "text",
+          "text": "Visible question.\n",
+          "flavor": "markdown",
+          "status": "complete"
         }
       ]
     }

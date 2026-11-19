@@ -14,6 +14,7 @@ import { describe, expect, it } from "vitest";
 import {
   clearTools,
   createToolTable,
+  incompleteAll,
   incompleteForRun,
   ingestToolMessage,
   releaseToolMessage,
@@ -360,6 +361,68 @@ describe("turn finished", () => {
     );
     expect(late[0]?.block.status).toBe("success");
     expect(late[0]?.block.id).toBe("tool:call_b");
+  });
+});
+
+describe("page end", () => {
+  it("closes every open call as incomplete and leaves terminal ones alone", () => {
+    const table = createToolTable();
+    ingestToolMessage(
+      table,
+      message("msg-open", "tool_call_message", toolCallBody("call_open", "{}")),
+    );
+    ingestToolMessage(
+      table,
+      message("msg-no-status", "tool_call_message", toolCallBody("call_nostatus", "{}")),
+    );
+    ingestToolMessage(
+      table,
+      message("msg-no-status-return", "tool_return_message", {
+        tool_call_id: "call_nostatus",
+        tool_return: "unknown",
+      }),
+    );
+    ingestToolMessage(
+      table,
+      message("msg-success", "tool_call_message", toolCallBody("call_success", "{}")),
+    );
+    ingestToolMessage(
+      table,
+      message("msg-success-return", "tool_return_message", returnBody("call_success", "ok")),
+    );
+    ingestToolMessage(
+      table,
+      message("msg-failed", "tool_call_message", toolCallBody("call_failed", "{}")),
+    );
+    ingestToolMessage(
+      table,
+      message(
+        "msg-failed-return",
+        "tool_return_message",
+        returnBody("call_failed", "boom", "error"),
+      ),
+    );
+    ingestToolMessage(
+      table,
+      message(
+        "msg-incomplete",
+        "tool_call_message",
+        toolCallBody("call_incomplete", "{}"),
+        "run-2",
+      ),
+    );
+    incompleteForRun(table, "run-2");
+
+    const updates = incompleteAll(table);
+
+    expect(updates.map((update) => update.block.toolCallId)).toEqual([
+      "call_open",
+      "call_nostatus",
+    ]);
+    expect(updates.map((update) => update.block.status)).toEqual(["incomplete", "incomplete"]);
+    expect(table.tools.get("call_success")?.status).toBe("success");
+    expect(table.tools.get("call_failed")?.status).toBe("error");
+    expect(table.tools.get("call_incomplete")?.status).toBe("incomplete");
   });
 });
 

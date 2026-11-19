@@ -28,11 +28,11 @@
       ]
     },
     {
-      "name": "an object content field yields no block instead of throwing",
+      "name": "an object content with a string type is parsed as a single part",
       "path": "history",
       "input": [
         {
-          "id": "bad-content",
+          "id": "typed-content",
           "message_type": "assistant_message",
           "content": {
             "type": "text",
@@ -40,14 +40,89 @@
           }
         },
         {
-          "id": "bad-user-content",
+          "id": "typed-user-content",
+          "message_type": "user_message",
+          "content": {
+            "type": "text",
+            "text": "nested user"
+          }
+        }
+      ],
+      "expect": [
+        {
+          "id": "typed-content:text:0",
+          "messageId": "typed-content",
+          "runId": null,
+          "role": "assistant",
+          "type": "text",
+          "text": "nested",
+          "flavor": "markdown",
+          "status": "complete"
+        },
+        {
+          "id": "typed-user-content:text:0",
+          "messageId": "typed-user-content",
+          "runId": null,
+          "role": "user",
+          "type": "text",
+          "text": "nested user",
+          "flavor": "markdown",
+          "status": "complete"
+        }
+      ]
+    },
+    {
+      "name": "a numeric or untyped object content becomes one unknown block",
+      "path": "history",
+      "input": [
+        {
+          "id": "number-content",
+          "message_type": "assistant_message",
+          "content": 42
+        },
+        {
+          "id": "untyped-content",
           "message_type": "user_message",
           "content": {
             "oops": true
           }
+        },
+        {
+          "id": "null-content",
+          "message_type": "assistant_message",
+          "content": null
         }
       ],
-      "expect": []
+      "expect": [
+        {
+          "id": "number-content:unknown:0",
+          "messageId": "number-content",
+          "runId": null,
+          "role": "assistant",
+          "type": "unknown",
+          "rawType": "assistant_message",
+          "raw": {
+            "id": "number-content",
+            "message_type": "assistant_message",
+            "content": 42
+          }
+        },
+        {
+          "id": "untyped-content:unknown:0",
+          "messageId": "untyped-content",
+          "runId": null,
+          "role": "user",
+          "type": "unknown",
+          "rawType": "user_message",
+          "raw": {
+            "id": "untyped-content",
+            "message_type": "user_message",
+            "content": {
+              "oops": true
+            }
+          }
+        }
+      ]
     },
     {
       "name": "a call without an id is ignored and the next call still builds",
@@ -184,7 +259,7 @@
           "runId": null,
           "role": "system",
           "type": "unknown",
-          "rawType": "",
+          "rawType": "untyped",
           "raw": {
             "id": "no-type-1",
             "content": "No declared type."

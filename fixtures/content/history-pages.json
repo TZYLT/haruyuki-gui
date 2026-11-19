@@ -146,17 +146,7 @@
           "runId": null,
           "role": "user",
           "type": "text",
-          "text": "First paragraph.",
-          "flavor": "markdown",
-          "status": "complete"
-        },
-        {
-          "id": "page-c4:text:1",
-          "messageId": "page-c4",
-          "runId": null,
-          "role": "user",
-          "type": "text",
-          "text": "Second paragraph.",
+          "text": "First paragraph.Second paragraph.",
           "flavor": "markdown",
           "status": "complete"
         }

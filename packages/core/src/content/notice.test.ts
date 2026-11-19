@@ -3,9 +3,10 @@
  *
  * These pin the user-content contract: agent-only reminders never surface, a
  * task notification becomes a notice instead of user prose, body text keeps its
- * position around a notification, an agent-only result hides the whole notice,
- * and the history array shape is walked in part order. Every case also asserts
- * that no XML markup survives as display text.
+ * position and the author's own whitespace around a notification, an agent-only
+ * result hides the whole notice without splitting its surroundings, and the
+ * history array shape is walked in part order. Every case also asserts that no
+ * XML markup survives as display text.
  */
 
 import { describe, expect, it } from "vitest";
@@ -63,6 +64,12 @@ describe("pure content", () => {
     expect(parseUserContent(`${REMINDER}\n${REMINDER}`)).toEqual([]);
   });
 
+  it("keeps the author's line endings, blank lines and outer whitespace", () => {
+    expect(parseUserContent("line1\r\n\n\n\nline2\n")).toEqual([
+      textSpan("line1\r\n\n\n\nline2\n"),
+    ]);
+  });
+
   it("turns a notification into a notice and hides its markup", () => {
     const content = `${NOTIFICATION}\nFull transcript available at: C:/work/task_1.log`;
 
@@ -89,6 +96,18 @@ describe("pure content", () => {
     expect(parseUserContent(content)).toEqual([notice("A & B <tag>", "&lt; &amp; \"q\" 'a'")]);
   });
 
+  it("drops a notification whose entity-encoded result carries a reminder", () => {
+    const content = [
+      "<task-notification>",
+      "<summary>encoded</summary>",
+      "<result>&lt;system-reminder&gt;secret&lt;/system-reminder&gt;</result>",
+      "</task-notification>",
+    ].join("\n");
+
+    expect(parseUserContent(content)).toEqual([]);
+    expect(JSON.stringify(parseUserContent(content))).not.toContain("secret");
+  });
+
   it("removes a transcript pointer line inside the result too", () => {
     const content = [
       "<task-notification>",
@@ -108,18 +127,18 @@ describe("mixed content", () => {
     const content = `first line\n${NOTIFICATION}\nlast line`;
 
     expect(parseUserContent(content)).toEqual([
-      textSpan("first line"),
+      textSpan("first line\n"),
       notice(TITLE, "sub-ok"),
-      textSpan("last line"),
+      textSpan("\nlast line"),
     ]);
   });
 
-  it("drops a notification that carries agent-only context", () => {
+  it("drops a notification that carries agent-only context without splitting the prose", () => {
     expect(parseUserContent(AGENT_ONLY)).toEqual([]);
 
     const spans = parseUserContent(`before\n${AGENT_ONLY}\nafter`);
 
-    expect(spans).toEqual([textSpan("before"), textSpan("after")]);
+    expect(spans).toEqual([textSpan("before\n\nafter")]);
     expect(JSON.stringify(spans)).not.toContain("secret context");
   });
 
@@ -155,8 +174,8 @@ describe("mixed content", () => {
     expect(spans).toEqual([textSpan("hello world"), textSpan("next part")]);
   });
 
-  it("collapses a run of blank lines to one blank line", () => {
-    expect(parseUserContent("first\n\n\n\nsecond")).toEqual([textSpan("first\n\nsecond")]);
+  it("keeps the author's blank lines and line endings", () => {
+    expect(parseUserContent("first\n\n\n\nsecond")).toEqual([textSpan("first\n\n\n\nsecond")]);
   });
 });
 

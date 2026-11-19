@@ -13,7 +13,7 @@
  * dropped payload), and every block leaves through the same JSON sanitiser.
  *
  * What differs: blocks are always `complete`, reasoning fragments aggregate
- * inside one page, and a call split across pages leaves a `running` block on
+ * inside one page, and a call split across pages leaves an `incomplete` block on
  * the first page and an `orphan` block on the next -- pages never pair.
  *
  * Everything is synchronous and side-effect free: no clock, no randomness, no
@@ -29,7 +29,7 @@ import { parseUserContent, type NoticeSpan, type TaskNotificationSpan } from "./
 import { appendParts, createPartsCursor } from "./parts.js";
 import { createReasoningAggregator, ingestReasoning } from "./reasoning.js";
 import { sanitizeBlock } from "./sanitize.js";
-import { createToolTable, ingestToolMessage } from "./tools.js";
+import { createToolTable, incompleteAll, ingestToolMessage } from "./tools.js";
 import { blockIdFor, contentKey, type MessageState, type SourceMessage } from "./types.js";
 
 /** Mutable output of one page: blocks in source order, plus their positions. */
@@ -100,6 +100,13 @@ export function parseHistoryPage(messages: readonly SourceMessage[]): readonly B
     }
   }
 
+  // A page is finished by definition: a call left open by the page must not
+  // keep showing an in-progress card. Replacing the block in place keeps both
+  // its id and its first-seen position.
+  for (const update of incompleteAll(tools)) {
+    put(page, update.block);
+  }
+
   return page.blocks.map(sanitizeBlock);
 }
 
@@ -152,9 +159,11 @@ function contentOf(message: SourceMessage): unknown {
  * Lay out one user message.
  *
  * A string is cleaned as a whole. An array is walked in part order so an image
- * keeps its place between two paragraphs: text parts yield their own
- * text/notice spans, and every other part goes to the shared part builder. A
- * part that is nothing but reminders yields no span, so it disappears.
+ * keeps its place between two paragraphs: adjacent text parts accumulate into
+ * one string and are cleaned once, with no separator inserted at the boundary,
+ * and every other part flushes that prose before taking its own place. An
+ * object naming a string `type` is handled as a one-part array. Any other
+ * non-empty payload becomes a visible `unknown` block instead of vanishing.
  */
 function parseUser(message: SourceMessage): readonly Block[] {
   const state = createMessageStateFor(message);
@@ -166,12 +175,28 @@ function parseUser(message: SourceMessage): readonly Block[] {
   }
 
   if (!Array.isArray(content)) {
-    return state.blocks;
+    const record = recordOf(content);
+    if (record !== null && typeof record.type === "string") {
+      appendSingleUserPart(state, content, record.type, record.text);
+      return state.blocks;
+    }
+    return content === null || content === undefined ? state.blocks : [unknownBlock(message)];
   }
+
+  let pending = "";
+
+  const flush = (): void => {
+    if (pending.length === 0) {
+      return;
+    }
+    const text = pending;
+    pending = "";
+    appendUserSpans(state, parseUserContent(text));
+  };
 
   for (const part of content) {
     if (typeof part === "string") {
-      appendUserSpans(state, parseUserContent(part));
+      pending += part;
       continue;
     }
 
@@ -182,15 +207,34 @@ function parseUser(message: SourceMessage): readonly Block[] {
 
     if (record.type === "text") {
       if (typeof record.text === "string") {
-        appendUserSpans(state, parseUserContent(record.text));
+        pending += record.text;
       }
       continue;
     }
 
+    // The prose run ends here; the non-text part keeps its place in the message.
+    flush();
     appendParts(state, [part as AssistantPart], createPartsCursor());
   }
 
+  flush();
   return state.blocks;
+}
+
+/** Append the one part an object-shaped `content` names, like a one-item array. */
+function appendSingleUserPart(
+  state: MessageState,
+  part: unknown,
+  type: string,
+  text: unknown,
+): void {
+  if (type === "text") {
+    if (typeof text === "string") {
+      appendUserSpans(state, parseUserContent(text));
+    }
+    return;
+  }
+  appendParts(state, [part as AssistantPart], createPartsCursor());
 }
 
 /**
@@ -213,7 +257,12 @@ function parseAssistant(message: SourceMessage): readonly Block[] {
   }
 
   if (!Array.isArray(content)) {
-    return state.blocks;
+    const record = recordOf(content);
+    if (record !== null && typeof record.type === "string") {
+      appendSingleAssistantPart(state, content, record.type, record.text);
+      return state.blocks;
+    }
+    return content === null || content === undefined ? state.blocks : [unknownBlock(message)];
   }
 
   for (const part of content) {
@@ -245,6 +294,31 @@ function parseAssistant(message: SourceMessage): readonly Block[] {
 
   completeMessage(state);
   return state.blocks;
+}
+
+/** Append the one part an object-shaped assistant `content` names. */
+function appendSingleAssistantPart(
+  state: MessageState,
+  part: unknown,
+  type: string,
+  text: unknown,
+): void {
+  if (type === "text") {
+    if (typeof text === "string") {
+      appendText(state, text);
+    }
+    completeMessage(state);
+    return;
+  }
+  if (type === "reasoning") {
+    // The same thinking arrives as its own reasoning message; showing it here
+    // would duplicate it.
+    return;
+  }
+
+  // Flush the tail line so the part lands after the prose that preceded it.
+  completeMessage(state);
+  appendParts(state, [part as AssistantPart], createPartsCursor());
 }
 
 /** Append the spans a user text part produced, in order. */
@@ -292,13 +366,22 @@ function userNoticeBlock(state: MessageState, span: TaskNotificationSpan): Notic
 
 /** Build the block for a message type this version does not understand. */
 function parseUnknown(message: SourceMessage): Block {
+  return unknownBlock(message);
+}
+
+/**
+ * Build the visible placeholder for a payload that cannot be shown as prose.
+ * `rawType` is the declared message type, or `untyped` when the entry names
+ * none.
+ */
+function unknownBlock(message: SourceMessage): Block {
   return {
     id: blockIdFor(message.id, "unknown", 0),
     messageId: message.id,
     runId: message.runId,
     role: message.role,
     type: "unknown",
-    rawType: message.messageType,
+    rawType: message.messageType.length > 0 ? message.messageType : "untyped",
     raw: message.body,
   };
 }

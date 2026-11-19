@@ -2,7 +2,7 @@
  * Fixture corpus and per-block snapshots for the content model's two paths.
  *
  * Every fixture under `fixtures/content/` is hand-written, synthetic and small:
- * one JSON file per message class, and each case names the path that must
+ * one JSON file per message or behavior class, and each case names the path that must
  * consume it plus the exact output expected from it:
  *
  *   history    `parseHistoryPage`, the stateless one-page path
@@ -44,6 +44,37 @@ const CORPUS_DIR = fileURLToPath(new URL("../../../../fixtures/content/", import
 
 /** How one case is consumed. */
 type CasePath = "history" | "live-text" | "tools" | "reasoning" | "notice";
+
+/** The closed set of paths a fixture case may name. */
+const CASE_PATHS: ReadonlySet<string> = new Set<CasePath>([
+  "history",
+  "live-text",
+  "tools",
+  "reasoning",
+  "notice",
+]);
+
+/**
+ * The required message classes, each named by the fixture file that must prove it.
+ *
+ * The file is the unit: deleting the fixture for a class removes it from
+ * `FIXTURES`, so the coverage assertion goes red instead of the corpus quietly
+ * shrinking while a `length >= 10` check still passes for the wrong reasons.
+ */
+const REQUIRED_CLASS_FIXTURES: Readonly<Record<string, string>> = {
+  "assistant text": "plain-text",
+  "assistant fenced code": "fenced-code",
+  "user text": "plain-text",
+  "user image": "images",
+  "tool success": "tool-calls",
+  "tool error": "tool-calls",
+  "tool progress snapshot": "tool-calls",
+  reasoning: "reasoning",
+  "task notification": "notices",
+  error: "errors",
+  "unknown message": "unknown-messages",
+  "unknown part": "unknown-messages",
+};
 
 type FixtureCase = {
   readonly name: string;
@@ -89,7 +120,18 @@ function loadCorpus(): readonly LoadedFixture[] {
     .sort()
     .map((name) => {
       const text = readFileSync(`${CORPUS_DIR}/${name}`, "utf8");
-      return { ...(JSON.parse(text) as FixtureFile), file: name.replace(/\.json$/, "") };
+      const fixture = JSON.parse(text) as FixtureFile;
+
+      // A typo in `path` must not silently fall through to the notice branch.
+      for (const testCase of fixture.cases) {
+        if (!CASE_PATHS.has(testCase.path)) {
+          throw new Error(
+            `fixture ${name}/${testCase.name} names unknown path ${JSON.stringify(testCase.path)}`,
+          );
+        }
+      }
+
+      return { ...fixture, file: name.replace(/\.json$/, "") };
     });
 }
 
@@ -225,6 +267,78 @@ function toolStatuses(blocks: readonly Block[]): readonly string[] {
     .map((block) => block.status);
 }
 
+/** The `text` of every notice span, whatever its kind. */
+function spanTextsOf(output: unknown): readonly string[] {
+  if (!Array.isArray(output)) {
+    return [];
+  }
+
+  const texts: string[] = [];
+  for (const span of output) {
+    if (typeof span === "object" && span !== null) {
+      const text = (span as { readonly text?: unknown }).text;
+      if (typeof text === "string") {
+        texts.push(text);
+      }
+    }
+  }
+
+  return texts;
+}
+
+/**
+ * Every value a block carries that JSON cannot hold unchanged (§6.11).
+ *
+ * `toStrictEqual` on a round trip catches an `undefined` key only when both the
+ * original and the copy are compared; this walk states the rule directly:
+ * strings, booleans, finite numbers, `null`, arrays and plain objects, nothing
+ * else, at any depth.
+ */
+function jsonViolations(
+  value: unknown,
+  path: string = "$",
+  ancestors: ReadonlySet<object> = new Set<object>(),
+): readonly string[] {
+  if (value === undefined) {
+    return [`${path} is undefined`];
+  }
+  if (value === null) {
+    return [];
+  }
+
+  const kind = typeof value;
+  if (kind === "string" || kind === "boolean") {
+    return [];
+  }
+  if (kind === "number") {
+    return Number.isFinite(value as number) ? [] : [`${path} is a non-finite number`];
+  }
+  if (kind !== "object") {
+    return [`${path} is a ${kind}`];
+  }
+
+  const object = value as object;
+  if (ancestors.has(object)) {
+    return [`${path} is a cycle`];
+  }
+
+  const seen = new Set(ancestors);
+  seen.add(object);
+
+  if (Array.isArray(object)) {
+    return object.flatMap((item, index) => jsonViolations(item, `${path}[${index}]`, seen));
+  }
+
+  const prototype = Object.getPrototypeOf(object) as object | null;
+  if (prototype !== Object.prototype && prototype !== null) {
+    return [`${path} is not a plain object`];
+  }
+
+  return Object.entries(object).flatMap(([key, child]) =>
+    jsonViolations(child, `${path}.${key}`, seen),
+  );
+}
+
 for (const entry of FIXTURES) {
   describe(entry.file, () => {
     it("declares a note and at least one case", () => {
@@ -245,7 +359,19 @@ for (const entry of FIXTURES) {
 }
 
 describe("content corpus invariants", () => {
-  it("covers at least ten fixture classes", () => {
+  it("covers the message classes with their required fixture files", () => {
+    const files = new Set(FIXTURES.map((entry) => entry.file));
+    const missing = [
+      ...new Set(
+        Object.entries(REQUIRED_CLASS_FIXTURES)
+          .filter(([, file]) => !files.has(file))
+          .map(([messageClass, file]) => `${messageClass} -> ${file}`),
+      ),
+    ];
+
+    expect(missing).toEqual([]);
+    // The corpus may grow, but never shrink below the ten classes plus the two
+    // unknown-degradation groups (unknown message and unknown part).
     expect(FIXTURES.length).toBeGreaterThanOrEqual(10);
   });
 
@@ -273,17 +399,37 @@ describe("content corpus invariants", () => {
     }
   });
 
-  it("keeps agent-only XML out of every prose block", () => {
+  it("keeps agent-only XML out of every prose block and notice span", () => {
     // Non-vacuity: the input really carries the marker a stripping regression
     // would leave in the output.
     const reminderInput = caseOf("reminders", "prose around a reminder stays one span").input;
     expect(JSON.stringify(reminderInput)).toContain("<system-reminder");
 
-    const textBlocks = RUNS.flatMap((run) => textBlocksOf(blocksOf(run.result)));
-    expect(textBlocks.length).toBeGreaterThan(0);
-    for (const block of textBlocks) {
-      expect(block.text).not.toContain("<system-reminder");
-      expect(block.text).not.toContain("<task-notification");
+    const prose: string[] = [];
+    for (const run of RUNS) {
+      if (run.case.path === "notice") {
+        // The notice path never builds blocks; its displayable spans are the
+        // equivalent surface, so a reminder leaking into one must fail here.
+        prose.push(...spanTextsOf(run.result.output));
+      } else {
+        prose.push(...textBlocksOf(blocksOf(run.result)).map((block) => block.text));
+      }
+    }
+
+    // Non-vacuity: the reminder fixture itself contributes prose on both paths,
+    // including a history user turn whose reminder is stripped.
+    const reminderRuns = RUNS.filter((run) => run.file === "reminders");
+    const reminderProse = reminderRuns.flatMap((run) =>
+      run.case.path === "notice"
+        ? spanTextsOf(run.result.output)
+        : textBlocksOf(blocksOf(run.result)).map((block) => block.text),
+    );
+    expect(reminderProse).toContain("Visible question.\n");
+
+    expect(prose.length).toBeGreaterThan(0);
+    for (const text of prose) {
+      expect(text).not.toContain("<system-reminder");
+      expect(text).not.toContain("<task-notification");
     }
   });
 
@@ -325,6 +471,22 @@ describe("content corpus invariants", () => {
     expect(toolStatuses(otherRun)).toEqual(["running"]);
   });
 
+  it("lets a second return for one call overwrite the first", () => {
+    const testCase = caseOf("tool-calls", "a second return overwrites the first");
+    // Non-vacuity: the input really carries two returns with different payloads
+    // and statuses, so a state machine that keeps the first one is caught.
+    expect(JSON.stringify(testCase.input)).toContain('"tool_return":"interim failure"');
+    expect(JSON.stringify(testCase.input)).toContain('"tool_return":"final output"');
+
+    const blocks = blocksOf(runCase(testCase));
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0]).toMatchObject({
+      id: "tool:call-2",
+      result: "final output",
+      status: "success",
+    });
+  });
+
   it("never emits the same block id twice within one output", () => {
     for (const run of RUNS) {
       if (run.case.path === "notice") {
@@ -344,9 +506,25 @@ describe("content corpus invariants", () => {
   it("round-trips every output through JSON unchanged", () => {
     for (const run of RUNS) {
       const label = `${run.file}/${run.case.name}`;
-      expect(JSON.parse(JSON.stringify(run.result.output)), label).toEqual(run.result.output);
+      // `toStrictEqual`, not `toEqual`: an `undefined` key is dropped by
+      // `JSON.stringify` and must fail here, not slip through as equal.
+      expect(JSON.parse(JSON.stringify(run.result.output)), label).toStrictEqual(run.result.output);
       if (run.result.emitted !== null) {
-        expect(JSON.parse(JSON.stringify(run.result.emitted)), label).toEqual(run.result.emitted);
+        expect(JSON.parse(JSON.stringify(run.result.emitted)), label).toStrictEqual(
+          run.result.emitted,
+        );
+      }
+    }
+  });
+
+  it("keeps every block a JSON-safe value", () => {
+    for (const run of RUNS) {
+      if (run.case.path === "notice") {
+        continue;
+      }
+      const label = `${run.file}/${run.case.name}`;
+      for (const block of blocksOf(run.result)) {
+        expect(jsonViolations(block), `${label} ${block.id}`).toEqual([]);
       }
     }
   });
@@ -375,7 +553,9 @@ describe("content corpus invariants", () => {
 
   it("degrades malformed fixtures instead of throwing", () => {
     const malformed = fixtureFile("malformed");
-    expect(malformed.cases.length).toBeGreaterThanOrEqual(6);
+    // The corpus defines eight malformed groups; eight must be present, and a deletion
+    // or a ninth group that changes the contract both need a deliberate edit.
+    expect(malformed.cases).toHaveLength(8);
     for (const testCase of malformed.cases) {
       expect(() => runCase(testCase), testCase.name).not.toThrow();
       expect(runCase(testCase).output).toEqual(testCase.expect);

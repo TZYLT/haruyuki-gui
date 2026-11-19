@@ -15,6 +15,7 @@ import {
   clearReasoning,
   createReasoningAggregator,
   ingestReasoning,
+  releaseReasoning,
   type ReasoningBlockUpdate,
 } from "./reasoning.js";
 import type { SourceMessage } from "./types.js";
@@ -203,6 +204,44 @@ describe("segments", () => {
 
     expect(block.text).toBe("two");
     expect(aggregator.segments.size).toBe(1);
+  });
+});
+
+describe("release", () => {
+  it("drops the released message's segments and rebuilds from the next fragment", () => {
+    const aggregator = createReasoningAggregator();
+    const id = "ui-msg-1:reasoning:0";
+
+    blockOf(ingestReasoning(aggregator, reasoning(id, "one", { seq: 0 })));
+    blockOf(ingestReasoning(aggregator, reasoning("ui-msg-2:reasoning:0", "other", { seq: 0 })));
+
+    releaseReasoning(aggregator, "ui-msg-1");
+
+    expect([...aggregator.segments.keys()]).toEqual(["ui-msg-2:reasoning:0"]);
+    // The released fragment is not faked back: only the new one is present.
+    expect(blockOf(ingestReasoning(aggregator, reasoning(id, " two", { seq: 1 }))).text).toBe(
+      " two",
+    );
+  });
+
+  it("releases a segment whose parent could not be split from its id", () => {
+    const aggregator = createReasoningAggregator();
+
+    blockOf(ingestReasoning(aggregator, reasoning("reasoning-abc", "opaque")));
+    releaseReasoning(aggregator, "reasoning-abc");
+
+    expect(aggregator.segments.size).toBe(0);
+  });
+
+  it("leaves an un-released segment joined, as the control", () => {
+    const aggregator = createReasoningAggregator();
+    const id = "ui-msg-1:reasoning:0";
+
+    blockOf(ingestReasoning(aggregator, reasoning(id, "one", { seq: 0 })));
+
+    expect(blockOf(ingestReasoning(aggregator, reasoning(id, " two", { seq: 1 }))).text).toBe(
+      "one two",
+    );
   });
 });
 

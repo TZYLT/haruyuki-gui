@@ -20,6 +20,10 @@
  * one span (`"hello <reminder>...</reminder>world"` reads as `"hello world"`)
  * while a notification quoted inside a reminder disappears with it.
  *
+ * Outside those removals the source text is preserved verbatim, as required by
+ * §4.13: spaces, blank lines and line endings are never rewritten. Only the
+ * engine's own transcript pointer lines are dropped.
+ *
  * Notifications can arrive unclosed at the end of the content, and the engine
  * appends a `Full transcript available at:` line after one. Both are consumed
  * here so no XML reaches a surface.
@@ -74,9 +78,6 @@ const RESULT_PATTERN = /<result>([\s\S]*?)<\/result>/;
 /** The engine's trailing pointer to a task transcript; not user content. */
 const TRANSCRIPT_LINE_PATTERN = /^[ \t]*Full transcript available at:[^\r\n]*(?:\r?\n|$)/gm;
 
-/** Three or more newlines become one blank line. */
-const BLANK_LINE_RUN_PATTERN = /\n{3,}/g;
-
 /** Only the five XML predefined entities are decoded; no DTD, no library. */
 const XML_ENTITIES: Readonly<Record<string, string>> = {
   amp: "&",
@@ -118,20 +119,24 @@ function dropTranscriptLines(text: string): string {
 }
 
 /**
- * Normalise display text: line endings, transcript lines, blank-line runs, and
- * the outer whitespace a removed notification or reminder leaves behind.
+ * Display text for a notification body. This is engine output, not user prose,
+ * so its outer whitespace is trimmed; transcript pointer lines never display.
  */
-function normalizeText(text: string): string {
-  return dropTranscriptLines(text)
-    .replace(/\r\n?/g, "\n")
-    .replace(BLANK_LINE_RUN_PATTERN, "\n\n")
-    .trim();
+function noticeBody(text: string): string {
+  return dropTranscriptLines(unescapeXml(text)).trim();
 }
 
-/** Append a text span only when normalisation left something to show. */
+/**
+ * Append a text span only when it has visible characters.
+ *
+ * The text is sliced from the source verbatim: §4.13 forbids rewriting the
+ * user's prose, so there is no trim, no line-ending conversion and no
+ * blank-line collapsing. Only transcript pointer lines are removed, and an
+ * empty or whitespace-only run still produces no span.
+ */
 function appendTextSpan(spans: NoticeSpan[], raw: string): void {
-  const text = normalizeText(raw);
-  if (text.length > 0) {
+  const text = dropTranscriptLines(raw);
+  if (text.trim().length > 0) {
     spans.push({ kind: "text", text });
   }
 }
@@ -179,17 +184,23 @@ function cutRanges(text: string, ranges: readonly Range[]): string {
   return out;
 }
 
-/** Whether a raw notification body puts agent context in its result. */
+/**
+ * Whether a raw notification body puts agent context in its result.
+ *
+ * The result is decoded before the marker check so the escaped
+ * `&lt;system-reminder&gt;` form is caught too: both forms would otherwise
+ * reach a surface as the literal XML the caller must never display.
+ */
 function hasAgentOnlyResult(body: string): boolean {
   const result = RESULT_PATTERN.exec(body);
-  return (result?.[1] ?? "").includes("<system-reminder");
+  return unescapeXml(result?.[1] ?? "").includes("<system-reminder");
 }
 
 /**
  * Build one notice from the inside of a notification.
  *
  * A missing summary yields `title: null`; the result may legitimately be empty.
- * The literal `<system-reminder` check is the fallback path for a notice whose
+ * The decoded `<system-reminder` check is the fallback path for a notice whose
  * raw classification is unavailable; normally the caller decides agent-only
  * from the raw body before reminders are removed.
  */
@@ -209,7 +220,7 @@ function notificationFrom(body: string): TaskNotificationSpan | null {
     kind: "notice",
     category: "task-notification",
     title: title.length === 0 ? null : title,
-    text: normalizeText(unescapeXml(rawResult)),
+    text: noticeBody(rawResult),
   };
 }
 
@@ -244,6 +255,10 @@ function classifyNotifications(text: string, reminders: readonly Range[]): Notif
  * reminders, and on the cleaned text to produce spans. Notifications that were
  * inside a reminder are already gone from the cleaned text; the surviving ones
  * line up with the non-inside classifications in order.
+ *
+ * A dropped notification does not split the prose around it: the text on both
+ * sides is accumulated and emitted as one span. That is still the source text
+ * verbatim, minus the notification the user never wrote.
  */
 export function extractNotifications(text: string): readonly NoticeSpan[] {
   const reminders = reminderRanges(text);
@@ -252,13 +267,11 @@ export function extractNotifications(text: string): readonly NoticeSpan[] {
   const spans: NoticeSpan[] = [];
   let classIndex = 0;
   let cursor = 0;
+  let pending = "";
 
   for (const match of cleaned.matchAll(TASK_NOTIFICATION_PATTERN)) {
     const start = match.index ?? cursor;
-    if (start > cursor) {
-      appendTextSpan(spans, cleaned.slice(cursor, start));
-    }
-
+    pending += cleaned.slice(cursor, start);
     cursor = start + match[0].length;
 
     const classification = classes[classIndex];
@@ -270,14 +283,17 @@ export function extractNotifications(text: string): readonly NoticeSpan[] {
     }
 
     const notice = notificationFrom(match[1] ?? "");
-    if (notice !== null) {
-      spans.push(notice);
+    if (notice === null) {
+      continue;
     }
+
+    appendTextSpan(spans, pending);
+    pending = "";
+    spans.push(notice);
   }
 
-  if (cursor < cleaned.length) {
-    appendTextSpan(spans, cleaned.slice(cursor));
-  }
+  pending += cleaned.slice(cursor);
+  appendTextSpan(spans, pending);
 
   return spans;
 }

@@ -160,6 +160,27 @@ describe("layout", () => {
     expect(textBlocks(state.blocks).map((block) => block.text)).toEqual(["intro\n", "outro\n"]);
   });
 
+  it("appends a new text part in part order when the caller opts in", () => {
+    const state = newState();
+    const cursor = createPartsCursor();
+
+    const changed = appendParts(
+      state,
+      [{ type: "text", text: "intro\n" }, BASE64_IMAGE],
+      cursor,
+      true,
+    );
+    appendText(state, "outro\n");
+
+    expect(changed.map((block) => block.id)).toEqual(["msg-1:text:0", "msg-1:image:0"]);
+    expect(state.blocks.map((block) => block.id)).toEqual([
+      "msg-1:text:0",
+      "msg-1:image:0",
+      "msg-1:text:1",
+    ]);
+    expect(textBlocks(state.blocks).map((block) => block.text)).toEqual(["intro\n", "outro\n"]);
+  });
+
   it("skips reasoning parts without a block or an unknown ordinal", () => {
     const state = newState();
     const cursor = createPartsCursor();

@@ -491,6 +491,37 @@ describe("reset and release", () => {
     expect(paired.result).toBe("kept");
   });
 
+  it("releases a message's reasoning aggregation and lets it rebuild", () => {
+    const model = createContentModel();
+    const id = "m1:reasoning:0";
+
+    expect(
+      typed(
+        onlyBlock(model.ingest(final(id, "reasoning_message", { reasoning: "one", seq_id: 0 }))),
+        "reasoning",
+      ).text,
+    ).toBe("one");
+
+    model.release("m1");
+
+    // The old fragments are gone, so the surviving seq 1 is the whole segment.
+    const rebuilt = typed(
+      onlyBlock(model.ingest(final(id, "reasoning_message", { reasoning: " two", seq_id: 1 }))),
+      "reasoning",
+    );
+    expect(rebuilt.text).toBe(" two");
+    expect(rebuilt.id).toBe(id);
+
+    // Control: without a release the same two fragments join one segment.
+    const kept = createContentModel();
+    kept.ingest(final(id, "reasoning_message", { reasoning: "one", seq_id: 0 }));
+    const joined = typed(
+      onlyBlock(kept.ingest(final(id, "reasoning_message", { reasoning: " two", seq_id: 1 }))),
+      "reasoning",
+    );
+    expect(joined.text).toBe("one two");
+  });
+
   it("clears every table and counter on reset", () => {
     const model = createContentModel();
 
@@ -561,7 +592,9 @@ describe("bounds", () => {
     const stats = model.stats();
     expect(stats.inFlightMessages).toBe(256);
     expect(stats.overflows).toBe(44);
-    expect(stats.blocksEmitted).toBe(300);
+    // 300 streamed text blocks plus one completion block per eviction (44):
+    // finishing an evicted message hands its text over again, complete.
+    expect(stats.blocksEmitted).toBe(344);
   });
 
   it("evicts the oldest state and lets a later delta rebuild its ids", () => {
@@ -573,11 +606,43 @@ describe("bounds", () => {
     expect(model.stats().inFlightMessages).toBe(2);
     expect(model.stats().overflows).toBe(1);
 
-    const rebuilt = typed(onlyBlock(model.ingest(delta("a", "again\n"))), "text");
-    expect(rebuilt.id).toBe("a:text:0");
-    expect(rebuilt.text).toBe("again\n");
+    const rebuilt = model.ingest(delta("a", "again\n"));
+    const upserts = rebuilt.flatMap((update) => update.upserts);
+
+    // `b` was evicted to make room, so its text arrives complete in this batch.
+    const evictedB = typed(
+      upserts.find((block) => block.messageId === "b"),
+      "text",
+    );
+    expect(evictedB.text).toBe("y\n");
+    expect(evictedB.status).toBe("complete");
+
+    const text = typed(
+      upserts.find((block) => block.messageId === "a"),
+      "text",
+    );
+    expect(text.id).toBe("a:text:0");
+    expect(text.text).toBe("again\n");
     expect(model.stats().inFlightMessages).toBe(2);
     expect(model.stats().overflows).toBe(2);
+  });
+
+  it("completes an evicted message instead of dropping its received text", () => {
+    const model = createContentModel({ maxInFlightMessages: 2 });
+
+    model.ingest(delta("m-1", "hello\n"));
+    model.ingest(delta("m-2", "second\n"));
+
+    const evicting = model.ingest(delta("m-3", "third\n"));
+    const evicted = typed(
+      evicting.flatMap((update) => update.upserts).find((block) => block.messageId === "m-1"),
+      "text",
+    );
+    expect(evicted.status).toBe("complete");
+    expect(evicted.text).toBe("hello\n");
+
+    expect(model.stats().inFlightMessages).toBe(2);
+    expect(model.stats().overflows).toBe(1);
   });
 
   it("falls back to the default bound for an invalid option", () => {
@@ -602,6 +667,58 @@ describe("unknown and malformed input", () => {
     expect(block.rawType).toBe("mystery_message");
     expect(block.raw).toEqual({ tag: "x", keep: "y", list: [1, 2] });
     expect(model.stats().unknownBlocks).toBe(1);
+  });
+
+  it("does not turn process events into unknown blocks", () => {
+    const model = createContentModel();
+    const processTypes = [
+      "status",
+      "retry",
+      "loop_error",
+      "approval_classification_end",
+      "ping",
+      "command_start",
+      "command_end",
+      "slash_command_start",
+      "slash_command_bar",
+    ];
+
+    for (const messageType of processTypes) {
+      expect(
+        model.ingest(final(`m-${messageType}`, messageType, { message_type: messageType })),
+      ).toEqual([]);
+    }
+
+    expect(model.stats().unknownBlocks).toBe(0);
+    expect(model.stats().blocksEmitted).toBe(0);
+
+    // The observed loop error is the case that used to surface a block.
+    expect(model.ingest(final("m-loop", "loop_error", "provider not configured"))).toEqual([]);
+    expect(model.stats().unknownBlocks).toBe(0);
+  });
+
+  it("still degrades a genuinely unknown message type to one unknown block", () => {
+    const model = createContentModel();
+
+    for (const messageType of ["new_message_type", "summary_message", "event_message"]) {
+      const block = typed(
+        onlyBlock(model.ingest(final(`m-${messageType}`, messageType, { tag: messageType }))),
+        "unknown",
+      ) as UnknownBlock;
+      expect(block.rawType).toBe(messageType);
+    }
+
+    expect(model.stats().unknownBlocks).toBe(3);
+  });
+
+  it("names a missing message type untyped in the unknown block", () => {
+    const model = createContentModel();
+
+    const block = typed(
+      onlyBlock(model.ingest(final("m-untyped", "", { tag: "x" }))),
+      "unknown",
+    ) as UnknownBlock;
+    expect(block.rawType).toBe("untyped");
   });
 
   it("keeps an unknown part in place beside known content", () => {
@@ -635,7 +752,15 @@ describe("unknown and malformed input", () => {
     expect(error.errorType).toBeNull();
     expect(error.detail).toBeNull();
 
-    expect(model.ingest(final("bad-4", "assistant_message", { content: 42 }))).toEqual([]);
+    // A body that is neither text nor parts is no longer silent: the history
+    // path degrades it to one unknown block (fix-history contract), and the
+    // next message still works.
+    const malformedAssistant = typed(
+      onlyBlock(model.ingest(final("bad-4", "assistant_message", { content: 42 }))),
+      "unknown",
+    ) as UnknownBlock;
+    expect(malformedAssistant.rawType).toBe("assistant_message");
+    expect(malformedAssistant.raw).toEqual({ content: 42 });
     expect(model.ingest(turnFinished("run-missing"))).toEqual([]);
 
     const stillWorks = typed(onlyBlock(model.ingest(delta("bad-5", "fine\n"))), "text");
