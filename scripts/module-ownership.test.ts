@@ -13,6 +13,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readdirSync,
+  rmSync,
   rmdirSync,
   symlinkSync,
   unlinkSync,
@@ -22,7 +23,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, describe, expect, it } from "vitest";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const GATE = path.join(REPO_ROOT, "scripts", "check-module-ownership.mjs");
@@ -37,6 +38,15 @@ interface GateRun {
  * @param caseName fixture directory below fixtures/ownership
  * @returns exit code plus combined stdout/stderr
  */
+/** Run the gate against an absolute tree root rather than a fixture name. */
+function runGateAt(absoluteRoot: string): GateRun {
+  const result = spawnSync(process.execPath, [GATE, "--root", absoluteRoot], {
+    encoding: "utf8",
+  });
+
+  return { status: result.status, output: `${result.stdout}${result.stderr}` };
+}
+
 function runOwnershipGate(caseName: string): GateRun {
   const result = spawnSync(process.execPath, [GATE, "--root", path.join(FIXTURES, caseName)], {
     encoding: "utf8",
@@ -306,5 +316,92 @@ describe("check-module-ownership: a rule that matches nothing is a config error 
     expect(run.status, run.output).toBe(2);
     expect(run.output).toContain("matched no imported file");
     expect(run.output).toContain("packages/core/src/engine/**");
+  });
+});
+
+/**
+ * The gate judges the repository, not every file on disk.
+ *
+ * `apps/desktop/runtime` and `apps/desktop/release` are written by the packaging
+ * pipeline and gitignored. Walking them read the bundled engine as source and
+ * reported forty-six unresolved imports, so a correct tree went red for anyone who
+ * ran `package` before `verify --full` - and the report named specifiers nobody
+ * wrote.
+ *
+ * The pair below is that shape in miniature. Both trees are identical and both hold
+ * a pure forwarding module; the only difference is a `.gitignore` covering it. The
+ * tree that ignores the artifact must pass, and the tree that does not must fail
+ * with the barrel violation - otherwise the first half would be proving that the
+ * gate looked at nothing.
+ *
+ * The trees live inside the repository on purpose: `git check-ignore` answers
+ * relative to a working tree, and a temporary directory outside one cannot
+ * demonstrate anything about ignore rules.
+ */
+describe("check-module-ownership: gitignored output is not source", () => {
+  const fixtures = path.join(REPO_ROOT, "fixtures", "ownership");
+  // Built in `beforeAll`, not while the suite is being collected: this file's
+  // `afterEach` clears every root it knows about, and a tree created at collection
+  // time is gone before its own test runs.
+  const built = path.join(fixtures, `tmp-ignored-${String(Date.now())}`);
+  const kept = path.join(fixtures, `tmp-kept-${String(Date.now())}`);
+
+  const POLICY = JSON.stringify({ modules: [], barrels: { forbid: true } }, null, 2);
+
+  // Not in `createdRoots`: that list is cleared after every test, which would take
+  // this pair away between the two halves of the pair.
+  afterAll(() => {
+    rmSync(built, { recursive: true, force: true });
+    rmSync(kept, { recursive: true, force: true });
+  });
+
+  for (const [root, ignored] of [
+    [built, true],
+    [kept, false],
+  ] as const) {
+    for (const relative of ["packages/core/src/app.ts"]) {
+      mkdirSync(path.join(root, path.dirname(relative)), { recursive: true });
+      writeFileSync(path.join(root, relative), "export const app = 1;\n", "utf8");
+    }
+
+    for (const relative of [
+      "packages/core/generated/index.ts",
+      "packages/core/generated/impl.ts",
+    ]) {
+      mkdirSync(path.join(root, path.dirname(relative)), { recursive: true });
+    }
+
+    writeFileSync(
+      path.join(root, "packages/core/generated/index.ts"),
+      'export * from "./impl";\n',
+      "utf8",
+    );
+    writeFileSync(
+      path.join(root, "packages/core/generated/impl.ts"),
+      "export const impl = 1;\n",
+      "utf8",
+    );
+    writeFileSync(path.join(root, "scripts_placeholder"), "", "utf8");
+
+    mkdirSync(path.join(root, "scripts"), { recursive: true });
+    writeFileSync(path.join(root, "scripts", "module-ownership.json"), POLICY, "utf8");
+
+    if (ignored) {
+      writeFileSync(path.join(root, ".gitignore"), "packages/core/generated/\n", "utf8");
+    }
+  }
+
+  it("passes when the only barrel sits behind .gitignore", () => {
+    const run = runGateAt(built);
+
+    expect(run.status, run.output).toBe(0);
+    expect(run.output).toContain("PASS");
+  });
+
+  it("still fails that barrel when nothing ignores it", () => {
+    const run = runGateAt(kept);
+
+    expect(run.status, run.output).toBe(1);
+    expect(run.output).toContain("barrel pure forwarding module");
   });
 });

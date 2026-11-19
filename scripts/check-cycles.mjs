@@ -49,6 +49,7 @@
  * Exit codes: 0 = pass, 1 = violation, 2 = the script or its configuration is broken.
  */
 
+import { execFileSync } from "node:child_process";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 
@@ -114,11 +115,23 @@ async function collectViolations({ root }) {
 
   assertParsable(root, files);
 
+  // madge is handed the files this gate decided are source, not the three
+  // directories. Handing it `apps` makes it walk the tree on its own, and it
+  // collects `skipped` specifiers from what it walked even when `excludeRegExp`
+  // keeps those files out of the graph - so a bundled engine's relative imports
+  // were reported as "unresolved in-repo imports" while zero artifact modules
+  // appeared in the analysis. Same walk, two answers.
+  //
+  // With an explicit list, `skipped` can only describe a file that is actually
+  // being judged. An in-scope file that imports into an excluded directory is
+  // still reported, which is the case this assertion exists for.
+  const absoluteFiles = files.map((file) => path.posix.join(root, file));
+
   /** @type {any} */
   let result;
 
   try {
-    result = await madge(srcPaths, {
+    result = await madge(absoluteFiles, {
       baseDir: root,
       fileExtensions: FILE_EXTENSIONS,
       excludeRegExp: EXCLUDE_PATTERNS,
@@ -178,6 +191,62 @@ async function collectViolations({ root }) {
 }
 
 /**
+ * Drop the files git ignores, leaving the ones a reviewer would call source.
+ *
+ * The gate has to judge the repository, not whatever happens to be on disk. Two
+ * directories under `apps/` are written by the packaging pipeline and are
+ * gitignored: a walk that trusts the filesystem reads the bundled engine output as
+ * source, and then reports forty-six unresolved imports and cycles that exist only
+ * inside a bundle. A correct tree goes red for anyone who ran `package` before
+ * `verify --full`, and the report names specifiers nobody wrote.
+ *
+ * Ignore rules are asked for, rather than inferring "tracked is source": a file a
+ * developer has just written is not tracked yet and still deserves judging, while
+ * a build artifact is both untracked and ignored. `git check-ignore` draws exactly
+ * that line.
+ *
+ * Every candidate goes in one call - the list is hundreds long and per-file
+ * processes would dominate the gate's runtime. Exit code 1 means "none of these is
+ * ignored", which is a normal answer; any other failure means git could not speak,
+ * and then nothing is dropped: scanning too much is a noisy gate, dropping files
+ * blindly is a blind one.
+ *
+ * @param {string} root absolute scan root
+ * @param {string[]} files root-relative posix paths
+ * @returns {string[]}
+ */
+function dropIgnoredFiles(root, files) {
+  if (files.length === 0) {
+    return files;
+  }
+
+  try {
+    const listed = execFileSync("git", ["check-ignore", "-z", "--stdin"], {
+      cwd: root,
+      input: files.join("\0"),
+      encoding: "utf8",
+      maxBuffer: 64 * 1024 * 1024,
+      stdio: ["pipe", "pipe", "ignore"],
+    });
+
+    const ignored = new Set(
+      listed
+        .split("\0")
+        .filter((entry) => entry !== "")
+        .map((entry) => toPosix(entry)),
+    );
+
+    return files.filter((file) => !ignored.has(toPosix(file)));
+  } catch (error) {
+    if (error !== null && typeof error === "object" && "status" in error && error.status === 1) {
+      return files;
+    }
+
+    return files;
+  }
+}
+
+/**
  * List repo-relative posix paths of every in-scope, non-declaration source file.
  *
  * Throws when nothing was found: the syntax pre-check must never silently inspect
@@ -188,17 +257,17 @@ async function collectViolations({ root }) {
  */
 function listSourceFiles(root) {
   /** @type {string[]} */
-  const files = [];
+  const collected = [];
 
   for (const dirName of SCAN_DIRS) {
     const directory = path.posix.join(root, dirName);
 
     if (isDirectory(directory)) {
-      walk(directory, root, files);
+      walk(directory, root, collected);
     }
   }
 
-  files.sort();
+  const files = dropIgnoredFiles(root, collected).sort();
 
   if (files.length === 0) {
     throw new Error(

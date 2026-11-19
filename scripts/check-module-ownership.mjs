@@ -74,6 +74,7 @@
  * Exit codes: 0 = pass, 1 = violation, 2 = the script or its configuration is broken.
  */
 
+import { execFileSync } from "node:child_process";
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 
@@ -475,6 +476,56 @@ function compileGlob(pattern) {
 }
 
 /**
+ * Drop the files git ignores, leaving the ones a reviewer would call source.
+ *
+ * The gate judges the repository, not whatever is on disk. `apps/desktop/runtime`
+ * and `apps/desktop/release` are written by the packaging pipeline and gitignored;
+ * a walk that trusts the filesystem reads the bundled engine as source and reports
+ * forty-six unresolved imports nobody wrote. On a clean checkout the gate is green,
+ * on a developer's machine after `package` it is red.
+ *
+ * Ignore rules are asked for rather than inferring "tracked is source": a file a
+ * developer has just written is untracked and still deserves judging, while a build
+ * artifact is both untracked and ignored. One call for the whole list - exit 1
+ * means nothing was ignored, and any other failure drops nothing, because a noisy
+ * gate is better than a blind one.
+ *
+ * @param {string} root absolute scan root
+ * @param {string[]} files root-relative posix paths
+ * @returns {string[]}
+ */
+function dropIgnoredFiles(root, files) {
+  if (files.length === 0) {
+    return files;
+  }
+
+  try {
+    const listed = execFileSync("git", ["check-ignore", "-z", "--stdin"], {
+      cwd: root,
+      input: files.join("\0"),
+      encoding: "utf8",
+      maxBuffer: 64 * 1024 * 1024,
+      stdio: ["pipe", "pipe", "ignore"],
+    });
+
+    const ignored = new Set(
+      listed
+        .split("\0")
+        .filter((entry) => entry !== "")
+        .map((entry) => toPosix(entry)),
+    );
+
+    return files.filter((file) => !ignored.has(toPosix(file)));
+  } catch (error) {
+    if (error !== null && typeof error === "object" && "status" in error && error.status === 1) {
+      return files;
+    }
+
+    return files;
+  }
+}
+
+/**
  * List repo-relative posix paths of every in-scope source file.
  *
  * @param {string} root
@@ -482,7 +533,7 @@ function compileGlob(pattern) {
  */
 function scanSourceFiles(root) {
   /** @type {string[]} */
-  const files = [];
+  const collected = [];
 
   for (const dirName of SCAN_DIRS) {
     const directory = path.posix.join(root, dirName);
@@ -491,10 +542,10 @@ function scanSourceFiles(root) {
       continue;
     }
 
-    walk(directory, root, files);
+    walk(directory, root, collected);
   }
 
-  files.sort();
+  const files = dropIgnoredFiles(root, collected).sort();
 
   if (files.length === 0) {
     throw new Error(
