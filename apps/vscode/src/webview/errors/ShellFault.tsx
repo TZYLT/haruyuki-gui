@@ -253,6 +253,8 @@ function labelOf(action: ShellFaultAction, t: ReturnType<typeof useT>): string {
       return t("error.runtimeConnectAnyway");
     case "useHomeDir":
       return t("error.workspaceUseHomeDir");
+    case "retry":
+      return t("page.error.retry");
   }
 }
 
@@ -280,5 +282,7 @@ function titleOf(
       return t("error.runtimeUntestedTitle");
     case "noWorkspace":
       return t("error.workspaceMissingTitle");
+    case "engineStopped":
+      return t("error.runtimeSpawn");
   }
 }

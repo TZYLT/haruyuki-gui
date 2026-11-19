@@ -82,6 +82,16 @@ export const RUNTIME_FAILURE_KINDS = [
    * which is why this is not folded into `start-failed`.
    */
   "no-workspace",
+  /**
+   * A directory that was inspected and refused: it exists, it is not an engine.
+   *
+   * Distinct from `start-failed` because the two are different questions. A
+   * refused directory has a repair list -- the entries it is missing -- and the
+   * user's next move is to pick the right folder. `start-failed` means the
+   * engine we chose did not come up, and the move there is to try it again.
+   * Reporting both as `start-failed` left the page unable to tell which.
+   */
+  "invalid-dir",
 ] as const;
 
 /** One kind of runtime failure. */

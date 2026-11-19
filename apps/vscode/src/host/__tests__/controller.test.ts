@@ -493,10 +493,11 @@ describe("controller: the assembly", () => {
     expect(lines.some((line) => line.includes("no engine to start"))).toBe(true);
   });
 
-  it("reports a configured but unusable directory as a start failure", async () => {
+  it("reports a configured but unusable directory as its own kind", async () => {
     // A relative setting is not a directory the child could run in. It is a
-    // different answer from "nothing configured", and the log has to be able to
-    // tell the two apart.
+    // different answer from "nothing configured", and from "the engine did not
+    // come up": the repair list is the point, and the page can only show one if
+    // the kind says which question it is answering.
     const kind = vi.fn();
 
     const controller = createController(
@@ -518,7 +519,7 @@ describe("controller: the assembly", () => {
 
     await until(() => kind.mock.calls.length > 0);
 
-    expect(kind).toHaveBeenCalledWith("start-failed");
+    expect(kind).toHaveBeenCalledWith("invalid-dir");
   });
 });
 

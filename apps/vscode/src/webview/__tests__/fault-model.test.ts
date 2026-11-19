@@ -24,7 +24,10 @@ const MISSING: FaultInput = {
 };
 
 const INVALID: FaultInput = {
-  kind: "start-failed",
+  // A refused directory travels as its own kind. It used to share `start-failed`
+  // with "the engine we chose did not come up", which are different questions
+  // with different answers, and the page could not tell them apart.
+  kind: "invalid-dir",
   detail: "the picked directory is not an engine",
   candidateDir: "/tmp/not-an-engine",
   missingEntries: ["haruyuki.js", "node_modules"],
@@ -112,14 +115,19 @@ describe("the fault model", () => {
     expect(toShellFault(UNTESTED).failure.actualVersion).toBe("2.0.0");
   });
 
-  it("treats a crash and an internal failure as a missing engine", () => {
-    // From the page's side these are the same question -- it is not running, and
-    // here is where to look -- so they share its answers instead of a third page
-    // that offers the same two buttons under another heading.
-    expect(toShellFault({ kind: "crash", detail: "the child died" }).situation).toBe(
-      "engineMissing",
-    );
-    expect(toShellFault({ kind: "internal", detail: "a bug" }).situation).toBe("engineMissing");
+  it("offers retry when the engine was found and is not running", () => {
+    // The engine was the right one a moment ago, so "choose another directory"
+    // is the wrong answer to lead with: what the user wants is the same engine
+    // back. Retry leads, and the other two are for when it is not coming back.
+    const crashed = toShellFault({ kind: "crash", detail: "the child died" });
+
+    expect(crashed.situation).toBe("engineStopped");
+    expect(crashed.actions[0]).toBe("retry");
+
+    // A start that failed and a child that reported an internal failure are the
+    // same question from the page's side: it is not running now.
+    expect(toShellFault({ kind: "internal", detail: "a bug" }).actions).toContain("retry");
+    expect(toShellFault({ kind: "start-failed", detail: "no spawn" }).actions).toContain("retry");
   });
 
   it("falls back to the missing-engine page for a kind it cannot place", () => {

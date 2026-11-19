@@ -30,7 +30,13 @@
  * button that reaches a logger and does nothing.
  */
 export type ShellFaultAction =
-  "chooseEngineDir" | "openSettings" | "openLogs" | "openFolder" | "connectAnyway" | "useHomeDir";
+  | "chooseEngineDir"
+  | "openSettings"
+  | "openLogs"
+  | "openFolder"
+  | "connectAnyway"
+  | "useHomeDir"
+  | "retry";
 
 /**
  * Which of the four situations the page is in.
@@ -41,7 +47,7 @@ export type ShellFaultAction =
  * here", and they differ only in what the page can say about the folder.
  */
 export type ShellFaultSituation =
-  "engineMissing" | "invalidEngineDir" | "untestedEngine" | "noWorkspace";
+  "engineMissing" | "invalidEngineDir" | "untestedEngine" | "noWorkspace" | "engineStopped";
 
 /** The failure, as the wire carries it. Structural so this module imports no core type. */
 export interface FaultInput {
@@ -76,18 +82,25 @@ export interface ShellFaultView {
 /**
  * Which situation each failure kind means.
  *
- * `crash` and `internal` are not engine *discovery* failures, but from the page's
- * side they are the same question -- the engine is not running, and here is where
- * to look -- answered by the log and the setting. A fifth page for them would
- * offer those same two buttons under a third heading.
+ * Five, not four: "found and not running" is its own question because its own
+ * answer is "try again". Folding it into "not found" left a crash offering only
+ * the two buttons that assume the user picked the wrong directory, which is the
+ * one thing a crash does not mean.
  */
 const SITUATIONS: Readonly<Record<string, ShellFaultSituation>> = {
   "missing-engine": "engineMissing",
-  "start-failed": "invalidEngineDir",
+  // A directory that was inspected and refused. Distinct from "nothing was
+  // found": the user has somewhere concrete to go and repair.
+  "invalid-dir": "invalidEngineDir",
   "untested-engine": "untestedEngine",
   "no-workspace": "noWorkspace",
-  crash: "engineMissing",
-  internal: "engineMissing",
+  // The engine was found and did not start, or it started and then died. Both
+  // are "it is not running now", and the answer to both is to try again -- a
+  // page that only offered "choose another directory" would leave the one
+  // action the user wants -- retry -- unavailable.
+  "start-failed": "engineStopped",
+  crash: "engineStopped",
+  internal: "engineStopped",
 };
 
 /** The answers per situation, in the order the page offers them. */
@@ -103,6 +116,9 @@ const ACTIONS: Readonly<Record<ShellFaultSituation, readonly ShellFaultAction[]>
   untestedEngine: ["connectAnyway", "chooseEngineDir"],
   // A folder to work in, or the degradation. Neither is a default.
   noWorkspace: ["openFolder", "useHomeDir"],
+  // Retry leads because it is the only answer that needs no decision: the
+  // engine was the right one a moment ago. The other two are for when it is not.
+  engineStopped: ["retry", "chooseEngineDir", "openLogs"],
 };
 
 /**

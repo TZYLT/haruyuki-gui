@@ -55,7 +55,7 @@
 import { join } from "node:path";
 
 import type { CoreHostInit } from "./core-host.js";
-import type { EngineSource, RuntimeFailure } from "../core/ipc.js";
+import type { EngineSource, RuntimeFailure, RuntimeFailureKind } from "../core/ipc.js";
 import { createCommandPath, createFrameForwarder, createOutbox } from "./command-path.js";
 import {
   CoreProcessHost,
@@ -82,9 +82,9 @@ const CORE_ENTRY_RELATIVE = join("dist", "core.mjs");
  * `version-unknown`); the panel's failure kinds are the runtime's. This table is
  * the whole translation, so the two vocabularies meet in exactly one place.
  */
-const FAILURE_FOR_REASON: Readonly<Record<string, "missing-engine" | "start-failed">> = {
+const FAILURE_FOR_REASON: Readonly<Record<string, RuntimeFailureKind>> = {
   missing: "missing-engine",
-  "invalid-dir": "start-failed",
+  "invalid-dir": "invalid-dir",
   "version-unknown": "missing-engine",
 };
 

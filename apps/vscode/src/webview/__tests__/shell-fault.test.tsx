@@ -52,7 +52,8 @@ const MISSING: FaultInput = {
 };
 
 const INVALID: FaultInput = {
-  kind: "start-failed",
+  // A refused directory has its own kind; see `fault-model.test.ts`.
+  kind: "invalid-dir",
   detail: "the picked directory is not an engine",
   candidateDir: "/tmp/not-an-engine",
   missingEntries: ["haruyuki.js", "node_modules"],
@@ -152,6 +153,16 @@ describe("the fault page", () => {
     renderFault(MISSING);
 
     expect(actionLabels()).toEqual(["Choose engine folder", "Settings", "Open logs"]);
+  });
+
+  it("offers a retry when the engine was found and stopped", () => {
+    // A crash is not a wrong directory: the engine was right a moment ago. The
+    // page therefore leads with the one answer that assumes nothing has to be
+    // re-decided.
+    renderFault({ kind: "crash", detail: "the core child exited (code 1, signal null)" });
+
+    expect(screen.getByTestId("shell-fault").textContent).toContain("The engine did not start");
+    expect(actionLabels()).toEqual(["Try again", "Choose engine folder", "Open logs"]);
   });
 
   it("offers two different answers for a refused folder", () => {
