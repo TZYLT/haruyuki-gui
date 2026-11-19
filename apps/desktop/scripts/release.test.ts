@@ -9,6 +9,7 @@
  * like the first one, and no checksum tells them apart afterwards.
  */
 
+import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -203,10 +204,26 @@ describe("localTagExists", () => {
   it("answers yes or no from git, and says so when git cannot answer", async () => {
     if (work === null) throw new Error("no work directory");
 
-    // No tag is created here: the probe is asked about a name that cannot be a
-    // release, and about a directory that is not a checkout at all.
-    expect(localTagExists("v0.0.0-no-such-release")).toBe(false);
+    // A temporary directory is not a checkout, so git cannot answer and the
+    // probe must say so with null rather than with false.
     expect(localTagExists("v0.1.0", work)).toBeNull();
+  });
+
+  it("agrees with git about the tags the checkout actually carries", async () => {
+    // No hard-coded name. The previous version of this test asked about
+    // `v0.1.0` and expected false, which holds only in a checkout that has not
+    // tagged that version - so it passed here and failed on the machine that
+    // does the releases. Asking what git lists, then requiring the probe to
+    // agree both ways, is a claim about the probe rather than about the machine.
+    const listed = execFileSync("git", ["tag", "--list"], { encoding: "utf8" })
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+
+    for (const tag of listed.slice(0, 3)) {
+      expect(localTagExists(tag), `git lists ${tag} but the probe denies it`).toBe(true);
+    }
+    expect(localTagExists("v0.0.0-no-such-release")).toBe(false);
   });
 });
 
