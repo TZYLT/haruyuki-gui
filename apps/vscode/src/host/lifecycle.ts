@@ -115,6 +115,16 @@ export type LifecycleOptions = {
   readonly tokenDir?: string | undefined;
   /** Override for the total budget; see {@link DEFAULT_DISPOSE_BUDGET_MS}. */
   readonly deadlineMs?: number | undefined;
+  /**
+   * The clock the budget is measured against.
+   *
+   * Defaults to `Date.now`. Injected so the two facts this module reports about
+   * time -- "this step outlived its slice" and "the sequence overran its
+   * budget" -- can be exercised by moving the clock instead of by outrunning a
+   * timer, which is a bet on how fast the machine is. Nothing else reads it:
+   * the timers themselves stay real, so a test cannot speed up the async paths.
+   */
+  readonly now?: (() => number) | undefined;
 };
 
 /** The handle the entry keeps for one activation. */
@@ -151,8 +161,8 @@ type Step = {
 };
 
 /** Milliseconds left until the deadline, never negative. */
-function remaining(deadline: number): number {
-  return Math.max(0, deadline - Date.now());
+function remaining(now: () => number, deadline: number): number {
+  return Math.max(0, deadline - now());
 }
 
 /**
@@ -168,6 +178,7 @@ export function createLifecycle(options: LifecycleOptions): Lifecycle {
   const status = options.status;
   const tokenDir = options.tokenDir;
   const budgetMs = options.deadlineMs ?? DEFAULT_DISPOSE_BUDGET_MS;
+  const now = options.now ?? Date.now;
 
   /**
    * The running or finished teardown.
@@ -263,7 +274,7 @@ export function createLifecycle(options: LifecycleOptions): Lifecycle {
 
   /** The whole sequence, awaited. */
   async function runDispose(): Promise<void> {
-    const startedAt = Date.now();
+    const startedAt = now();
     const deadline = startedAt + budgetMs;
 
     log.event("LIFECYCLE_DISPOSE_STARTED", { budgetMs });
@@ -275,7 +286,7 @@ export function createLifecycle(options: LifecycleOptions): Lifecycle {
         {
           name: "panel-close",
           failureCode: "PANEL_CLOSE_FAILED",
-          budgetMs: Math.max(0, remaining(deadline) - reserve),
+          budgetMs: Math.max(0, remaining(now, deadline) - reserve),
         },
         () => panel.close?.(),
       );
@@ -283,7 +294,7 @@ export function createLifecycle(options: LifecycleOptions): Lifecycle {
 
     if (coreHost !== undefined) {
       await runStep(
-        { name: "core-stop", failureCode: "CORE_STOP_FAILED", budgetMs: remaining(deadline) },
+        { name: "core-stop", failureCode: "CORE_STOP_FAILED", budgetMs: remaining(now, deadline) },
         // `stop` resolves after the child has exited, so the token file below
         // is removed only once nothing is left reading it.
         () => coreHost.stop(),
@@ -293,7 +304,7 @@ export function createLifecycle(options: LifecycleOptions): Lifecycle {
     removeTokenFile();
     status?.set("inactive");
 
-    const elapsedMs = Date.now() - startedAt;
+    const elapsedMs = now() - startedAt;
 
     if (elapsedMs > budgetMs) {
       log.event("LIFECYCLE_BUDGET_EXCEEDED", { elapsedMs, budgetMs });
@@ -304,7 +315,7 @@ export function createLifecycle(options: LifecycleOptions): Lifecycle {
 
   /** The same sequence, started but never awaited. */
   function runDisposeSync(): void {
-    const startedAt = Date.now();
+    const startedAt = now();
 
     log.event("LIFECYCLE_DISPOSE_STARTED", { budgetMs, sync: true });
 
@@ -320,7 +331,7 @@ export function createLifecycle(options: LifecycleOptions): Lifecycle {
     status?.set("inactive");
 
     log.event("LIFECYCLE_DISPOSED", {
-      elapsedMs: Date.now() - startedAt,
+      elapsedMs: now() - startedAt,
       budgetMs,
       sync: true,
     });

@@ -77,6 +77,10 @@ function recorder(): Recorded {
         if (code === "LIFECYCLE_TOKEN_REMOVED" || code === "LIFECYCLE_TOKEN_ABSENT") {
           events.push("token");
         }
+
+        if (code === "LIFECYCLE_BUDGET_EXCEEDED") {
+          events.push("budget-exceeded");
+        }
       },
       failure(code: string): void {
         codes.push(code);
@@ -223,21 +227,58 @@ describe("lifecycle: the budget", () => {
     const recording = recorder();
     const dir = tokenDir();
 
-    // A budget too small to cover the two steps: timer granularity makes the
-    // sequence land past the deadline, which is exactly the case that has to be
-    // logged rather than turned into a rejection or a hang.
+    // The overrun is produced by moving the clock, not by outrunning a timer:
+    // a step that advances the injected clock past the deadline is an overrun
+    // on every machine, whereas "the sequence takes longer than 1 ms" is a bet
+    // on how fast the host is. The timers stay real, so nothing async is sped
+    // up -- only the number the budget is measured against changes.
+    let clock = 1_000;
+
     await createLifecycle({
-      panel: { close: () => new Promise<void>(() => undefined) },
-      coreHost: coreHost(recording),
+      coreHost: {
+        async stop(): Promise<void> {
+          // This step is the whole of the overrun: it finishes inside its own
+          // slice, then reports a moment far past the deadline.
+          clock += 10_000;
+        },
+      },
       tokenDir: dir,
       log: recording.log,
-      deadlineMs: 1,
+      deadlineMs: 50,
+      now: () => clock,
     }).dispose();
 
     expect(recording.codes).toContain("LIFECYCLE_BUDGET_EXCEEDED");
     // Reported, then continued: the steps after the overrun still ran.
     expect(recording.codes).toContain("LIFECYCLE_TOKEN_REMOVED");
     expect(existsSync(join(dir, TOKEN_FILE_NAME))).toBe(false);
+    // The overrun is reported with the elapsed time it measured, so the log
+    // line says how far past the budget the sequence went.
+    expect(recording.events).toContain("budget-exceeded");
+  });
+
+  it("does not report an overrun when the clock stays inside the budget", async () => {
+    const recording = recorder();
+    const dir = tokenDir();
+    let clock = 1_000;
+
+    // The negative half of the pair above: the same injected clock, advanced by
+    // less than the budget. Without this, a `LIFECYCLE_BUDGET_EXCEEDED` that
+    // fired unconditionally would make the overrun case pass and prove nothing.
+    await createLifecycle({
+      coreHost: {
+        async stop(): Promise<void> {
+          clock += 10;
+        },
+      },
+      tokenDir: dir,
+      log: recording.log,
+      deadlineMs: 50,
+      now: () => clock,
+    }).dispose();
+
+    expect(recording.codes).not.toContain("LIFECYCLE_BUDGET_EXCEEDED");
+    expect(recording.codes).toContain("LIFECYCLE_TOKEN_REMOVED");
   });
 });
 
