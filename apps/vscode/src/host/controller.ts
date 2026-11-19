@@ -474,6 +474,7 @@ export function createController(options: ControllerOptions): Controller {
       locale: options.locale,
       engine,
       expectedVersion: TESTED_ENGINE_VERSION,
+      engineOrigin: origin,
       // The host's own table, carried rather than restated: the child used to
       // hold a hardcoded copy, so the two could disagree without either failing.
       capabilities: port.capabilities,

@@ -134,10 +134,11 @@ async function started(
   transport: FakeTransport,
   options: Parameters<typeof runCoreMain>[0],
   until?: CoreToHost["kind"],
+  init: Record<string, unknown> = INIT,
 ): Promise<CoreRunner> {
   const runner = runCoreMain({ ...options, transport });
 
-  transport.deliver(INIT);
+  transport.deliver(init);
 
   await waitFor(() =>
     until === undefined ? transport.exitCode !== null : hasKind(transport, until),
@@ -212,6 +213,24 @@ describe("runCoreMain", () => {
 
     runner.stop();
     await transport.exited;
+  });
+
+  it("reports the rung the engine was found on, not its coarse kind", async () => {
+    // The host resolved "picked" and shows it, but these snapshots arrive after
+    // the host's own report and overwrite it. Without the rung travelling on
+    // `init`, the tooltip names `external` for every engine the shell has ever
+    // started, which is exactly the half of it a bug report needs.
+    const transport = new FakeTransport();
+
+    await started(transport, { startEngine: async () => fakeEngine({ count: 0 }) }, "ready", {
+      ...INIT,
+      engineOrigin: "picked",
+    });
+
+    expect(transport.ofKind("status").map((status) => status["source"])).toEqual([
+      "picked",
+      "picked",
+    ]);
   });
 
   it("reports an engine that stops after ready instead of staying connected", async () => {

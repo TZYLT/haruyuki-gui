@@ -334,7 +334,11 @@ export function runCoreMain(options: CoreMainOptions): CoreRunner {
 
     init = message;
 
-    emitStatus({ phase: "starting", cwd: message.cwd, source: message.engine.kind });
+    emitStatus({
+      phase: "starting",
+      cwd: message.cwd,
+      source: message.engineOrigin ?? message.engine.kind,
+    });
 
     let running: CoreEngine;
 
@@ -362,7 +366,7 @@ export function runCoreMain(options: CoreMainOptions): CoreRunner {
     emitStatus({
       phase: "ready",
       cwd: message.cwd,
-      source: message.engine.kind,
+      source: message.engineOrigin ?? message.engine.kind,
       ...(message.engine.version === undefined ? {} : { engineVersion: message.engine.version }),
     });
 

@@ -160,6 +160,18 @@ export type CoreInit = {
   /** Engine build the host expects; the child refuses to report `ready` otherwise. */
   readonly expectedVersion: string;
   /**
+   * Which rung found the engine: `setting`, `path` or `picked`.
+   *
+   * The host resolved it and the status bar shows it, but the snapshots the
+   * child emits carry `source` too, and those overwrite the host's own report.
+   * Carrying the rung here is what stops the tooltip from naming the coarse
+   * `external` for every engine it has ever had.
+   *
+   * Optional because the coarse kind is a truthful fallback: a child told
+   * nothing still says whether the engine ships inside the extension.
+   */
+  readonly engineOrigin?: string;
+  /**
    * What the host can actually do.
    *
    * Carried on `init` rather than restated in the child: a second copy of a
@@ -597,6 +609,10 @@ function narrowInit(raw: Record<string, unknown>): NarrowResult<CoreInit> {
   if (!isNonEmptyString(locale)) return refuse("init.locale is not a tag");
   if (!isNonEmptyString(expectedVersion)) return refuse("init.expectedVersion is not a version");
 
+  const engineOrigin = raw.engineOrigin;
+
+  if (!isOptionalString(engineOrigin)) return refuse("init.engineOrigin is not a name");
+
   const capabilities = narrowCapabilities(raw.capabilities);
 
   if (!capabilities.ok) return refuse(capabilities.reason);
@@ -611,6 +627,7 @@ function narrowInit(raw: Record<string, unknown>): NarrowResult<CoreInit> {
       engine:
         version === undefined ? { kind, dir, bundlePath } : { kind, dir, bundlePath, version },
       expectedVersion,
+      ...(engineOrigin === undefined ? {} : { engineOrigin }),
       capabilities: capabilities.message,
     },
   };
