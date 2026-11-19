@@ -274,6 +274,12 @@ export class CoreProcessHost implements CoreHost {
         // Not detached on purpose: see the file comment. A detached child would
         // own another process group and could outlive a crashed host.
         detached: false,
+        // Nothing from the editor's own command line follows the child in. Under
+        // a debug session that line carries `--inspect-brk`, and a core child
+        // that waits for a debugger which will never attach is a shell that never
+        // starts -- the failure looks like a missing engine, not like a debugger
+        // flag. The child is a separate program and gets its own arguments.
+        execArgv: [],
       });
     } catch (error) {
       throw new CoreHostError(
@@ -457,6 +463,13 @@ export class CoreProcessHost implements CoreHost {
   /** The child's environment: this process's own, plus the Electron rule above. */
   private childEnv(): NodeJS.ProcessEnv {
     const env: NodeJS.ProcessEnv = { ...process.env, ...this.extraEnv };
+
+    // An inherited preload or inspector directive is the editor's decision about
+    // its own process, not about a program it starts. The core child makes the
+    // same deletion for the engine it spawns; both are here because the flag
+    // reaches the child either through `execArgv` or through this variable, and
+    // handling one is handling half.
+    delete env["NODE_OPTIONS"];
 
     if (typeof process.versions.electron === "string") {
       env.ELECTRON_RUN_AS_NODE = "1";

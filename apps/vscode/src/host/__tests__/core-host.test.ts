@@ -74,6 +74,7 @@ function hostFor(
     startTimeoutMs: number;
     stopTimeoutMs: number;
     commandTimeoutMs: number;
+    extraEnv: Record<string, string>;
   }> = {},
 ): CoreProcessHost {
   // A short stop budget by default: the generated children either answer
@@ -464,6 +465,29 @@ process.on("message", (message) => {
 });
 
 describe("the child environment", () => {
+  it("does not hand the child an inherited preload directive", async () => {
+    // Under a debug session the editor's own command line and `NODE_OPTIONS` both
+    // carry inspector flags. A core child that waits for a debugger is a shell
+    // that never starts, and the failure reads like a missing engine rather than
+    // like an inherited flag.
+    const entry = makeChild(`
+process.on("message", (message) => {
+  if (message.kind !== "init") return;
+
+  process.send({ kind: "frame", channel: "control", payload: String(process.env.NODE_OPTIONS) });
+  process.send({ kind: "ready" });
+});
+`);
+    const host = hostFor(entry, { extraEnv: { NODE_OPTIONS: "--inspect-brk=127.0.0.1:1" } });
+    const payloads: string[] = [];
+
+    host.onFrame((frame) => payloads.push(frame.payload));
+
+    await host.start(INIT);
+
+    expect(payloads).toEqual(["undefined"]);
+  });
+
   it("adds ELECTRON_RUN_AS_NODE only on an Electron host", async () => {
     const entry = makeChild(`
 process.on("message", (message) => {
