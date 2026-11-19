@@ -26,6 +26,10 @@
  * - `./merge`: the engine event merger -- ordered delivery, duplicate refusal,
  *   message assembly, terminal slicing and the diagnostics counters the shells
  *   and the reconnect path read.
+ * - `./content`: the conversation content model facade (`createContentModel`)
+ *   and its option/statistics/source types in `content/types.ts`. The block
+ *   the update envelope stay in `@haruyuki/protocol`; the parsers and internal
+ *   state types are module-local, not part of this surface.
  *
  * The placeholder constant stays: it is the package's self-identity, and removing
  * it would break the "not a barrel" shape this file has to keep (see
@@ -35,6 +39,7 @@ export const CORE_PACKAGE_NAME = "@haruyuki/core" as const;
 
 export * from "./bridge/index.js";
 export * from "./command/index.js";
+export * from "./content/index.js";
 export * from "./engine";
 export * from "./engine/client/index.js";
 export * from "./layout/index.js";

@@ -1,0 +1,101 @@
+{
+  "note": "Interleaved content: block order is source order, and a tool result updates the call's block in place instead of moving it to the end of the page. Assistant prose, an image part, a tool call, its return and the next assistant paragraph are expected in exactly that order.",
+  "cases": [
+    {
+      "name": "text image tool and prose keep source order",
+      "path": "history",
+      "input": [
+        {
+          "id": "int-assistant-1",
+          "message_type": "assistant_message",
+          "run_id": "run-int",
+          "content": [
+            {
+              "type": "text",
+              "text": "Checking the snapshot.\n"
+            },
+            {
+              "type": "image",
+              "source": {
+                "type": "url",
+                "url": "https://example.test/before.png"
+              },
+              "alt": "before"
+            }
+          ]
+        },
+        {
+          "id": "int-call",
+          "message_type": "tool_call_message",
+          "run_id": "run-int",
+          "tool_call": {
+            "tool_call_id": "call-int",
+            "name": "read",
+            "arguments": "{\"path\":\"shot.png\"}"
+          }
+        },
+        {
+          "id": "int-return",
+          "message_type": "tool_return_message",
+          "run_id": "run-int",
+          "tool_call_id": "call-int",
+          "status": "success",
+          "tool_return": "image loaded"
+        },
+        {
+          "id": "int-assistant-2",
+          "message_type": "assistant_message",
+          "run_id": "run-int",
+          "content": "The image is attached.\n"
+        }
+      ],
+      "expect": [
+        {
+          "id": "int-assistant-1:text:0",
+          "messageId": "int-assistant-1",
+          "runId": "run-int",
+          "role": "assistant",
+          "type": "text",
+          "text": "Checking the snapshot.\n",
+          "flavor": "markdown",
+          "status": "complete"
+        },
+        {
+          "id": "int-assistant-1:image:0",
+          "messageId": "int-assistant-1",
+          "runId": "run-int",
+          "role": "assistant",
+          "type": "image",
+          "source": {
+            "kind": "url",
+            "url": "https://example.test/before.png"
+          },
+          "alt": "before"
+        },
+        {
+          "id": "tool:call-int",
+          "messageId": "int-call",
+          "runId": "run-int",
+          "role": "tool",
+          "type": "tool_call",
+          "toolCallId": "call-int",
+          "name": "read",
+          "argumentsText": "{\"path\":\"shot.png\"}",
+          "result": "image loaded",
+          "status": "success",
+          "orphan": false
+        },
+        {
+          "id": "int-assistant-2:text:0",
+          "messageId": "int-assistant-2",
+          "runId": "run-int",
+          "role": "assistant",
+          "type": "text",
+          "text": "The image is attached.\n",
+          "flavor": "markdown",
+          "status": "complete"
+        }
+      ]
+    }
+  ]
+}

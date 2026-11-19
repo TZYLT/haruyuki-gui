@@ -1,0 +1,64 @@
+{
+  "note": "Plain prose. Markdown structure is kept exactly as written, user content keeps the author's own whitespace and line endings, and the assistant path keeps its trailing newline.",
+  "cases": [
+    {
+      "name": "a user turn keeps Markdown and a script tag verbatim",
+      "path": "history",
+      "input": [
+        {
+          "id": "user-md",
+          "message_type": "user_message",
+          "content": "## Agenda\n\n- fix the fence\n- keep <script>alert(1)</script> as written"
+        }
+      ],
+      "expect": [
+        {
+          "id": "user-md:text:0",
+          "messageId": "user-md",
+          "runId": null,
+          "role": "user",
+          "type": "text",
+          "text": "## Agenda\n\n- fix the fence\n- keep <script>alert(1)</script> as written",
+          "flavor": "markdown",
+          "status": "complete"
+        }
+      ]
+    },
+    {
+      "name": "an assistant turn keeps its trailing newline and run id",
+      "path": "history",
+      "input": [
+        {
+          "id": "assistant-md",
+          "message_type": "assistant_message",
+          "run_id": "run-md",
+          "content": "# Result\n\nUse **bold** and a [link](https://example.test/doc).\n"
+        }
+      ],
+      "expect": [
+        {
+          "id": "assistant-md:text:0",
+          "messageId": "assistant-md",
+          "runId": "run-md",
+          "role": "assistant",
+          "type": "text",
+          "text": "# Result\n\nUse **bold** and a [link](https://example.test/doc).\n",
+          "flavor": "markdown",
+          "status": "complete"
+        }
+      ]
+    },
+    {
+      "name": "a whitespace-only user turn produces no block",
+      "path": "history",
+      "input": [
+        {
+          "id": "user-empty",
+          "message_type": "user_message",
+          "content": "   \n\n"
+        }
+      ],
+      "expect": []
+    }
+  ]
+}

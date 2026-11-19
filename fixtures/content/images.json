@@ -1,0 +1,146 @@
+{
+  "note": "Image parts on both paths: the payload is kept as written, the source kind is chosen from the declared kind (never sniffed at), and a missing alt stays null.",
+  "cases": [
+    {
+      "name": "base64 and url images keep their payload and position",
+      "path": "live-text",
+      "input": {
+        "messageId": "live-image",
+        "runId": "run-image",
+        "frames": [
+          {
+            "text": "Before the image.\n"
+          },
+          {
+            "text": "",
+            "parts": [
+              {
+                "type": "text",
+                "text": "Before the image.\n"
+              },
+              {
+                "type": "image",
+                "source": {
+                  "type": "base64",
+                  "media_type": "image/png",
+                  "data": "aW1hZ2UtYnl0ZXM="
+                }
+              }
+            ]
+          },
+          {
+            "text": "",
+            "parts": [
+              {
+                "type": "text",
+                "text": "Before the image.\n"
+              },
+              {
+                "type": "image",
+                "source": {
+                  "type": "base64",
+                  "media_type": "image/png",
+                  "data": "aW1hZ2UtYnl0ZXM="
+                }
+              },
+              {
+                "type": "image",
+                "source": {
+                  "type": "url",
+                  "url": "https://example.test/diagram.png"
+                },
+                "alt": "diagram"
+              }
+            ]
+          }
+        ]
+      },
+      "expect": [
+        {
+          "id": "live-image:text:0",
+          "messageId": "live-image",
+          "runId": "run-image",
+          "role": "assistant",
+          "type": "text",
+          "text": "Before the image.\n",
+          "flavor": "markdown",
+          "status": "complete"
+        },
+        {
+          "id": "live-image:image:0",
+          "messageId": "live-image",
+          "runId": "run-image",
+          "role": "assistant",
+          "type": "image",
+          "source": {
+            "kind": "base64",
+            "mediaType": "image/png",
+            "data": "aW1hZ2UtYnl0ZXM="
+          },
+          "alt": null
+        },
+        {
+          "id": "live-image:image:1",
+          "messageId": "live-image",
+          "runId": "run-image",
+          "role": "assistant",
+          "type": "image",
+          "source": {
+            "kind": "url",
+            "url": "https://example.test/diagram.png"
+          },
+          "alt": "diagram"
+        }
+      ]
+    },
+    {
+      "name": "a user image between paragraphs keeps its place and an absent alt stays null",
+      "path": "history",
+      "input": [
+        {
+          "id": "user-image",
+          "message_type": "user_message",
+          "content": [
+            {
+              "type": "text",
+              "text": "What does this show?\n"
+            },
+            {
+              "type": "image",
+              "source": {
+                "type": "base64",
+                "media_type": "image/jpeg",
+                "data": "/9j/4AAQSkZJRg=="
+              }
+            }
+          ]
+        }
+      ],
+      "expect": [
+        {
+          "id": "user-image:text:0",
+          "messageId": "user-image",
+          "runId": null,
+          "role": "user",
+          "type": "text",
+          "text": "What does this show?\n",
+          "flavor": "markdown",
+          "status": "complete"
+        },
+        {
+          "id": "user-image:image:0",
+          "messageId": "user-image",
+          "runId": null,
+          "role": "user",
+          "type": "image",
+          "source": {
+            "kind": "base64",
+            "mediaType": "image/jpeg",
+            "data": "/9j/4AAQSkZJRg=="
+          },
+          "alt": null
+        }
+      ]
+    }
+  ]
+}

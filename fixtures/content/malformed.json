@@ -1,0 +1,271 @@
+{
+  "note": "Malformed input must degrade, never throw and never take a neighbouring message down with it. Each case records exactly what the bad entry contributes (often nothing) and that the good entry beside it still lands.",
+  "cases": [
+    {
+      "name": "non-object entries are skipped and the good message survives",
+      "path": "history",
+      "input": [
+        null,
+        42,
+        "stray text",
+        {
+          "id": "ok-1",
+          "message_type": "assistant_message",
+          "content": "Survived.\n"
+        }
+      ],
+      "expect": [
+        {
+          "id": "ok-1:text:0",
+          "messageId": "ok-1",
+          "runId": null,
+          "role": "assistant",
+          "type": "text",
+          "text": "Survived.\n",
+          "flavor": "markdown",
+          "status": "complete"
+        }
+      ]
+    },
+    {
+      "name": "an object content with a string type is parsed as a single part",
+      "path": "history",
+      "input": [
+        {
+          "id": "typed-content",
+          "message_type": "assistant_message",
+          "content": {
+            "type": "text",
+            "text": "nested"
+          }
+        },
+        {
+          "id": "typed-user-content",
+          "message_type": "user_message",
+          "content": {
+            "type": "text",
+            "text": "nested user"
+          }
+        }
+      ],
+      "expect": [
+        {
+          "id": "typed-content:text:0",
+          "messageId": "typed-content",
+          "runId": null,
+          "role": "assistant",
+          "type": "text",
+          "text": "nested",
+          "flavor": "markdown",
+          "status": "complete"
+        },
+        {
+          "id": "typed-user-content:text:0",
+          "messageId": "typed-user-content",
+          "runId": null,
+          "role": "user",
+          "type": "text",
+          "text": "nested user",
+          "flavor": "markdown",
+          "status": "complete"
+        }
+      ]
+    },
+    {
+      "name": "a numeric or untyped object content becomes one unknown block",
+      "path": "history",
+      "input": [
+        {
+          "id": "number-content",
+          "message_type": "assistant_message",
+          "content": 42
+        },
+        {
+          "id": "untyped-content",
+          "message_type": "user_message",
+          "content": {
+            "oops": true
+          }
+        },
+        {
+          "id": "null-content",
+          "message_type": "assistant_message",
+          "content": null
+        }
+      ],
+      "expect": [
+        {
+          "id": "number-content:unknown:0",
+          "messageId": "number-content",
+          "runId": null,
+          "role": "assistant",
+          "type": "unknown",
+          "rawType": "assistant_message",
+          "raw": {
+            "id": "number-content",
+            "message_type": "assistant_message",
+            "content": 42
+          }
+        },
+        {
+          "id": "untyped-content:unknown:0",
+          "messageId": "untyped-content",
+          "runId": null,
+          "role": "user",
+          "type": "unknown",
+          "rawType": "user_message",
+          "raw": {
+            "id": "untyped-content",
+            "message_type": "user_message",
+            "content": {
+              "oops": true
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "a call without an id is ignored and the next call still builds",
+      "path": "tools",
+      "input": {
+        "messages": [
+          {
+            "id": "bad-tool-1",
+            "messageType": "tool_call_message",
+            "role": "tool",
+            "runId": "run-m",
+            "body": {
+              "name": "no-id",
+              "arguments": "{}"
+            }
+          },
+          {
+            "id": "good-tool-1",
+            "messageType": "tool_call_message",
+            "role": "tool",
+            "runId": "run-m",
+            "body": {
+              "tool_call_id": "call-m1",
+              "name": "echo",
+              "arguments": "{}"
+            }
+          }
+        ]
+      },
+      "expect": [
+        {
+          "id": "tool:call-m1",
+          "messageId": "good-tool-1",
+          "runId": "run-m",
+          "role": "tool",
+          "type": "tool_call",
+          "toolCallId": "call-m1",
+          "name": "echo",
+          "argumentsText": "{}",
+          "result": null,
+          "status": "running",
+          "orphan": false
+        }
+      ]
+    },
+    {
+      "name": "a return without a call id and a broken body produce nothing",
+      "path": "tools",
+      "input": {
+        "messages": [
+          {
+            "id": "bad-tool-2",
+            "messageType": "tool_return_message",
+            "role": "tool",
+            "runId": "run-m",
+            "body": {
+              "tool_return": "orphanless",
+              "status": "success"
+            }
+          },
+          {
+            "id": "bad-tool-3",
+            "messageType": "tool_call_message",
+            "role": "tool",
+            "runId": "run-m",
+            "body": "{\"tool_call_id\":"
+          }
+        ]
+      },
+      "expect": []
+    },
+    {
+      "name": "a non-string reasoning fragment is skipped and a later fragment lands",
+      "path": "reasoning",
+      "input": {
+        "messages": [
+          {
+            "id": "msg-m:reasoning:0",
+            "messageType": "reasoning_message",
+            "role": "assistant",
+            "runId": "run-m",
+            "body": {
+              "reasoning": 42,
+              "seq_id": 0
+            }
+          },
+          {
+            "id": "msg-m:reasoning:0",
+            "messageType": "reasoning_message",
+            "role": "assistant",
+            "runId": "run-m",
+            "body": {
+              "reasoning": "recovered"
+            }
+          }
+        ]
+      },
+      "expect": [
+        {
+          "id": "msg-m:reasoning:0",
+          "messageId": "msg-m",
+          "runId": "run-m",
+          "role": "assistant",
+          "type": "reasoning",
+          "text": "recovered"
+        }
+      ],
+      "emitted": [
+        "recovered"
+      ]
+    },
+    {
+      "name": "a non-string non-array content produces no span",
+      "path": "notice",
+      "input": {
+        "type": "text",
+        "text": "x"
+      },
+      "expect": []
+    },
+    {
+      "name": "a message without a declared type degrades to an unknown block",
+      "path": "history",
+      "input": [
+        {
+          "id": "no-type-1",
+          "content": "No declared type."
+        }
+      ],
+      "expect": [
+        {
+          "id": "no-type-1:unknown:0",
+          "messageId": "no-type-1",
+          "runId": null,
+          "role": "system",
+          "type": "unknown",
+          "rawType": "untyped",
+          "raw": {
+            "id": "no-type-1",
+            "content": "No declared type."
+          }
+        }
+      ]
+    }
+  ]
+}

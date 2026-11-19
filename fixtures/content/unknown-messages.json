@@ -1,0 +1,154 @@
+{
+  "note": "Unknown content degrades, it never disappears. An unknown message type becomes one unknown block and the rest of the page still parses; an unknown part inside a known message keeps its position and the surrounding prose becomes its own blocks.",
+  "cases": [
+    {
+      "name": "an unknown message type keeps the rest of the page",
+      "path": "history",
+      "input": [
+        {
+          "id": "unknown-1",
+          "message_type": "new_message_type",
+          "content": {
+            "value": 1
+          }
+        },
+        {
+          "id": "after-unknown",
+          "message_type": "assistant_message",
+          "run_id": "run-u",
+          "content": "The turn continues.\n"
+        }
+      ],
+      "expect": [
+        {
+          "id": "unknown-1:unknown:0",
+          "messageId": "unknown-1",
+          "runId": null,
+          "role": "system",
+          "type": "unknown",
+          "rawType": "new_message_type",
+          "raw": {
+            "id": "unknown-1",
+            "message_type": "new_message_type",
+            "content": {
+              "value": 1
+            }
+          }
+        },
+        {
+          "id": "after-unknown:text:0",
+          "messageId": "after-unknown",
+          "runId": "run-u",
+          "role": "assistant",
+          "type": "text",
+          "text": "The turn continues.\n",
+          "flavor": "markdown",
+          "status": "complete"
+        }
+      ]
+    },
+    {
+      "name": "an unknown part between two assistant paragraphs keeps its place",
+      "path": "history",
+      "input": [
+        {
+          "id": "assistant-part",
+          "message_type": "assistant_message",
+          "run_id": "run-u",
+          "content": [
+            {
+              "type": "text",
+              "text": "Look at this:\n"
+            },
+            {
+              "type": "video",
+              "url": "https://example.test/clip.mp4"
+            },
+            {
+              "type": "text",
+              "text": "Done.\n"
+            }
+          ]
+        }
+      ],
+      "expect": [
+        {
+          "id": "assistant-part:text:0",
+          "messageId": "assistant-part",
+          "runId": "run-u",
+          "role": "assistant",
+          "type": "text",
+          "text": "Look at this:\n",
+          "flavor": "markdown",
+          "status": "complete"
+        },
+        {
+          "id": "assistant-part:unknown:0",
+          "messageId": "assistant-part",
+          "runId": "run-u",
+          "role": "assistant",
+          "type": "unknown",
+          "rawType": "video",
+          "raw": {
+            "type": "video",
+            "url": "https://example.test/clip.mp4"
+          }
+        },
+        {
+          "id": "assistant-part:text:1",
+          "messageId": "assistant-part",
+          "runId": "run-u",
+          "role": "assistant",
+          "type": "text",
+          "text": "Done.\n",
+          "flavor": "markdown",
+          "status": "complete"
+        }
+      ]
+    },
+    {
+      "name": "an unknown part in a user turn follows the text block",
+      "path": "history",
+      "input": [
+        {
+          "id": "user-part",
+          "message_type": "user_message",
+          "content": [
+            {
+              "type": "text",
+              "text": "See the attachment."
+            },
+            {
+              "type": "file",
+              "name": "notes.txt"
+            }
+          ]
+        }
+      ],
+      "expect": [
+        {
+          "id": "user-part:text:0",
+          "messageId": "user-part",
+          "runId": null,
+          "role": "user",
+          "type": "text",
+          "text": "See the attachment.",
+          "flavor": "markdown",
+          "status": "complete"
+        },
+        {
+          "id": "user-part:unknown:0",
+          "messageId": "user-part",
+          "runId": null,
+          "role": "user",
+          "type": "unknown",
+          "rawType": "file",
+          "raw": {
+            "type": "file",
+            "name": "notes.txt"
+          }
+        }
+      ]
+    }
+  ]
+}

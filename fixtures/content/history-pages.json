@@ -1,0 +1,156 @@
+{
+  "note": "History pages. Tools pair only inside the page they were given, so a call and its return in one page become one block while a return alone becomes an orphan; a string content and an array content keep their documented shapes.",
+  "cases": [
+    {
+      "name": "a call and its return pair within the page",
+      "path": "history",
+      "input": [
+        {
+          "id": "page-a1",
+          "message_type": "tool_call_message",
+          "tool_call": {
+            "tool_call_id": "page-call-1",
+            "name": "grep",
+            "arguments": "{\"q\":\"needle\"}"
+          }
+        },
+        {
+          "id": "page-a2",
+          "message_type": "tool_return_message",
+          "tool_call_id": "page-call-1",
+          "status": "success",
+          "tool_return": "2 matches"
+        }
+      ],
+      "expect": [
+        {
+          "id": "tool:page-call-1",
+          "messageId": "page-a1",
+          "runId": null,
+          "role": "tool",
+          "type": "tool_call",
+          "toolCallId": "page-call-1",
+          "name": "grep",
+          "argumentsText": "{\"q\":\"needle\"}",
+          "result": "2 matches",
+          "status": "success",
+          "orphan": false
+        }
+      ]
+    },
+    {
+      "name": "a return with no call in the page becomes an orphan",
+      "path": "history",
+      "input": [
+        {
+          "id": "page-b1",
+          "message_type": "tool_return_message",
+          "tool_call_id": "page-call-2",
+          "status": "error",
+          "tool_return": "boom"
+        }
+      ],
+      "expect": [
+        {
+          "id": "tool:page-call-2",
+          "messageId": "page-b1",
+          "runId": null,
+          "role": "tool",
+          "type": "tool_call",
+          "toolCallId": "page-call-2",
+          "name": null,
+          "argumentsText": "",
+          "result": "boom",
+          "status": "error",
+          "orphan": true
+        }
+      ]
+    },
+    {
+      "name": "string and array content keep their documented shapes",
+      "path": "history",
+      "input": [
+        {
+          "id": "page-c1",
+          "message_type": "assistant_message",
+          "content": "String content stays one block.\n"
+        },
+        {
+          "id": "page-c2",
+          "message_type": "assistant_message",
+          "content": [
+            {
+              "type": "text",
+              "text": "Array content "
+            },
+            {
+              "type": "text",
+              "text": "joins as prose.\n"
+            }
+          ]
+        },
+        {
+          "id": "page-c3",
+          "message_type": "user_message",
+          "content": "Plain string user turn."
+        },
+        {
+          "id": "page-c4",
+          "message_type": "user_message",
+          "content": [
+            {
+              "type": "text",
+              "text": "First paragraph."
+            },
+            {
+              "type": "text",
+              "text": "Second paragraph."
+            }
+          ]
+        }
+      ],
+      "expect": [
+        {
+          "id": "page-c1:text:0",
+          "messageId": "page-c1",
+          "runId": null,
+          "role": "assistant",
+          "type": "text",
+          "text": "String content stays one block.\n",
+          "flavor": "markdown",
+          "status": "complete"
+        },
+        {
+          "id": "page-c2:text:0",
+          "messageId": "page-c2",
+          "runId": null,
+          "role": "assistant",
+          "type": "text",
+          "text": "Array content joins as prose.\n",
+          "flavor": "markdown",
+          "status": "complete"
+        },
+        {
+          "id": "page-c3:text:0",
+          "messageId": "page-c3",
+          "runId": null,
+          "role": "user",
+          "type": "text",
+          "text": "Plain string user turn.",
+          "flavor": "markdown",
+          "status": "complete"
+        },
+        {
+          "id": "page-c4:text:0",
+          "messageId": "page-c4",
+          "runId": null,
+          "role": "user",
+          "type": "text",
+          "text": "First paragraph.Second paragraph.",
+          "flavor": "markdown",
+          "status": "complete"
+        }
+      ]
+    }
+  ]
+}
