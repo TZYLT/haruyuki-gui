@@ -47,6 +47,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -184,6 +185,51 @@ function evaluate(wsUrl, expression) {
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 
 /**
+ * A loopback port this machine will actually let us bind.
+ *
+ * A hard-coded port is not a detail on Windows: Hyper-V, WinNAT and the container
+ * stack reserve whole ranges, and a bind inside one fails with `WSAEACCES` rather
+ * than `EADDRINUSE`. The DevTools server then never starts, no window target ever
+ * appears, and a correct package is reported as one that does not render. That is
+ * exactly what happened here - port 9411 sat inside a reserved range - and it cost
+ * a false red on a good build.
+ *
+ * Asking the operating system is the only reliable answer, so each candidate is
+ * tried by binding it for real and closing it again. The close-to-use gap is not
+ * perfectly atomic, which is why a failure is reported as "could not reserve a
+ * port" with the reason, rather than as a broken application.
+ *
+ * @param {number} from first candidate
+ * @returns {Promise<{port: number} | {reason: string}>}
+ */
+async function bindablePort(from) {
+  // Ranges are reserved wholesale, not one port at a time: one machine here has
+  // 9319-9718 blocked in four consecutive blocks, so scanning up from a single
+  // base can walk a whole window of refusals. Trying several well-separated bases
+  // costs nothing and survives a machine where the reserved spans sit elsewhere.
+  const bases = [from, 20000, 31000, 45000];
+
+  let lastReason = "no candidate port was tried";
+  for (const base of bases) {
+    for (let port = base; port < base + 20; port += 1) {
+      const outcome = await new Promise((resolve) => {
+        const server = net.createServer();
+        server.once("error", (error) => {
+          resolve({ ok: false, reason: `${String(port)}: ${error.code ?? error.message}` });
+        });
+        server.once("listening", () => {
+          server.close(() => resolve({ ok: true, port }));
+        });
+        server.listen(port, "127.0.0.1");
+      });
+      if (outcome.ok === true) return { port: outcome.port };
+      lastReason = outcome.reason;
+    }
+  }
+  return { reason: lastReason };
+}
+
+/**
  * Does `version` satisfy `range`? Enough of the semver range grammar for a
  * dependency declared as `^x.y.z`, `~x.y.z`, `x.y.z` or `>=x.y.z`.
  *
@@ -267,12 +313,22 @@ function launch(exe, port) {
 
   const child = spawn(exe, [`--remote-debugging-port=${String(port)}`], {
     env: environment,
-    stdio: "ignore",
+    // stderr is kept, not discarded. When the DevTools server cannot start, the
+    // application says so on this stream - and a judgement that throws that away
+    // can only report "fetch failed", which points at the network rather than at
+    // a reserved port. The evidence is the whole reason a red is actionable.
+    stdio: ["ignore", "ignore", "pipe"],
     // Detached so the process group can be signalled as a whole, and unref'd so
     // this script's own lifetime is not tied to a program it is observing. The
     // second part matters: Node keeps running while a child pipe is open, and
     // without it a finished verdict waits on the application.
     detached: process.platform !== "win32",
+  });
+
+  /** The last few lines the application complained about, for a failure report. */
+  let complaints = "";
+  child.stderr?.on("data", (chunk) => {
+    complaints = (complaints + String(chunk)).slice(-2000);
   });
 
   let exited = null;
@@ -291,6 +347,9 @@ function launch(exe, port) {
       } catch {
         /* already gone */
       }
+      // A piped stream keeps the event loop alive on its own; releasing it is
+      // what lets the script exit once the verdict is in.
+      child.stderr?.destroy();
       try {
         if (process.platform === "win32") {
           spawnSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], { stdio: "ignore" });
@@ -364,7 +423,11 @@ function launch(exe, port) {
           await sleep(1000);
         }
       }
-      return `no rendered window within ${String(STARTUP_BUDGET_MS)} ms: ${lastLine}`;
+      const complaint = complaints.trim();
+      return (
+        `no rendered window within ${String(STARTUP_BUDGET_MS)} ms: ${lastLine}` +
+        (complaint.length === 0 ? "" : `\n    the application said: ${complaint}`)
+      );
     },
   };
 }
@@ -616,14 +679,24 @@ async function main() {
   });
 
   if (exe !== null) {
-    const port = 9411;
     const logDir = path.join(process.env["APPDATA"] ?? os.homedir(), "Haruyuki", "logs");
     // The application writes its own account of the run. Clearing it first is
     // what makes every line afterwards attributable to this launch; reading a
     // log that a previous run wrote is how a failure gets reported as a pass.
     await rm(logDir, { recursive: true, force: true });
 
-    const app = launch(exe, port);
+    const chosen = await bindablePort(9450);
+    if ("reason" in chosen) {
+      // Not a verdict about the package: this machine would not give the judge a
+      // port to talk to the DevTools endpoint on. Saying so is better than a red
+      // that reads as a broken build.
+      await judge("a loopback port is available for the startup probe", () => {
+        return `could not reserve a loopback port: ${chosen.reason}`;
+      });
+      return 1;
+    }
+
+    const app = launch(exe, chosen.port);
     await judge("the packaged application renders its window", () => app.verdict());
 
     // Judged before stopping: the engine reports shortly after the window
