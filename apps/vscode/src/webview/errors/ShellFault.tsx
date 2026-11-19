@@ -60,7 +60,15 @@ export function ShellFault({ failure, onAction }: ShellFaultProps): ReactElement
 
   return (
     <div className="shell-fault" role="region" aria-live="polite" data-testid="shell-fault">
-      <ErrorState title={titleOf(view.situation, t)} detail={failure.detail} />
+      {/*
+        No `detail`. The host's sentence is a diagnostic -- it names resolver
+        rungs and internal reasons -- so it belongs in the log, where the "open
+        logs" answer points. It is also English: rendering it under a translated
+        heading puts one untranslatable paragraph in the middle of a localized
+        page. What a user can act on is the heading, the structured facts below
+        and the answers under them.
+      */}
+      <ErrorState title={titleOf(view.situation, t)} />
 
       {facts.length === 0 ? null : (
         <ul className="shell-fault__facts" data-testid="shell-fault-facts">

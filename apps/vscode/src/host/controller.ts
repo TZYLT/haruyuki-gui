@@ -52,7 +52,7 @@
  *   - The engine's argv and environment: `./host-port.ts`.
  */
 
-import { delimiter, join } from "node:path";
+import { join } from "node:path";
 
 import type { CoreHostInit } from "./core-host.js";
 import type { EngineSource, RuntimeFailure } from "../core/ipc.js";
@@ -239,30 +239,57 @@ function missingEntriesOf(detail: string | undefined): { missingEntries?: readon
 }
 
 /**
- * The directory inputs the engine search reads, in its own order.
+ * The places worth showing a user who has to go and find the engine.
  *
- * The resolver walks the setting, then `PATH`, and then a hand-picked folder,
- * and which of those exist is what tells a user where to look. It is derived
- * from the same inputs the resolver is given rather than from its internals,
- * because `./engine-source.ts` owns the walk and a second copy of it here would
- * drift the day a rung is added.
+ * Deliberately NOT every directory the resolver walks. `PATH` on a real machine
+ * holds dozens of directories that have nothing to do with engines -- `system32`,
+ * a CUDA toolkit, a Java install -- and the resolver only looks for an engine
+ * package *inside* each one. Listing those inputs would tell the user the shell
+ * read an environment variable, which is not something they can act on, and would
+ * bury the one entry they chose themselves under that noise.
  *
- * @param configured the `enginePath` setting, when one is set
- * @param pathEnv the process `PATH`, when the shell has one
- * @returns the directories to report as searched, most specific first
+ * What is left is exactly what a user can act on:
+ *
+ * 1. the `enginePath` value they set -- the one line they own, so it leads;
+ * 2. every directory that was actually inspected and refused, which is the folder
+ *    to go and repair.
+ *
+ * A directory that was never a candidate (no `haruyuki.js` anywhere inside it) is
+ * not a directory "the shell looked in" in any sense a user cares about, so it is
+ * not here. An empty answer is the honest one on a machine with nothing
+ * configured: the page then shows no list at all, and its answers already say
+ * where to look.
+ *
+ * The refused directories are read from the resolver's own sentence rather than
+ * from a second copy of its search order -- a copy here would drift the day a
+ * rung is added -- and the sentence is parsed once, at this boundary, so no
+ * rendering code reads prose.
+ *
+ * @param configured the `enginePath` value the shell read, when one is set
+ * @param detail the resolver's sentence naming the rungs that failed
+ * @returns the paths to show, or nothing when there are none worth showing
  */
-function engineSearchPaths(configured?: string, pathEnv?: string): readonly string[] {
+function searchedPathsOf(
+  configured: string | undefined,
+  detail: string | undefined,
+): { searchedPaths?: readonly string[] } {
   const paths: string[] = [];
 
   if (configured !== undefined && configured.trim() !== "") paths.push(configured.trim());
 
-  if (pathEnv !== undefined) {
-    for (const entry of pathEnv.split(delimiter)) {
-      if (entry.trim() !== "") paths.push(entry.trim());
-    }
+  // A note that opens with an absolute path is one where a directory was
+  // inspected and refused: the resolver writes `<dir>: <entry> is missing`. The
+  // other notes are about the absence of a candidate (`no enginePath is
+  // configured`), which names no directory at all.
+  for (const note of detail?.split("; ") ?? []) {
+    const inspected = note.match(/^(?:[A-Za-z]:[\\/]|\/)[^;]*?(?=: |$)/u);
+
+    if (inspected !== null) paths.push(inspected[0].trim());
   }
 
-  return paths;
+  const unique = [...new Set(paths.filter((path) => path !== ""))];
+
+  return unique.length === 0 ? {} : { searchedPaths: unique };
 }
 
 /**
@@ -400,7 +427,7 @@ export function createController(options: ControllerOptions): Controller {
       report("failed", {
         kind: "missing-engine",
         detail,
-        searchedPaths: engineSearchPaths(configured, options.pathEnv),
+        ...searchedPathsOf(configured, detail),
       });
 
       return null;
@@ -410,10 +437,9 @@ export function createController(options: ControllerOptions): Controller {
       report("failed", {
         kind: FAILURE_FOR_REASON[resolved.reason] ?? "missing-engine",
         detail: resolved.detail ?? `the engine could not be found (${resolved.reason})`,
-        // The directories the search actually tried, so a page can say where to
-        // look instead of asking the user to read a log first. Every setting and
-        // `PATH` entry the resolver walks is in this list.
-        searchedPaths: engineSearchPaths(configured, options.pathEnv),
+        // Only the directories worth a user's attention. The raw `PATH` is
+        // deliberately absent; see the helper for why.
+        ...searchedPathsOf(configured, resolved.detail),
         // What a folder has to hold and does not. The resolver reports it in a
         // sentence; the page needs the entries, because that is a repair list.
         ...missingEntriesOf(resolved.detail),

@@ -22,7 +22,7 @@
 
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { delimiter, join, resolve } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
@@ -498,6 +498,77 @@ describe("the fault page's answers, as the host handles them", () => {
     // setting keeps what it had and no engine is started from nowhere.
     expect(written).toEqual([]);
     expect(core.startCalls).toBe(0);
+  });
+});
+
+describe("what the page reports as searched", () => {
+  it("does not list the PATH directories that hold no engine", async () => {
+    // A real `PATH`: dozens of directories that have nothing to do with engines.
+    // The resolver looks for an engine package *inside* each one, so listing them
+    // would report the shell read an environment variable -- and bury the entry a
+    // user actually chose under that noise.
+    const noise = Array.from({ length: 39 }, (_, index) => `/opt/noise-${String(index)}/bin`);
+
+    const controller = createController(
+      options({
+        // Nothing configured: the machine this page is shown on in the report.
+        settings: { read: async () => "", write: async () => undefined },
+        pathEnv: noise.join(delimiter),
+      }),
+    );
+
+    controller.open();
+
+    await until(() => lastStatus()?.["phase"] === "failed");
+
+    const failure = lastStatus()?.["failure"] as Record<string, unknown>;
+
+    // Nothing was configured and nothing was inspected, so there is nothing worth
+    // showing: the page renders no list and its answers say where to look.
+    expect(failure["searchedPaths"]).toBeUndefined();
+    expect(noise.some((dir) => JSON.stringify(failure).includes(dir))).toBe(false);
+  });
+
+  it("leads with the directory the user configured", async () => {
+    // Configured but refused, which is the case the page exists for: the user has
+    // already named a directory, and it is the one line they can act on.
+    const controller = createController(
+      options({
+        pathEnv: "/opt/noise-0/bin:/opt/noise-1/bin",
+        settings: { read: async () => "not-an-absolute-path", write: async () => undefined },
+      }),
+    );
+
+    controller.open();
+
+    await until(() => lastStatus()?.["phase"] === "failed");
+
+    const searched = lastStatus()?.["failure"] as Record<string, unknown>;
+
+    expect(searched["searchedPaths"]).toEqual(["not-an-absolute-path"]);
+    expect(
+      (searched["searchedPaths"] as string[]).some((entry) => entry.startsWith("/opt/noise")),
+    ).toBe(false);
+  });
+
+  it("lists a directory that was inspected and refused", async () => {
+    // An engine-shaped attempt that failed: this is a real folder to go and
+    // repair, so it is shown as the path it is.
+    const root = makeRoot();
+
+    const controller = createController(
+      options({ settings: { read: async () => root, write: async () => undefined } }),
+    );
+
+    controller.open();
+
+    await until(() => lastStatus()?.["phase"] === "failed");
+
+    const failure = lastStatus()?.["failure"] as Record<string, unknown>;
+
+    // The configured directory first, then the one that was actually inspected.
+    expect(failure["searchedPaths"]).toEqual([root]);
+    expect(failure["missingEntries"]).toEqual(["haruyuki.js", "node_modules", "package.json"]);
   });
 });
 

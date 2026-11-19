@@ -228,6 +228,24 @@ describe("the fault page", () => {
     expect(screen.getByTestId("shell-fault-actions")).toBeTruthy();
   });
 
+  it("does not put the host's diagnostic sentence on the page", () => {
+    // The host's `detail` names resolver rungs ("no enginePath is configured; no
+    // PATH directory holds an engine package") in English. Under a translated
+    // heading that is one untranslatable paragraph in a localized page, and it is
+    // a log line rather than something a user can act on. It stays in the log,
+    // which is where the "open logs" answer points.
+    const diagnostic = "no enginePath is configured; no PATH directory holds an engine";
+
+    renderFault({ kind: "missing-engine", detail: diagnostic });
+
+    expect(screen.queryByText(diagnostic)).toBeNull();
+
+    // The heading and the answers are still there: the page is not blank, it is
+    // just not showing the sentence it cannot translate.
+    expect(screen.getByText(/Haruyuki engine not found/u)).toBeTruthy();
+    expect(screen.getByTestId("shell-fault-actions")).toBeTruthy();
+  });
+
   it("omits a fact the host did not supply", () => {
     // A searched-path list that is absent must not render as an empty sentence:
     // "Looked in: " reads as a rendering bug rather than as a missing fact.
