@@ -184,8 +184,14 @@ export function buildMenuTemplate(context: MenuContext): MenuItemConstructorOpti
   return [
     {
       label: context.appName,
+      // No `role: "about"`. Electron's built-in panel shows the product name and
+      // a version and nothing else, so it was a second way into a subject this
+      // application answers properly: the requirement names one entry, in Help,
+      // opening a read-only window with the engine, the licence and the update
+      // check. A user who found the built-in one first saw "Haruyuki 0.1.0" and
+      // nothing else, and reported the build as broken - correctly, because from
+      // where they stood the feature was. One entry, and it is the complete one.
       submenu: [
-        { role: "about" },
         { type: "separator" },
         { role: "hide" },
         { role: "hideOthers" },

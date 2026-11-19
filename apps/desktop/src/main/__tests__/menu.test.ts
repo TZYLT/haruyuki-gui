@@ -39,6 +39,18 @@ function helpSubmenu(context: MenuContext): MenuItemConstructorOptions[] {
   return help.submenu;
 }
 
+/** The items under the application menu (the first top-level menu). */
+function applicationSubmenu(context: MenuContext): MenuItemConstructorOptions[] {
+  const template = buildMenuTemplate(context);
+  const application = template[0];
+
+  if (application === undefined || !Array.isArray(application.submenu)) {
+    throw new Error("the template has no application submenu");
+  }
+
+  return application.submenu;
+}
+
 /** Whether the inspector item is present. */
 function hasInspectorItem(context: MenuContext): boolean {
   return viewSubmenu(context).some((item) => item.role === "toggleDevTools");
@@ -64,6 +76,17 @@ describe("buildMenuTemplate", () => {
     const labels = buildMenuTemplate({ ...PRODUCTION, appName: "Other" }).map((item) => item.label);
 
     expect(labels[0]).toBe("Other");
+  });
+
+  it("offers no built-in about panel beside the Help entry", () => {
+    // The user-visible failure this pins: the application menu carried Electron's
+    // `role: "about"`, whose panel shows a name and a version, while the Help
+    // menu carried the entry the requirement actually describes. Whichever one a
+    // person found first became "the about window", and the built-in one made
+    // the build look broken. One entry, and it is the complete one.
+    const aboutPanels = applicationSubmenu(PRODUCTION).filter((item) => item.role === "about");
+
+    expect(aboutPanels).toHaveLength(0);
   });
 
   it("uses roles rather than hand-written accelerators", () => {
