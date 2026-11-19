@@ -192,7 +192,10 @@ export function buildMenuTemplate(context: MenuContext): MenuItemConstructorOpti
       // nothing else, and reported the build as broken - correctly, because from
       // where they stood the feature was. One entry, and it is the complete one.
       submenu: [
-        { type: "separator" },
+        // Starts with an item, not a separator: the separator that used to open
+        // this list divided it from the about panel above it. With that panel
+        // gone the divider has nothing to divide and would render as a stray line
+        // at the top of the menu - a small thing that reads as a bug.
         { role: "hide" },
         { role: "hideOthers" },
         { role: "unhide" },
