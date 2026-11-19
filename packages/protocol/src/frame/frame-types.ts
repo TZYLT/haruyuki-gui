@@ -119,6 +119,36 @@ export const FRAME_TYPES = {
     since: "E1",
     summary: "a terminal process exited",
   },
+  "session.subscribe": {
+    ch: "control",
+    coalescible: "never",
+    since: "C2",
+    summary: "renderer starts a selector subscription",
+  },
+  "session.unsubscribe": {
+    ch: "control",
+    coalescible: "never",
+    since: "C2",
+    summary: "renderer ends a selector subscription",
+  },
+  "session.view": {
+    ch: "control",
+    coalescible: "never",
+    since: "C2",
+    summary: "one selector result for one subscription",
+  },
+  "session.select": {
+    ch: "control",
+    coalescible: "never",
+    since: "C2",
+    summary: "renderer asks for one selector result",
+  },
+  "session.result": {
+    ch: "control",
+    coalescible: "never",
+    since: "C2",
+    summary: "answer to one on-demand selector request",
+  },
 } as const satisfies Record<string, FrameTypeSpec>;
 
 /**

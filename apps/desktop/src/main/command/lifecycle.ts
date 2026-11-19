@@ -13,7 +13,7 @@
 import type { IpcMain } from "electron";
 
 import type { Frame } from "@haruyuki/protocol";
-import type { CommandCall } from "@haruyuki/core";
+import type { CommandCall, MergerChange } from "@haruyuki/core";
 
 import { createCommandService, type CommandService } from "./service.js";
 import { registerCommandIpc } from "./register.js";
@@ -24,6 +24,31 @@ export interface CommandLifecycleOptions {
   readonly ipc: IpcMain;
   readonly send: (frame: Frame) => void;
   readonly log?: (code: string, detail?: Record<string, unknown>) => void;
+  /**
+   * The consumer for every merged change, forwarded to each service this
+   * lifecycle builds.
+   *
+   * The service is rebuilt whenever the runtime hands over a new engine, so a
+   * consumer installed once here is the only way the second engine's changes
+   * reach it. Passing it per call instead would leave the rebuild to whoever
+   * remembers.
+   */
+  readonly onMergerChange?: (change: MergerChange) => void;
+  /**
+   * Release the rest of the shell when this lifecycle is disposed.
+   *
+   * This is not a command concern, and its presence here is not a design claim.
+   * It exists because the shell's single teardown point (`will-quit`) already
+   * calls `dispose()` on this lifecycle and on nothing else that is guaranteed
+   * to exist: the layout and the bridge have their own handles, and the session
+   * assembly is reachable only through the services that this lifecycle is built
+   * beside. Adding a second teardown chain would mean another call in the
+   * composition root, which is the file this assembly exists to keep small.
+   *
+   * Called once, after the service's own disposal, and only if `dispose()` was
+   * not already called.
+   */
+  readonly onDispose?: () => void;
 }
 
 /** The handle `main.ts` keeps for the app's lifetime. */
@@ -57,6 +82,7 @@ export function createCommandLifecycle(options: CommandLifecycleOptions): Comman
         engine: host.engine,
         send: options.send,
         ...(options.log === undefined ? {} : { log: options.log }),
+        ...(options.onMergerChange === undefined ? {} : { onMergerChange: options.onMergerChange }),
       });
     },
     dispose() {
@@ -66,6 +92,11 @@ export function createCommandLifecycle(options: CommandLifecycleOptions): Comman
       disposeIpc();
       service?.dispose();
       service = null;
+
+      // Last, and once: the service is already gone, so the rest of the shell
+      // cannot see a half-disposed command path. `disposed` above is what makes
+      // this happen exactly once, the same flag the idempotency rests on.
+      options.onDispose?.();
     },
   };
 }

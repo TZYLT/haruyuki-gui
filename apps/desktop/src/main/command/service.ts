@@ -83,6 +83,15 @@ export interface CommandServiceOptions {
   readonly createMerger?: CommandMergerFactory;
   /** Optional runtime availability gate, forwarded to the dispatcher. */
   readonly isAvailable?: (capability: CapabilityName) => boolean;
+  /**
+   * The consumer for every change the merger produced.
+   *
+   * `changes` is the whole of one frame's reading, and the one consumer that
+   * wants all of them is the session store. It is told here, once per change,
+   * after the terminal lifecycle passthroughs have been sent: those are this
+   * module's own output and must not depend on a consumer that may be absent.
+   */
+  readonly onMergerChange?: (change: MergerChange) => void;
 }
 
 /** The handle the composition root keeps for one engine. */
@@ -132,7 +141,7 @@ function terminalEventFrame(change: MergerChange): Frame | null {
  * @returns the service; pool creation happens later, on the engine's `ready`
  */
 export function createCommandService(options: CommandServiceOptions): CommandService {
-  const { engine, send } = options;
+  const { engine, send, onMergerChange } = options;
   const log = options.log ?? ((): void => undefined);
   const createPool = options.createPool ?? ((source) => createWiredChannelPool(source));
   const createMerger = options.createMerger ?? createEventMerger;
@@ -211,8 +220,17 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
           if (frame !== null) send(frame);
         }
 
-        // The remaining changes belong to C2. Until it is wired, counting and
-        // logging is the honest signal for the ones nothing renders yet.
+        // Then the consumer that reads every change for its own state. It runs
+        // after the passthroughs so this module's own output cannot be lost to a
+        // consumer that is slow, absent or (in a test) a stand-in.
+        if (onMergerChange !== undefined) {
+          for (const change of changes) onMergerChange(change);
+        }
+
+        // The remaining changes are the ones nothing rendered before the
+        // consumer above existed. The count stays as the one log line that says
+        // the merger is alive, and it is still the only reading for a shell that
+        // installs no consumer.
         changesSeen += changes.length;
         log("COMMAND_MERGE_CHANGES", {
           agentId,

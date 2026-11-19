@@ -55,6 +55,11 @@ describe("FRAME_TYPES", () => {
       "state.subagents": true,
       terminal_spawned: true,
       terminal_exited: true,
+      "session.subscribe": true,
+      "session.unsubscribe": true,
+      "session.view": true,
+      "session.select": true,
+      "session.result": true,
     };
 
     // Runtime: the two sets must agree, which catches a table edited through a

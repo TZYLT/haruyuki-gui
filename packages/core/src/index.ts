@@ -46,6 +46,18 @@ export * from "./layout/index.js";
 export * from "./merge/index.js";
 export * from "./port/host-port";
 export * from "./port/headless-host-port";
+
+/**
+ * The session store: one copy of the domain state a renderer folds, the
+ * selectors that read it, and the subscription table that answers pages.
+ *
+ * The types a caller renders are in `@haruyuki/protocol`; this surface is the
+ * half that owns the state and the rules derived from it.
+ */
+export * from "./session/store.js";
+export * from "./session/burst-scheduler.js";
+export * from "./session/capability-gate.js";
+
 export * from "./supervision/index.js";
 
 // The capability availability verdict (docs/62 §6.3, docs/63 §4.3). Exported by
