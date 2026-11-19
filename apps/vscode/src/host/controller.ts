@@ -510,6 +510,17 @@ export function createController(options: ControllerOptions): Controller {
    * @param cwd the working directory the child and its engine run in
    */
   async function startCore(engine: EngineSource, cwd: string): Promise<void> {
+    // The one gate a fork passes through, guarded rather than each caller: the
+    // engine search reads a setting, so every path here has an await before it,
+    // and a window that closes during one of them used to leave a start in
+    // flight that forked a child into a torn-down activation. Teardown is the
+    // end of an activation, so nothing may start a process after it.
+    if (phase === "closed") {
+      log.event("HOST_START_AFTER_CLOSE", {});
+
+      return;
+    }
+
     const init: CoreHostInit = {
       paths: port.paths,
       cwd,
@@ -675,26 +686,25 @@ export function createController(options: ControllerOptions): Controller {
    * @param action the action name
    */
   function handleAction(action: string): void {
-    // Cleared on every branch: an answer applies to the refusal that asked for it,
-    // and a stale one must not decide a later start.
-    const remembered = untested;
-
-    untested = null;
-
     switch (action) {
+      case "connectAnyway": {
+        // The user was shown which versions were compared and chose this build.
+        // Without a remembered refusal there is nothing to override, so the plain
+        // path runs and reports its own verdict.
+        const remembered = untested;
+
+        untested = null;
+        void (remembered === null ? startOnce() : startAccepted(remembered.source));
+
+        return;
+      }
+
       case "retry":
         // Deliberately a fresh resolution rather than a replay of the last one:
         // the user may have changed the setting between the two answers, and
         // starting the directory a log line mentioned instead is unexplainable.
+        untested = null;
         void startOnce();
-
-        return;
-
-      case "connectAnyway":
-        // The user was shown which versions were compared and chose this build.
-        // Without a remembered refusal there is nothing to override, so the plain
-        // path runs and reports its own verdict.
-        void (remembered === null ? startOnce() : startAccepted(remembered.source));
 
         return;
 
@@ -702,29 +712,31 @@ export function createController(options: ControllerOptions): Controller {
         // The confirmation has already happened: the page shows the directory and
         // requires a second, explicit answer before it sends this. Nothing here
         // may treat an unconfirmed run as consent.
+        untested = null;
         confirmedHomeDir = true;
         void startOnce();
 
         return;
 
       case "chooseEngineDir":
+        // Kept until a directory is actually picked: a dismissed dialog answers
+        // nothing, so the refusal the page is still showing is still the one the
+        // next "connect anyway" means.
         void chooseEngineDir();
 
         return;
 
       case "openSettings":
-        answerWith("openSettings");
+      case "openFolder":
+        // Navigation only. The page is unchanged, so a remembered refusal stays
+        // exactly as valid after one of these as it was before.
+        answerWith(action);
 
         return;
 
       case "openLogs":
         // The log is this module's own sink, so there is no editor seam for it.
         log.show();
-
-        return;
-
-      case "openFolder":
-        answerWith("openFolder");
 
         return;
 
@@ -755,7 +767,13 @@ export function createController(options: ControllerOptions): Controller {
 
     if (picked === undefined || picked.trim() === "") {
       log.event("HOST_ENGINE_PICK_CANCELLED", {});
-      postStatus?.({ kind: "status", phase: options.status.state });
+
+      // Dismissing a picker answers nothing: the page is still the one the user
+      // was looking at, so the status it is showing is still true. Re-post the
+      // last one whole rather than its phase alone -- a phase without its
+      // failure is a message the panel refuses, which empties the page the
+      // dismissal was explicitly not supposed to change.
+      if (lastStatus !== null) postStatus?.(lastStatus);
 
       return;
     }
