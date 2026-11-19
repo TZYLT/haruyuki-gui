@@ -546,6 +546,36 @@ async function main() {
     return null;
   });
 
+  // The about window's document, and the content it is supposed to carry.
+  //
+  // This exists because a build shipped with the feature wired but unreachable: a
+  // second menu entry opened Electron's built-in panel, which shows a name and a
+  // version, and the real window sat one menu away. Every assertion here was
+  // green - the channels were registered, the window could be opened - and the
+  // user still reported "no about page", correctly.
+  //
+  // What can be checked without a person: the document exists in the package, it
+  // is not the shell's own page, and the sections the requirement names are in
+  // it. What cannot be checked from here is which menu entry a click reaches; that
+  // is a fact about the menu template, and it is pinned in `menu.test.ts` by
+  // asserting the built-in panel is absent.
+  await judge("the package carries the about window's own document", async () => {
+    // It lives *inside* the archive, not beside it: the builder packs the renderer
+    // output into `app.asar`, so walking the extracted tree finds only the files
+    // that stay outside it. Reading the archive's bytes is the honest search.
+    const archive = (await walkFiles(staging)).find((file) => path.basename(file) === "app.asar");
+    if (archive === undefined) return "the package has no app.asar";
+
+    const text = (await readFile(archive)).toString("latin1");
+    if (!text.includes("about.html")) return "app.asar does not carry about.html";
+
+    const sections = ["common.about.version", "common.about.engine", "common.about.license"];
+    const absent = sections.filter((key) => !text.includes(key));
+    return absent.length === 0
+      ? null
+      : `the about bundle never mentions ${absent.join(", ")}; the window would render empty`;
+  });
+
   await judge("the unpacked tree keeps the engine beside its modules", async () => {
     const bundle = await findByName(staging, "haruyuki.js");
     if (bundle === null) return "the engine bundle is not in the package";
@@ -607,7 +637,6 @@ async function main() {
 
     app.stop();
   }
-
   // A just-stopped Electron keeps a handle on some of its own files for a moment,
   // and on Windows an open handle makes the removal fail. Leaving the staging
   // directory behind is not a verdict, so a failure to clean it up must not turn
