@@ -34,6 +34,14 @@ const editor = {
   statusItems: [] as { text: string; tooltip: unknown; command: unknown }[],
   /** Every `OutputChannel` created, in order. */
   channels: [] as { name: string; lines: string[] }[],
+  /**
+   * Whether the channels created from now on behave like a closed one.
+   *
+   * A real extension host tears the output channel down around `deactivate`, and
+   * the real `appendLine` then throws `Channel has been closed`. Setting this
+   * reproduces that window without an editor.
+   */
+  channelsClosed: false,
   /** Every `WebviewPanel` created, in order. */
   panels: [] as { viewType: string; title: string }[],
   /** Every `fork` the editor-side code made, so a startup can be counted. */
@@ -47,6 +55,7 @@ const editor = {
     editor.channels.length = 0;
     editor.panels.length = 0;
     editor.forks = 0;
+    editor.channelsClosed = false;
   },
 };
 
@@ -117,8 +126,14 @@ vi.mock("vscode", () => {
         editor.channels.push(channel);
 
         return {
-          appendLine: (value: string) => channel.lines.push(value),
-          show: () => undefined,
+          appendLine: (value: string) => {
+            if (editor.channelsClosed) throw new Error("Channel has been closed");
+
+            channel.lines.push(value);
+          },
+          show: () => {
+            if (editor.channelsClosed) throw new Error("Channel has been closed");
+          },
           dispose: () => undefined,
         };
       },
@@ -398,6 +413,17 @@ describe("extension entry: the panel seam", () => {
     const lines = editor.channels[0]?.lines.join("\n") ?? "";
 
     expect(lines).toContain("EXTENSION_DEACTIVATED");
+  });
+
+  it("deactivates when the editor has already closed the output channel", async () => {
+    // The real order on shutdown: VS Code tears the channel down around
+    // `deactivate`, so the line this extension writes last has nowhere to go.
+    // Letting that escape is what a window that closes itself looks like.
+    extension.activate(context() as never);
+    extension.setPanelOpener({ open: vi.fn(), close: vi.fn(async () => undefined) });
+    editor.channelsClosed = true;
+
+    await expect(extension.deactivate()).resolves.toBeUndefined();
   });
 
   it("opens no panel and starts no core until the command is invoked", async () => {

@@ -176,3 +176,112 @@ describe("log: the channel", () => {
     expect(sink.shows()).toBe(1);
   });
 });
+
+/**
+ * A channel that has already been closed under the logger.
+ *
+ * This is not a hypothetical shape: VS Code tears the output channel down before
+ * (or interleaved with) `deactivate`, and the real `appendLine` then throws
+ * `Channel has been closed`. A logger that lets that escape turns "one line was
+ * not written" into "the extension threw during shutdown", which is how a window
+ * closed at launch looks to a user.
+ */
+function closedChannel(options: { readonly onShow?: () => void } = {}): {
+  readonly channel: OutputChannelLike;
+  readonly appends: () => number;
+  readonly shows: () => number;
+} {
+  let appends = 0;
+  let shows = 0;
+
+  return {
+    appends: () => appends,
+    shows: () => shows,
+    channel: {
+      appendLine(): void {
+        appends += 1;
+
+        throw new Error("Channel has been closed");
+      },
+      show(): void {
+        shows += 1;
+
+        if (options.onShow !== undefined) {
+          options.onShow();
+          return;
+        }
+
+        throw new Error("Channel has been closed");
+      },
+    },
+  };
+}
+
+describe("log: a closed channel must not reach the caller", () => {
+  it("swallows a throwing appendLine and counts it", () => {
+    const sink = closedChannel();
+    const log = createShellLog({ channel: sink.channel });
+
+    expect(() => log.event("EXTENSION_DEACTIVATED", { panel: false })).not.toThrow();
+    expect(sink.appends()).toBe(1);
+    expect(log.droppedLines).toBe(1);
+  });
+
+  it("counts every dropped line and throws none, three times over", () => {
+    const sink = closedChannel();
+    const log = createShellLog({ channel: sink.channel });
+
+    expect(() => {
+      log.write("one");
+      log.event("TWO");
+      log.failure("THREE", new Error("boom"));
+    }).not.toThrow();
+
+    expect(sink.appends()).toBe(3);
+    expect(log.droppedLines).toBe(3);
+  });
+
+  it("keeps a successful line out of the dropped count", () => {
+    const sink = recorder();
+    const log = createShellLog({ channel: sink.channel });
+
+    log.write("one");
+    log.event("TWO");
+
+    expect(log.droppedLines).toBe(0);
+
+    // A channel that dies mid-session starts counting from there, which is the
+    // reading that tells "the channel closed" from "the channel never worked".
+    const dying = createShellLog({
+      channel: {
+        appendLine(): void {
+          throw new Error("Channel has been closed");
+        },
+        show(): void {},
+      },
+    });
+
+    dying.write("one");
+
+    expect(dying.droppedLines).toBe(1);
+  });
+
+  it("swallows a throwing show", () => {
+    const sink = closedChannel();
+    const log = createShellLog({ channel: sink.channel });
+
+    expect(() => log.show()).not.toThrow();
+    expect(sink.shows()).toBe(1);
+  });
+
+  it("does not try to log the failure to the same dead channel", () => {
+    // The trap: a catch block that calls `append` again loops or throws twice.
+    // One attempted write, one dropped line, no exception.
+    const sink = closedChannel();
+    const log = createShellLog({ channel: sink.channel });
+
+    expect(() => log.write("one")).not.toThrow();
+    expect(sink.appends()).toBe(1);
+    expect(log.droppedLines).toBe(1);
+  });
+});

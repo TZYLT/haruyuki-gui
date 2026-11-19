@@ -175,6 +175,15 @@ export interface ShellLog {
   failure(code: string, error: unknown): void;
   /** Reveal the channel in the panel's Output view. */
   show(): void;
+  /**
+   * How many lines the channel refused.
+   *
+   * A logger that cannot write is still a logger: losing a line must not become
+   * losing the extension. The count is what keeps that silent -- a session that
+   * ends with a non-zero count had a channel that closed early, and that is a
+   * fact worth being able to read afterwards instead of inferring from a gap.
+   */
+  readonly droppedLines: number;
 }
 
 /** Options of {@link createShellLog}. */
@@ -202,11 +211,30 @@ export function createShellLog(options: ShellLogOptions): ShellLog {
    *
    * @param line the line, without a prefix and without a newline
    */
+  /**
+   * Append one already-prefixed line to the channel.
+   *
+   * A failed write is counted and dropped, never re-thrown and never retried.
+   * Re-throwing would let a shutdown-time log line abort `deactivate`, which is
+   * what "the window closed itself" looks like from the outside; retrying would
+   * call the same dead channel a second time and throw again in the same place.
+   *
+   * @param line the line, without a prefix and without a newline
+   */
   function append(line: string): void {
-    options.channel.appendLine(redactLine(`${prefix} ${line}`));
+    try {
+      options.channel.appendLine(redactLine(`${prefix} ${line}`));
+    } catch {
+      dropped += 1;
+    }
   }
 
+  let dropped = 0;
+
   return {
+    get droppedLines(): number {
+      return dropped;
+    },
     write(line: string): void {
       append(line);
     },
@@ -241,7 +269,14 @@ export function createShellLog(options: ShellLogOptions): ShellLog {
     },
 
     show(): void {
-      options.channel.show();
+      // Same reason as `append`: revealing a closed channel throws, and the one
+      // caller that reveals on the user's behalf is a command handler, which
+      // must not fail because the channel it was opening had already gone.
+      try {
+        options.channel.show();
+      } catch {
+        dropped += 1;
+      }
     },
   };
 }
