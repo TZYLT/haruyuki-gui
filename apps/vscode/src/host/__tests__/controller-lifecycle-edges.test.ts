@@ -33,6 +33,9 @@ const posted: Record<string, unknown>[] = [];
 /** The log codes and lines the assembly wrote. */
 const lines: string[] = [];
 
+/** The child handles the assembly handed back as started. */
+const announced: unknown[] = [];
+
 /** The panel host the assembly was handed, as far as these cases read it. */
 const panel = {
   openCalls: 0,
@@ -70,11 +73,13 @@ const webview = {
 const core = {
   startCalls: 0,
   stopCalls: 0,
+  announcements: [] as { appVersion: string; bridgeVersion: string }[],
   statusListeners: new Set<(status: CoreStatusSnapshot) => void>(),
 
   reset(): void {
     core.startCalls = 0;
     core.stopCalls = 0;
+    core.announcements.length = 0;
     core.statusListeners.clear();
   },
 
@@ -82,10 +87,15 @@ const core = {
     for (const listener of [...core.statusListeners]) listener(snapshot);
   },
 
-  double(): CoreHost {
+  /**
+   * @param hold a promise the fork waits for, so a case can close mid-start
+   * @returns the child as the assembly sees it
+   */
+  double({ hold }: { hold?: Promise<void> } = {}): CoreHost {
     return {
       async start(): Promise<void> {
         core.startCalls += 1;
+        await hold;
       },
       async invoke(call: CommandCall): Promise<CommandReply> {
         return { ok: true, completion: "answered", data: { seen: call.capability } };
@@ -95,6 +105,11 @@ const core = {
       },
       async stop(): Promise<void> {
         core.stopCalls += 1;
+      },
+      announce(appVersion: string, bridgeVersion: string): boolean {
+        core.announcements.push({ appVersion, bridgeVersion });
+
+        return true;
       },
       onFrame(listener): () => void {
         return () => void listener;
@@ -200,6 +215,9 @@ function options(overrides: Partial<ControllerOptions> = {}): ControllerOptions 
     status: statusDouble(),
     createPanel: (link) => panel.double(link),
     core: core.double(),
+    onStarted: (host) => {
+      announced.push(host);
+    },
     ...overrides,
   };
 }
@@ -231,6 +249,7 @@ beforeEach(() => {
   lines.length = 0;
   core.reset();
   panel.reset();
+  announced.length = 0;
 });
 
 describe("a picker the user dismissed", () => {
@@ -357,6 +376,42 @@ describe("a start that outlives the panel", () => {
 
     // Teardown is the end of an activation: nothing may start a process after it.
     expect(core.startCalls).toBe(0);
+  });
+
+  it("stops a child whose fork outlived the teardown that was meant to own it", async () => {
+    // The gate before the fork cannot cover the fork itself: `core.start` waits
+    // for the child to answer `ready`, which is the whole boot budget. A close
+    // landing inside that window has already run its teardown, so the child it
+    // never saw is announced to nobody -- it would run on, with its engine,
+    // until the editor process itself ended.
+    const dir = makeEngine(makeRoot());
+
+    let releaseStart: () => void = () => undefined;
+
+    const held = new Promise<void>((resolve) => {
+      releaseStart = resolve;
+    });
+
+    const controller = createController(
+      options({
+        settings: { read: async () => dir, write: async () => undefined },
+        core: core.double({ hold: held }),
+      }),
+    );
+
+    controller.open();
+
+    await until(() => core.startCalls > 0);
+
+    await controller.close();
+
+    releaseStart();
+
+    await until(() => announced.length > 0);
+
+    expect(announced).toHaveLength(0);
+    // The child was started, so it has to be stopped by the side that started it.
+    expect(core.stopCalls).toBeGreaterThan(0);
   });
 });
 

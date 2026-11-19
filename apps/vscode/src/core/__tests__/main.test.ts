@@ -101,6 +101,16 @@ const INIT = {
   locale: "en",
   engine: { kind: "bundled", dir: "/engine", bundlePath: "/engine/haruyuki.js" },
   expectedVersion: "1.0.0",
+  // The child refuses an `init` without the six capability flags; this fake host
+  // offers none of them, which is what the flag assertions never depend on.
+  capabilities: {
+    canNotify: false,
+    canPopout: false,
+    canFloat: false,
+    canOpenExternal: false,
+    canPickFiles: false,
+    canReadDroppedFiles: false,
+  },
 } as const;
 
 /** A stand-in engine that records its own stop. */
@@ -204,6 +214,44 @@ describe("runCoreMain", () => {
     await transport.exited;
   });
 
+  it("reports an engine that stops after ready instead of staying connected", async () => {
+    // The engine facade is this child's own child. Without a subscription here,
+    // its death is invisible to the shell: the host keeps a connected panel over
+    // a socket with nothing behind it, and the user is told nothing.
+    const transport = new FakeTransport();
+    let fail: (state: string) => void = () => {};
+
+    const engine: CoreEngine = {
+      async stop(): Promise<void> {},
+      onFrame() {
+        return () => {};
+      },
+      onState(listener) {
+        fail = listener;
+
+        return () => {};
+      },
+      // The fake keeps emitting a frame per poll; the point is that it stays
+      // alive until the test kills it.
+      onLog() {
+        return () => {};
+      },
+    };
+
+    await started(transport, { startEngine: async () => engine }, "ready");
+
+    expect(transport.ofKind("status").at(-1)).toMatchObject({ phase: "ready" });
+
+    fail("failed");
+
+    await waitFor(() => transport.ofKind("status").at(-1)?.["phase"] === "failed");
+
+    expect(transport.ofKind("status").at(-1)).toMatchObject({
+      phase: "failed",
+      failure: { kind: "engine-lost" },
+    });
+  });
+
   it("forwards frames and engine log lines after ready", async () => {
     const transport = new FakeTransport();
 
@@ -281,7 +329,17 @@ describe("runCoreMain", () => {
     await started(
       transport,
       {
-        startEngine: async () => fakeEngine({ count: 0 }),
+        // The engine logs while the store is in use. Without a line here the log
+        // stream is empty, and a "does not contain" assertion over no lines at
+        // all cannot fail.
+        startEngine: async () => ({
+          async stop(): Promise<void> {},
+          onLog(listener) {
+            listener("the engine is loading its token");
+
+            return () => {};
+          },
+        }),
         secureStore: {
           async get(key) {
             return stored.get(key);
@@ -315,7 +373,12 @@ describe("runCoreMain", () => {
       requestId: "r2",
     });
 
-    expect(JSON.stringify(transport.ofKind("log"))).not.toContain("super-secret");
+    // The stream this checks is not empty: the engine's own line travelled the
+    // same path, so a secret that reached `emitLog` would be caught here.
+    const logged = transport.ofKind("log").map((log) => log.line);
+
+    expect(logged.length).toBeGreaterThan(0);
+    expect(logged.join("\n")).not.toContain("super-secret");
   });
 
   it("answers a secret request with an error when no store is wired in", async () => {

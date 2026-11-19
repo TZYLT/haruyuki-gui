@@ -121,12 +121,16 @@ describe("the VSCode host port", () => {
   it("answers all six capability flags, refusing the two window operations", () => {
     const { port } = makePort();
 
+    // Three of the six are `false` on purpose: a flag is `true` only where this
+    // shell implements the action, because a missing capability hides its entry
+    // point. Notifications are additionally ruled out by the user, and the file
+    // picker this flag names is not wired -- only the directory picker is.
     expect(port.capabilities).toEqual({
-      canNotify: true,
+      canNotify: false,
       canPopout: false,
       canFloat: false,
-      canOpenExternal: true,
-      canPickFiles: true,
+      canOpenExternal: false,
+      canPickFiles: false,
       canReadDroppedFiles: false,
     });
 

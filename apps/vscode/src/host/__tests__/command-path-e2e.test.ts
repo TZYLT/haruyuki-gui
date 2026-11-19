@@ -55,10 +55,10 @@ const hosts = new Set<CoreProcessHost>();
 const MALFORMED = '{"v":1,"ch":"control","seq":1,"t":"state.loop","body":{"x":"\u0000\u0007\n';
 
 /**
- * The capability the launcher hangs on forever, so a test can have one command
- * in flight when the child is killed.
+ * The capability the launcher exits on, so a test can have one command in flight
+ * when the core child dies.
  */
-const NEVER = "test.never";
+const CRASH = "test.crash";
 
 beforeAll(() => {
   root = mkdtempSync(path.join(tmpdir(), "haruyuki-command-path-"));
@@ -82,8 +82,10 @@ const engine = {
 runCoreMain({
   startEngine: async () => engine,
   invokeCommand: async (call) => {
-    if (call.capability === ${JSON.stringify(NEVER)}) {
-      return new Promise(() => {});
+    if (call.capability === ${JSON.stringify(CRASH)}) {
+      // The core leaves without answering the command it is holding: the reply
+      // is owed, so only the host's exit arm can settle the panel's command.
+      process.exit(3);
     }
 
     if (call.capability === "test.accepted") return { ok: true, completion: "accepted" };
@@ -133,6 +135,14 @@ const INIT: CoreHostInit = {
   locale: "en",
   engine: { kind: "bundled", dir: "/engine", bundlePath: "/engine/haruyuki.js" },
   expectedVersion: "1.0.0",
+  capabilities: {
+    canNotify: false,
+    canPopout: false,
+    canFloat: false,
+    canOpenExternal: false,
+    canPickFiles: false,
+    canReadDroppedFiles: false,
+  },
 };
 
 /**
@@ -305,6 +315,12 @@ describe("a core that dies mid-command", () => {
   it("settles the in-flight command as failed instead of leaving it hanging", async () => {
     const host = await startHost();
     const sent: HostToWebview[] = [];
+    const failures: string[] = [];
+
+    host.onStatus((status) => {
+      if (status.phase === "failed") failures.push(status.failure?.kind ?? "none");
+    });
+
     const path = createCommandPath({
       host,
       outbox: createOutbox((message) => {
@@ -318,15 +334,14 @@ describe("a core that dies mid-command", () => {
       path.receive({
         kind: "command.invoke",
         callId: "wv-1",
-        call: { capability: NEVER, body: {} },
+        call: { capability: CRASH, body: {} },
       }),
     ).toEqual({ ok: true, handled: "command" });
 
     expect(path.pending).toBe(1);
 
-    // The crash: a stop kills the process the command was waiting on.
-    await host.stop();
-
+    // The crash: the core exits while it owes this command an answer. Nothing
+    // calls `stop`, which would settle the command before the exit arm runs.
     await vi.waitFor(() => {
       expect(replies(sent)).toHaveLength(1);
     });
@@ -337,5 +352,6 @@ describe("a core that dies mid-command", () => {
       reply: { ok: false, code: "NOT_CONNECTED" },
     });
     expect(path.pending).toBe(0);
+    expect(failures).toEqual(["crash"]);
   });
 });

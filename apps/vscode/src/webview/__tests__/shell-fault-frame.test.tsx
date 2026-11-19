@@ -15,7 +15,7 @@
  */
 
 import { waitFor } from "@testing-library/react";
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
 /** A no-op observer: jsdom never resizes anything, so nothing has to fire. */
 class StubResizeObserver implements ResizeObserver {
@@ -26,6 +26,13 @@ class StubResizeObserver implements ResizeObserver {
 
 beforeAll(() => {
   Reflect.set(globalThis, "ResizeObserver", StubResizeObserver);
+});
+
+/** Teardown of every tree or container a case created, run in `afterEach`. */
+const mounted: (() => void)[] = [];
+
+afterEach(() => {
+  for (const cleanup of mounted.splice(0)) cleanup();
 });
 
 /**
@@ -82,6 +89,10 @@ describe("the fault page and the frame", () => {
   it("keeps the frame mounted while the fault is shown", async () => {
     const container = createRootContainer();
 
+    // The entry mounts itself into this container on import and keeps no unmount
+    // handle, so the container is what a later case can clean up.
+    mounted.push(() => container.remove());
+
     await import("../main.js");
 
     // The frame first: the mount is asynchronous, and the assertion below is
@@ -112,21 +123,48 @@ describe("the fault page and the frame", () => {
   it("shows no page while the shell is running", async () => {
     // `mountWebview` rather than the module's own bootstrap: the entry mounts
     // into `#root` on first import only, and a second case re-importing it would
-    // find the cached module and an empty container.
-    const { mountWebview } = await import("../main.js");
-    const container = document.createElement("div");
+    // find the cached module and an empty container. The extra root below is
+    // there because that first import bootstraps and throws without one when
+    // this case runs on its own.
+    const bootRoot = createRootContainer();
 
-    document.body.append(container);
-    mountWebview(container);
+    mounted.push(() => bootRoot.remove());
+
+    const { mountWebview } = await import("../main.js");
+    const container = createRootContainer();
+    const unmount = mountWebview(container);
+
+    mounted.push(() => {
+      unmount();
+      container.remove();
+    });
 
     await waitFor(() => {
       expect(container.querySelector(".hz-frame")).not.toBeNull();
     });
 
     await announce();
+
+    // The transport is a module singleton, so an earlier case may have left a
+    // failure behind. Start from a running shell, then make this case's own
+    // fault: asking only that no page is shown at the end would also pass when
+    // no page could have been shown at all.
     report("ready");
 
-    // A page that appeared on every render would be a page nobody can dismiss.
+    await waitFor(() => {
+      expect(container.querySelector("[data-testid='shell-fault']")).toBeNull();
+    });
+
+    report("failed", { kind: "missing-engine", detail: "no engine to start" });
+
+    await waitFor(() => {
+      expect(container.querySelector("[data-testid='shell-fault']")).not.toBeNull();
+    });
+
+    report("ready");
+
+    // A page that stayed after the shell recovered would be a page nobody can
+    // dismiss.
     await waitFor(() => {
       expect(container.querySelector("[data-testid='shell-fault']")).toBeNull();
     });

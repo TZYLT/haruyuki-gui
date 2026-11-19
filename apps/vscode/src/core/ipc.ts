@@ -92,6 +92,22 @@ export const RUNTIME_FAILURE_KINDS = [
    * Reporting both as `start-failed` left the page unable to tell which.
    */
   "invalid-dir",
+  /**
+   * The engine was started and then stopped on its own, after this child had
+   * already reported `ready`.
+   *
+   * Distinct from `crash`, which is this child's own exit: the panel's content
+   * is still there and the host is still running, so the page has to say that
+   * the engine went away rather than that the shell did.
+   */
+  "engine-lost",
+  /**
+   * A directory whose shape is right and whose version cannot be read.
+   *
+   * Reporting this as "not found" tells the user their folder is gone when it is
+   * not, and hides the one fact that would explain it.
+   */
+  "version-unknown",
 ] as const;
 
 /** One kind of runtime failure. */
@@ -143,7 +159,40 @@ export type CoreInit = {
   readonly engine: EngineSource;
   /** Engine build the host expects; the child refuses to report `ready` otherwise. */
   readonly expectedVersion: string;
+  /**
+   * What the host can actually do.
+   *
+   * Carried on `init` rather than restated in the child: a second copy of a
+   * capability table is a table that drifts, and the drift would show up as the
+   * panel offering an action the host cannot perform.
+   */
+  readonly capabilities: HostCapabilities;
 };
+
+/**
+ * The six capability flags, as this child receives them.
+ *
+ * Deliberately structural rather than imported from the host: the child is a
+ * separate program, and its copy of the shape is the one the pipe enforces.
+ */
+export type HostCapabilities = {
+  readonly canNotify: boolean;
+  readonly canPopout: boolean;
+  readonly canFloat: boolean;
+  readonly canOpenExternal: boolean;
+  readonly canPickFiles: boolean;
+  readonly canReadDroppedFiles: boolean;
+};
+
+/** The six capability flags, in the order the refusal message names them. */
+const CAPABILITY_FLAGS = [
+  "canNotify",
+  "canPopout",
+  "canFloat",
+  "canOpenExternal",
+  "canPickFiles",
+  "canReadDroppedFiles",
+] as const;
 
 /** Host to core. */
 export type HostToCore =
@@ -156,7 +205,20 @@ export type HostToCore =
       readonly key: string;
       readonly value?: string;
     }
-  | { readonly kind: "shutdown" };
+  | { readonly kind: "shutdown" }
+  /**
+   * The panel announced itself, and the core has to answer.
+   *
+   * The webview sends `ready` after every `boot`, which the host cannot answer
+   * on its own: the versions being compared are the panel's and the core's, not
+   * the panel's and the host's. This is the one message that carries the
+   * announcement to the process that can judge it.
+   */
+  | {
+      readonly kind: "bridge.ready";
+      readonly appVersion: string;
+      readonly bridgeVersion: string;
+    };
 
 /** The three operations the shell may perform on the core's secret store. */
 export const SECURE_OPS = ["get", "set", "delete"] as const;
@@ -189,7 +251,19 @@ export type CoreToHost =
       readonly source?: string;
       readonly cwd?: string;
     }
-  | { readonly kind: "log"; readonly line: string };
+  | { readonly kind: "log"; readonly line: string }
+  /**
+   * The core's verdict on the panel's `bridge.ready`.
+   *
+   * `accepted` is the whole answer rather than a reason code: a panel either
+   * speaks this core's bridge or it does not, and the requirement's two arms
+   * are `bridge.accept` and `bridge.reject` on the frame channel.
+   */
+  | {
+      readonly kind: "bridge.verdict";
+      readonly accepted: boolean;
+      readonly detail?: string;
+    };
 
 /** The status message with its tag removed: what a subscriber is handed. */
 export type CoreStatusSnapshot = Omit<Extract<CoreToHost, { kind: "status" }>, "kind">;
@@ -204,7 +278,13 @@ export type CoreLog = Extract<CoreToHost, { kind: "log" }>;
 export type NarrowResult<T> =
   { readonly ok: true; readonly message: T } | { readonly ok: false; readonly reason: string };
 
-const HOST_TO_CORE_KINDS = ["init", "command.invoke", "secure.request", "shutdown"] as const;
+const HOST_TO_CORE_KINDS = [
+  "init",
+  "command.invoke",
+  "secure.request",
+  "shutdown",
+  "bridge.ready",
+] as const;
 
 const CORE_TO_HOST_KINDS = [
   "ready",
@@ -213,6 +293,7 @@ const CORE_TO_HOST_KINDS = [
   "secure.reply",
   "status",
   "log",
+  "bridge.verdict",
 ] as const;
 
 /** Maximum nesting {@link isJsonValue} walks before refusing the value. */
@@ -422,6 +503,8 @@ export function narrowHostToCore(raw: unknown): NarrowResult<HostToCore> {
       return narrowSecureRequest(raw);
     case "shutdown":
       return { ok: true, message: { kind: "shutdown" } };
+    case "bridge.ready":
+      return narrowBridgeReady(raw);
     default:
       return refuse(`unknown host-to-core kind ${describeKind(raw.kind)}`);
   }
@@ -436,6 +519,40 @@ export function narrowHostToCore(raw: unknown): NarrowResult<HostToCore> {
  * @param raw the candidate message
  * @returns the message, or the reason it was refused
  */
+/**
+ * Narrow the host's capability table.
+ *
+ * Every flag is required and must be a boolean. A default would be the very
+ * failure this field exists to prevent: a missing flag silently read as "this
+ * shell can do it" is an entry point offered for something nothing implements.
+ *
+ * @param raw the table as it arrived
+ * @returns the table, or why it was refused
+ */
+function narrowCapabilities(raw: unknown): NarrowResult<HostCapabilities> {
+  if (!isRecord(raw)) return refuse("init.capabilities is not an object");
+
+  const flags = CAPABILITY_FLAGS.map((flag) => raw[flag]);
+
+  if (flags.some((flag) => typeof flag !== "boolean")) {
+    return refuse(
+      `init.capabilities requires the six boolean flags ${CAPABILITY_FLAGS.join(", ")}`,
+    );
+  }
+
+  return {
+    ok: true,
+    message: {
+      canNotify: raw["canNotify"] as boolean,
+      canPopout: raw["canPopout"] as boolean,
+      canFloat: raw["canFloat"] as boolean,
+      canOpenExternal: raw["canOpenExternal"] as boolean,
+      canPickFiles: raw["canPickFiles"] as boolean,
+      canReadDroppedFiles: raw["canReadDroppedFiles"] as boolean,
+    },
+  };
+}
+
 function narrowInit(raw: Record<string, unknown>): NarrowResult<CoreInit> {
   const paths = raw.paths;
 
@@ -480,6 +597,10 @@ function narrowInit(raw: Record<string, unknown>): NarrowResult<CoreInit> {
   if (!isNonEmptyString(locale)) return refuse("init.locale is not a tag");
   if (!isNonEmptyString(expectedVersion)) return refuse("init.expectedVersion is not a version");
 
+  const capabilities = narrowCapabilities(raw.capabilities);
+
+  if (!capabilities.ok) return refuse(capabilities.reason);
+
   return {
     ok: true,
     message: {
@@ -490,6 +611,7 @@ function narrowInit(raw: Record<string, unknown>): NarrowResult<CoreInit> {
       engine:
         version === undefined ? { kind, dir, bundlePath } : { kind, dir, bundlePath, version },
       expectedVersion,
+      capabilities: capabilities.message,
     },
   };
 }
@@ -525,6 +647,27 @@ function narrowSecureRequest(raw: Record<string, unknown>): NarrowResult<HostToC
         ? { kind: "secure.request", requestId, op, key }
         : { kind: "secure.request", requestId, op, key, value },
   };
+}
+
+/**
+ * Narrow the panel's announcement on its way to the core.
+ *
+ * Both versions are required and both are opaque strings: this process carries
+ * them and never interprets them, because the comparison belongs to the core.
+ *
+ * @param raw the message as it arrived
+ * @returns the narrowed message, or why it was refused
+ */
+function narrowBridgeReady(raw: Record<string, unknown>): NarrowResult<HostToCore> {
+  const appVersion = raw.appVersion;
+  const bridgeVersion = raw.bridgeVersion;
+
+  if (!isNonEmptyString(appVersion)) return refuse("bridge.ready.appVersion is not a version");
+  if (!isNonEmptyString(bridgeVersion)) {
+    return refuse("bridge.ready.bridgeVersion is not a version");
+  }
+
+  return { ok: true, message: { kind: "bridge.ready", appVersion, bridgeVersion } };
 }
 
 /**
@@ -572,6 +715,8 @@ export function narrowCoreToHost(raw: unknown): NarrowResult<CoreToHost> {
 
       return { ok: true, message: { kind: "log", line } };
     }
+    case "bridge.verdict":
+      return narrowBridgeVerdict(raw);
     default:
       return refuse(`unknown core-to-host kind ${describeKind(raw.kind)}`);
   }
@@ -618,6 +763,32 @@ function narrowSecureReply(raw: Record<string, unknown>): NarrowResult<CoreToHos
  * @param raw the candidate message
  * @returns the message, or the reason it was refused
  */
+/**
+ * Narrow the core's verdict on the panel's announcement.
+ *
+ * `detail` is the sentence a refusal shows, so a rejection without one would be
+ * an error page with nothing on it; it is optional because an acceptance has
+ * nothing to explain.
+ *
+ * @param raw the message as it arrived
+ * @returns the narrowed message, or why it was refused
+ */
+function narrowBridgeVerdict(raw: Record<string, unknown>): NarrowResult<CoreToHost> {
+  const accepted = raw.accepted;
+  const detail = raw.detail;
+
+  if (typeof accepted !== "boolean") return refuse("bridge.verdict.accepted is not a boolean");
+  if (!isOptionalString(detail)) return refuse("bridge.verdict.detail is not a string");
+
+  return {
+    ok: true,
+    message:
+      detail === undefined
+        ? { kind: "bridge.verdict", accepted }
+        : { kind: "bridge.verdict", accepted, detail },
+  };
+}
+
 function narrowStatus(raw: Record<string, unknown>): NarrowResult<CoreToHost> {
   const phase = raw.phase;
 

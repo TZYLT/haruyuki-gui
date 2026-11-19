@@ -347,6 +347,25 @@ export const en = {
   "error.workspaceMissingTitle": "No folder is open",
   "error.workspaceMissingRisk": "Starting in {homeDir} lets the engine write its files there.",
   "error.workspaceUseHomeDir": "I understand the risk; use the home directory",
+  // The two ends `section 4.10` names separately. A stopped engine leaves the
+  // window and its content in place; a stopped core takes the shell's own child
+  // with it, which is a different sentence and a different repair.
+  "error.runtimeEngineLost": "The engine is no longer running",
+  "error.runtimeCoreStopped": "The Haruyuki core has stopped",
+
+  // ------------------------------------------------------------ status bar
+  // The five states of the status-bar item. Host-side sentences go through the
+  // same catalogue as the panel's, because a hardcoded English word here is
+  // still an untranslated word in a Chinese editor.
+  "common.engine.status.inactive": "Idle",
+  "common.engine.status.starting": "Starting",
+  "common.engine.status.connected": "Connected",
+  "common.engine.status.disconnected": "Disconnected",
+  "common.engine.status.failed": "Failed",
+  "common.engine.tooltip.version": "Engine version: {version}",
+  "common.engine.tooltip.source": "Engine source: {source}",
+  "common.engine.tooltip.cwd": "Working directory: {cwd}",
+  "common.engine.tooltip.open": "Click to open the Haruyuki panel.",
 
   // -------------------------------------------------------------- reconnect
   // Wording states only what is known: a connection is being re-established, a

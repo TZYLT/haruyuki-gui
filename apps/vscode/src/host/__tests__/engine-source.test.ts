@@ -222,6 +222,39 @@ describe("resolveEngine discovery order", () => {
     expect(settings.writes).toEqual([]);
     expect(settings.stored()).toBe(broken);
   });
+
+  it("reports the directories it opened and refused, as data", async () => {
+    // The failure arm carries what was inspected so a caller does not have to
+    // read it back out of `detail`. That reading was the defect: every note
+    // starts with prose, so a line-anchored path pattern could never match and
+    // the page's list was always just the configured value.
+    const root = makeRoot();
+    const broken = mkdirOf(join(root, "broken"));
+
+    const resolution = await resolveEngine({
+      settings: fakeSettings(broken),
+      testedVersion: TESTED,
+      pathEnv: "",
+    });
+
+    expect(resolution.ok).toBe(false);
+    expect(resolution.ok === false && resolution.inspected).toEqual([broken]);
+  });
+
+  it("names no directory when nothing was opened", async () => {
+    // `PATH` directories are inputs, not places a user can go and repair, so a
+    // run that only walked them reports nothing rather than a wall of noise.
+    const resolution = await resolveEngine({
+      settings: fakeSettings(),
+      testedVersion: TESTED,
+      pathEnv: [join("/opt/noise-a", "bin"), join("/opt/noise-b", "bin")].join(
+        process.platform === "win32" ? ";" : ":",
+      ),
+    });
+
+    expect(resolution.ok).toBe(false);
+    expect(resolution.ok === false && resolution.inspected).toBeUndefined();
+  });
 });
 
 describe("inspectEngineDirectory", () => {

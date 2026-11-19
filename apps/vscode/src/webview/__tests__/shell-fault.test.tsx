@@ -161,8 +161,13 @@ describe("the fault page", () => {
     // re-decided.
     renderFault({ kind: "crash", detail: "the core child exited (code 1, signal null)" });
 
-    expect(screen.getByTestId("shell-fault").textContent).toContain("The engine did not start");
-    expect(actionLabels()).toEqual(["Try again", "Choose engine folder", "Open logs"]);
+    // The requirement names the core's death separately from the engine's: the
+    // shell's own child went, which is not "the engine did not start".
+    expect(screen.getByTestId("shell-fault").textContent).toContain(
+      "The Haruyuki core has stopped",
+    );
+    // Retry and the log: the folder has not changed, so the picker is not offered.
+    expect(actionLabels()).toEqual(["Try again", "Open logs"]);
   });
 
   it("offers two different answers for a refused folder", () => {

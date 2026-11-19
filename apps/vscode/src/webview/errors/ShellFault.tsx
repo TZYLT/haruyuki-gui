@@ -283,6 +283,13 @@ function titleOf(
     case "noWorkspace":
       return t("error.workspaceMissingTitle");
     case "engineStopped":
+      // A stopped engine and one that never started read the same to the user
+      // -- it is not running -- but the requirement names the crash row
+      // separately, so it gets its own sentence.
       return t("error.runtimeSpawn");
+    case "engineLost":
+      return t("error.runtimeEngineLost");
+    case "coreStopped":
+      return t("error.runtimeCoreStopped");
   }
 }

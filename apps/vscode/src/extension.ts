@@ -259,6 +259,9 @@ export function activate(context: vscode.ExtensionContext): void {
   const item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
   const status = createStatusBar({
     item,
+    // The editor's own language, not the panel's: the item is drawn in the
+    // editor's chrome, so it has to speak what the rest of that chrome speaks.
+    locale: vscode.env.language,
     log: (code, fields) => log.event(code, fields),
   });
 
@@ -290,10 +293,11 @@ export function activate(context: vscode.ExtensionContext): void {
     },
     toFileUri: (absPath) => vscode.Uri.file(absPath),
     locale: vscode.env.language,
-    // Read at start rather than at activation: the user may have opened a folder
-    // in between, and a window that starts without one is the case the
-    // degradation exists for.
-    folders: vscode.workspace.workspaceFolders,
+    // Read at every start, not captured at activation: activation happens on the
+    // first view or command, which can precede the user opening a folder. The
+    // array is a snapshot, so capturing it once reported "no folder is open" for
+    // a window that had one by the time the panel opened.
+    folders: () => vscode.workspace.workspaceFolders,
     homeDir: homedir(),
     settings: createVSCodeEngineSettings((section) => vscode.workspace.getConfiguration(section)),
     ...(process.env["PATH"] === undefined ? {} : { pathEnv: process.env["PATH"] }),

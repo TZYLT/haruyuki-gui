@@ -55,6 +55,7 @@ const core = {
   startCalls: 0,
   started: [] as unknown[],
   stopCalls: 0,
+  announcements: [] as { appVersion: string; bridgeVersion: string }[],
   frameListeners: new Set<(frame: CoreFrame) => void>(),
   statusListeners: new Set<(status: CoreStatusSnapshot) => void>(),
   logListeners: new Set<(entry: { kind: "log"; line: string }) => void>(),
@@ -65,6 +66,7 @@ const core = {
     core.startCalls = 0;
     core.started.length = 0;
     core.stopCalls = 0;
+    core.announcements.length = 0;
     core.frameListeners.clear();
     core.statusListeners.clear();
     core.logListeners.clear();
@@ -97,6 +99,11 @@ const core = {
       async stop(): Promise<void> {
         core.stopCalls += 1;
         calls.push({ member: "core.stop", args: [] });
+      },
+      announce(appVersion: string, bridgeVersion: string): boolean {
+        core.announcements.push({ appVersion, bridgeVersion });
+
+        return true;
       },
       onFrame(listener): () => void {
         core.frameListeners.add(listener);

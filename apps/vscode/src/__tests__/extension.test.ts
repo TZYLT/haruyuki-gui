@@ -236,11 +236,17 @@ describe("extension entry: activation", () => {
   });
 
   it("starts nothing: activation registers and returns", () => {
+    // The spy is installed before activation, so a call made during it lands on
+    // this function instead of the controller `activate` installs at the end.
+    // The recorded editor calls cannot answer this question: none of the names
+    // the panel is reached through is a member the double records.
+    const open = vi.fn();
+
+    extension.setPanelOpener({ open });
+
     extension.activate(context() as never);
 
-    // The panels, the core child and the engine are all reached through the
-    // opener, and the opener is the one thing activation must not call.
-    expect(called(["openPanel", "fork", "spawn", "start"])).toEqual([]);
+    expect(open).toHaveBeenCalledTimes(0);
 
     // Installing a panel host is not opening one: activation must not have
     // created a webview, or the cost it exists to avoid is paid on every start.
@@ -365,7 +371,12 @@ describe("extension entry: the panel seam", () => {
     const lines = editor.channels[0]?.lines.join("\n") ?? "";
 
     expect(lines).toContain("PANEL_OPEN_FAILED");
-    expect(editor.statusItems[0]?.text).toContain("Failed");
+    // The editor's language is `zh-cn` in this double, so the item speaks it:
+    // the five states come from the catalogue now, not from a hardcoded table.
+    // Asserting the English word is absent is the half that fails if the label
+    // goes back to being a literal.
+    expect(editor.statusItems[0]?.text).toContain("失败");
+    expect(editor.statusItems[0]?.text).not.toContain("Failed");
     // The message is summarised, not interpolated into a line that also carries
     // a frame payload the panel might have handed over.
     expect(lines).toContain("the panel document is missing");

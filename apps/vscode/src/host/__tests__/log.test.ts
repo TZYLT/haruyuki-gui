@@ -87,6 +87,32 @@ describe("log: redaction", () => {
 
     expect(redactLine(line)).toBe(line);
   });
+
+  it("scrubs a name that sits at the end of a longer identifier", () => {
+    // The shell's own variable prefix is `HARUYUKI_`, and the core's JSON is
+    // camelCase, so a rule that only sees `token` as a whole word misses both.
+    expect(redactLine("HARUYUKI_TOKEN=abcd1234")).toBe(`HARUYUKI_TOKEN=${REDACTED}`);
+    expect(redactLine("access_token=abcd1234")).toBe(`access_token=${REDACTED}`);
+
+    const json = redactLine('{"accessToken":"abcd1234"}');
+
+    expect(json).not.toContain("abcd1234");
+    expect(json).toBe('{"accessToken":"[redacted]"}');
+  });
+
+  it("scrubs the credential after a Basic scheme, not just the scheme", () => {
+    // `Authorization: [redacted] YWJjZDEyMzQ=` looks scrubbed and is not.
+    const scrubbed = redactLine("Authorization: Basic YWJjZDEyMzQ=");
+
+    expect(scrubbed).not.toContain("YWJjZDEyMzQ=");
+    expect(scrubbed).not.toContain("YWJjZDEyMzQ");
+    expect(scrubbed).toBe(`Authorization: Basic ${REDACTED}`);
+  });
+
+  it("keeps scrubbing a Bearer credential without eating the scheme", () => {
+    expect(redactLine("Authorization: Bearer abc")).toBe(`Authorization: Bearer ${REDACTED}`);
+    expect(redactLine('{"authorization":"Bearer abc"}')).not.toContain("abc");
+  });
 });
 
 describe("log: error summaries", () => {

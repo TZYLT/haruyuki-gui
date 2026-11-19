@@ -80,6 +80,11 @@ const COMPONENT_DIRS = [
   // that is not listed makes both "asked for but undeclared" and "declared but
   // unread" report clean.
   "apps/vscode/src/webview",
+  // The extension host writes catalogue keys too: the status-bar item's five
+  // states and its tooltip. Listed as the one directory rather than the whole
+  // `apps/vscode` tree, because widening the scan is a separate decision from
+  // giving the one screen that translates a consumer entry.
+  "apps/vscode/src/host",
 ];
 
 /** The catalogues under comparison. English is the reference. */

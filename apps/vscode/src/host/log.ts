@@ -11,10 +11,10 @@
  *   1. {@link describeError} reports an error's code and message only. A stack
  *      is not included, because a stack quotes whatever the call site captured.
  *   2. {@link redactLine} scrubs the shapes a secret takes when a caller writes
- *      one anyway: `key=value` pairs for the usual names, bearer tokens, and
- *      `ws://...?token=...` query strings. It is a safety net, not a licence to
- *      pass secrets: the gate cannot know every spelling, so the rule above is
- *      still the rule.
+ *      one anyway: `key=value` pairs for the usual names, the credential after
+ *      an authorization scheme, and `ws://...?token=...` query strings. It is
+ *      a safety net, not a licence to pass secrets: the gate cannot know every
+ *      spelling, so the rule above is still the rule.
  *   3. `appendLine` accepts one line and adds no context. There is no implicit
  *      "current request" object that could drag a body along.
  *
@@ -60,10 +60,11 @@ export interface ErrorSummary {
 /**
  * Every name whose `=value` is scrubbed from a line.
  *
- * Matched case-insensitively as a whole word before `=`, so `token=` and
- * `TOKEN:` are caught and `tokenCount=` is not. Kept short: this is a net for
- * the spellings a shell actually produces (`--ws-token-file`, `password:`,
- * `apiKey=`), not a general secret scanner.
+ * Matched case-insensitively, and allowed to sit at the end of a longer name,
+ * so `access_token=`, `HARUYUKI_TOKEN=` and `accessToken:` are caught too. The
+ * `=` or `:` that has to follow is what keeps `tokenCount=` out. Kept short:
+ * this is a net for the spellings a shell actually produces
+ * (`--ws-token-file`, `password:`, `apiKey=`), not a general secret scanner.
  */
 const SECRET_KEYS = [
   "token",
@@ -78,6 +79,15 @@ const SECRET_KEYS = [
 ] as const;
 
 /**
+ * The schemes whose credential is the next space-separated word.
+ *
+ * `Bearer` used to be the only one kept out of the pair rule, which left
+ * `Authorization: Basic <base64>` scrubbed down to the scheme name and pasted
+ * with the credential still on the line: a log that reads redacted and is not.
+ */
+const AUTH_SCHEMES = ["bearer", "basic", "digest", "negotiate", "ntlm"] as const;
+
+/**
  * `key=value`, `key: value` and the JSON `"key":"value"` spelling.
  *
  * The optional quotes around the separator are what makes the JSON form match:
@@ -85,15 +95,32 @@ const SECRET_KEYS = [
  * allowed bare separators would scrub the human-readable lines and silently keep
  * the serialised ones.
  *
- * `(?!Bearer)` keeps `Authorization: Bearer <token>` for {@link BEARER_PATTERN}:
- * without it the pair rule would scrub the scheme name and leave the token.
+ * The name is not anchored on the left, and cannot be: `_` is a word character,
+ * so `\b` sees no seam in `HARUYUKI_TOKEN=` or `access_token=`, and there is no
+ * boundary before the hump in `accessToken` either. What keeps `tokenCount=`
+ * out is the `=` or `:` that has to follow the name.
+ *
+ * A scheme name as the value is left to {@link SECRET_SCHEME_PATTERN}: scrubbing
+ * the pair here would take the scheme and leave the credential behind it.
  */
 const SECRET_PAIR_PATTERN = new RegExp(
-  `\\b(${SECRET_KEYS.join("|")})\\b("?\\s*[=:]\\s*"?)(?![Bb]earer\\b)("[^"]*"|'[^']*'|[^\\s,;&"]+)`,
+  `(${SECRET_KEYS.join("|")})\\b("?\\s*[=:]\\s*"?)(?!(?:${AUTH_SCHEMES.join("|")})\\b)("[^"]*"|'[^']*'|[^\\s,;&"]+)`,
   "gi",
 );
 
-/** `Authorization: Bearer <token>` and the bare form. */
+/**
+ * `Authorization: Basic <base64>` and the credential of every other scheme.
+ *
+ * Redacts the word after the scheme and keeps the scheme, so the line still
+ * says how it was authenticated. `Bearer` lands here too, which leaves
+ * {@link BEARER_PATTERN} the bare, header-less spelling.
+ */
+const SECRET_SCHEME_PATTERN = new RegExp(
+  `(${SECRET_KEYS.join("|")})\\b("?\\s*[=:]\\s*"?)((?:${AUTH_SCHEMES.join("|")})\\s+)("[^"]*"|'[^']*'|[^\\s,;&"]+)`,
+  "gi",
+);
+
+/** A bare `Bearer <token>`, with no header name in front of it. */
 const BEARER_PATTERN = /\b(bearer)\s+[A-Za-z0-9._~+/-]+=*/gi;
 
 /** `ws://host/path?token=<token>` and the same on any query name above. */
@@ -101,6 +128,11 @@ const QUERY_TOKEN_PATTERN = new RegExp(`([?&](?:${SECRET_KEYS.join("|")})=)([^&\
 
 /** What a scrubbed value is replaced with. Fixed, so a reader knows it is one. */
 export const REDACTED = "[redacted]";
+
+/** The quote a value opened with, so re-emitting it keeps JSON well-formed. */
+function openingQuote(value: string): string {
+  return value.startsWith('"') ? '"' : value.startsWith("'") ? "'" : "";
+}
 
 /**
  * Scrub the secret shapes a caller may have written into a line.
@@ -113,10 +145,20 @@ export const REDACTED = "[redacted]";
  */
 export function redactLine(line: string): string {
   return line
+    .replace(
+      SECRET_SCHEME_PATTERN,
+      (_match, key: string, separator: string, scheme: string, value: string) => {
+        const opening = openingQuote(value);
+
+        // The scheme is a hint, not a secret: keep it so the line still says how
+        // the request was authenticated, and drop the credential behind it.
+        return `${key}${separator}${scheme}${opening}${REDACTED}${opening}`;
+      },
+    )
     .replace(SECRET_PAIR_PATTERN, (_match, key: string, separator: string, value: string) => {
       // The quotes belong to the value, not to the separator. Re-emitting the one
       // that opened it keeps a JSON object well-formed after the scrub.
-      const opening = value.startsWith('"') ? '"' : value.startsWith("'") ? "'" : "";
+      const opening = openingQuote(value);
 
       return `${key}${separator}${opening}${REDACTED}${opening}`;
     })
@@ -206,11 +248,6 @@ const DEFAULT_PREFIX = "[haruyuki]";
 export function createShellLog(options: ShellLogOptions): ShellLog {
   const prefix = options.prefix ?? DEFAULT_PREFIX;
 
-  /**
-   * Append one already-prefixed line to the channel.
-   *
-   * @param line the line, without a prefix and without a newline
-   */
   /**
    * Append one already-prefixed line to the channel.
    *

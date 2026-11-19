@@ -283,6 +283,23 @@ export const zhCN = {
   "error.workspaceMissingTitle": "当前没有打开文件夹",
   "error.workspaceMissingRisk": "在主目录 {homeDir} 中启动后，引擎会把文件写入该目录。",
   "error.workspaceUseHomeDir": "了解风险并使用主目录",
+  // 分开的两行。引擎停了，窗口和内容都还在；内核停了，壳自己的子进程
+  // 一起没了，是另一句话，也是另一种修复。
+  "error.runtimeEngineLost": "引擎已断开",
+  "error.runtimeCoreStopped": "Haruyuki 内核已停止",
+
+  // ------------------------------------------------------------ 状态栏
+  // 状态栏项的五个状态。宿主侧的文案和面板走同一张表：在这里硬编码一个英文词，
+  // 在中文编辑器里就是一个没翻译的词。
+  "common.engine.status.inactive": "未启动",
+  "common.engine.status.starting": "正在启动",
+  "common.engine.status.connected": "已连接",
+  "common.engine.status.disconnected": "已断开",
+  "common.engine.status.failed": "失败",
+  "common.engine.tooltip.version": "引擎版本：{version}",
+  "common.engine.tooltip.source": "引擎来源：{source}",
+  "common.engine.tooltip.cwd": "工作目录：{cwd}",
+  "common.engine.tooltip.open": "点击打开 Haruyuki 面板。",
 
   // -------------------------------------------------------------- reconnect
   "component.reconnect.reconnecting": "正在重新连接",

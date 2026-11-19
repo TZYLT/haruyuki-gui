@@ -256,6 +256,15 @@ function initMessage(version: string): Record<string, unknown> {
     locale: "en",
     engine: { kind: "external", dir: path.dirname(engineFile), bundlePath: engineFile },
     expectedVersion: version,
+    // The capability table travels on `init`; the child refuses one without it.
+    capabilities: {
+      canNotify: false,
+      canPopout: false,
+      canFloat: false,
+      canOpenExternal: false,
+      canPickFiles: false,
+      canReadDroppedFiles: false,
+    },
   };
 }
 

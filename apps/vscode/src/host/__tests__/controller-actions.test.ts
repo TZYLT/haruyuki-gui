@@ -77,11 +77,13 @@ const webview = {
 const core = {
   startCalls: 0,
   stopCalls: 0,
+  announcements: [] as { appVersion: string; bridgeVersion: string }[],
   statusListeners: new Set<(status: CoreStatusSnapshot) => void>(),
 
   reset(): void {
     core.startCalls = 0;
     core.stopCalls = 0;
+    core.announcements.length = 0;
     core.statusListeners.clear();
   },
 
@@ -102,6 +104,11 @@ const core = {
       },
       async stop(): Promise<void> {
         core.stopCalls += 1;
+      },
+      announce(appVersion: string, bridgeVersion: string): boolean {
+        core.announcements.push({ appVersion, bridgeVersion });
+
+        return true;
       },
       onFrame(listener): () => void {
         return () => void listener;
@@ -297,6 +304,35 @@ beforeEach(() => {
 });
 
 describe("the fault page's answers, as the host handles them", () => {
+  it("carries the panel's announcement to the core that can answer it", async () => {
+    // The panel sends `ready` after every `boot`. Neither reader on this side
+    // owns it -- the command path ignores families it does not handle, and it
+    // names no action -- so before this it was dropped and the core was never
+    // asked whether the versions agree.
+    const controller = createController(options());
+
+    controller.open();
+
+    await until(() => lastStatus() !== undefined);
+
+    panel.link?.receive({ kind: "ready", appVersion: "0.1.0", bridgeVersion: "1" });
+
+    expect(core.announcements).toEqual([{ appVersion: "0.1.0", bridgeVersion: "1" }]);
+  });
+
+  it("ignores an announcement that names no versions", async () => {
+    const controller = createController(options());
+
+    controller.open();
+
+    await until(() => lastStatus() !== undefined);
+
+    panel.link?.receive({ kind: "ready" });
+    panel.link?.receive({ kind: "ready", appVersion: "0.1.0" });
+
+    expect(core.announcements).toEqual([]);
+  });
+
   it("does not leave a missing engine's three answers unanswered", async () => {
     const controller = createController(options({ editor: fullEditor() }));
 

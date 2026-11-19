@@ -63,8 +63,10 @@ import {
   type LogListener,
   type StatusListener,
 } from "./core-host.js";
+import { failureKindFor, missingEntriesOf, searchedPathsOf } from "./engine-failure.js";
 import { resolveEngine, type EngineResolution } from "./engine-source.js";
 import { createVSCodeHostPort } from "./host-port.js";
+import { actionOf, bridgeAnnouncementOf } from "./panel-messages.js";
 import type { ShellLog } from "./log.js";
 import type { PanelHost, PanelLink, PanelLinkFactory } from "./panel.js";
 import { createSecureInboundAnswerer } from "./secrets.js";
@@ -74,19 +76,6 @@ import { TESTED_ENGINE_VERSION } from "../shared/version.js";
 
 /** Where the built core child sits, relative to the installed extension root. */
 const CORE_ENTRY_RELATIVE = join("dist", "core.mjs");
-
-/**
- * How a refusal from `./engine-source.ts` is reported in the runtime's words.
- *
- * The resolver answers in the terms of its search (`missing`, `invalid-dir`,
- * `version-unknown`); the panel's failure kinds are the runtime's. This table is
- * the whole translation, so the two vocabularies meet in exactly one place.
- */
-const FAILURE_FOR_REASON: Readonly<Record<string, RuntimeFailureKind>> = {
-  missing: "missing-engine",
-  "invalid-dir": "invalid-dir",
-  "version-unknown": "missing-engine",
-};
 
 /** One resolved engine, as the success arm of the resolver reports it. */
 type FoundEngine = Extract<EngineResolution, { ok: true }>;
@@ -155,8 +144,19 @@ export interface ControllerOptions {
   readonly toFileUri: (absPath: string) => { toString(): string };
   /** `vscode.env.language`, written onto the document by the panel host. */
   readonly locale: string;
-  /** `vscode.workspace.workspaceFolders`, read at start rather than at activation. */
-  readonly folders: readonly { readonly uri: { readonly fsPath: string } }[] | undefined;
+  /**
+   * The window's folder list, read at every start.
+   *
+   * A function rather than the array itself: `workspaceFolders` is a snapshot,
+   * and the activation happens on the first view or command, which can easily
+   * precede the user opening a folder. Capturing it once meant a window that
+   * opened a folder afterwards still reported "no folder is open" -- and offered
+   * to write the engine's files into the home directory.
+   */
+  readonly folders:
+    | (() => readonly { readonly uri: { readonly fsPath: string } }[] | undefined)
+    | readonly { readonly uri: { readonly fsPath: string } }[]
+    | undefined;
   /** `os.homedir()`, offered as the no-workspace degradation. */
   readonly homeDir?: string;
   /** The engine setting, bound to `vscode.workspace.getConfiguration` by the entry. */
@@ -223,84 +223,6 @@ export interface Controller {
 type Phase = "idle" | "started" | "closed";
 
 /**
- * Split one failure sentence back into the entries it named.
- *
- * The resolver builds its sentence as `<dir>: <entry> is missing, <entry> is not
- * a directory`, and that list is exactly the repair list a user needs. It is
- * read here -- once, at the boundary -- rather than in the page, so no rendering
- * code parses prose. A sentence that does not have the shape yields nothing
- * instead of guessing.
- *
- * @param detail the resolver's sentence, when there is one
- * @returns the entries, without the `is missing` / `is not a ...` tails
- */
-function missingEntriesOf(detail: string | undefined): { missingEntries?: readonly string[] } {
-  if (detail === undefined) return {};
-
-  const entries = new Set<string>();
-
-  for (const match of detail.matchAll(/\b([\w.-]+) is (?:missing|not a [a-z]+)\b/g)) {
-    if (match[1] !== undefined && match[1].length > 0) entries.add(match[1]);
-  }
-
-  return entries.size === 0 ? {} : { missingEntries: [...entries] };
-}
-
-/**
- * The places worth showing a user who has to go and find the engine.
- *
- * Deliberately NOT every directory the resolver walks. `PATH` on a real machine
- * holds dozens of directories that have nothing to do with engines -- `system32`,
- * a CUDA toolkit, a Java install -- and the resolver only looks for an engine
- * package *inside* each one. Listing those inputs would tell the user the shell
- * read an environment variable, which is not something they can act on, and would
- * bury the one entry they chose themselves under that noise.
- *
- * What is left is exactly what a user can act on:
- *
- * 1. the `enginePath` value they set -- the one line they own, so it leads;
- * 2. every directory that was actually inspected and refused, which is the folder
- *    to go and repair.
- *
- * A directory that was never a candidate (no `haruyuki.js` anywhere inside it) is
- * not a directory "the shell looked in" in any sense a user cares about, so it is
- * not here. An empty answer is the honest one on a machine with nothing
- * configured: the page then shows no list at all, and its answers already say
- * where to look.
- *
- * The refused directories are read from the resolver's own sentence rather than
- * from a second copy of its search order -- a copy here would drift the day a
- * rung is added -- and the sentence is parsed once, at this boundary, so no
- * rendering code reads prose.
- *
- * @param configured the `enginePath` value the shell read, when one is set
- * @param detail the resolver's sentence naming the rungs that failed
- * @returns the paths to show, or nothing when there are none worth showing
- */
-function searchedPathsOf(
-  configured: string | undefined,
-  detail: string | undefined,
-): { searchedPaths?: readonly string[] } {
-  const paths: string[] = [];
-
-  if (configured !== undefined && configured.trim() !== "") paths.push(configured.trim());
-
-  // A note that opens with an absolute path is one where a directory was
-  // inspected and refused: the resolver writes `<dir>: <entry> is missing`. The
-  // other notes are about the absence of a candidate (`no enginePath is
-  // configured`), which names no directory at all.
-  for (const note of detail?.split("; ") ?? []) {
-    const inspected = note.match(/^(?:[A-Za-z]:[\\/]|\/)[^;]*?(?=: |$)/u);
-
-    if (inspected !== null) paths.push(inspected[0].trim());
-  }
-
-  const unique = [...new Set(paths.filter((path) => path !== ""))];
-
-  return unique.length === 0 ? {} : { searchedPaths: unique };
-}
-
-/**
  * Build the assembly.
  *
  * Nothing is started here: this returns a handle whose `open` does the work, so
@@ -341,6 +263,21 @@ export function createController(options: ControllerOptions): Controller {
     });
 
   let phase: Phase = "idle";
+
+  /**
+   * Whether teardown has run.
+   *
+   * A function rather than a comparison because the answer can change during an
+   * `await`: this file closes asynchronously, and a start that is waiting for a
+   * child may be in flight while it does. Reading the variable directly twice
+   * would be narrowed by the compiler to "the same as the first read", which is
+   * the opposite of what has to be checked.
+   *
+   * @returns whether the assembly is closed
+   */
+  function isClosed(): boolean {
+    return phase === "closed";
+  }
 
   /** The panel host, built on the first open and kept for the session. */
   let panel: PanelHost | null = null;
@@ -417,7 +354,7 @@ export function createController(options: ControllerOptions): Controller {
    *
    * @returns the accepted engine, or `null` once the refusal was reported
    */
-  async function pickEngine(): Promise<EngineSource | null> {
+  async function pickEngine(): Promise<FoundEngine | null> {
     // Read here as well as inside the resolver: the resolver owns the walk, but
     // this is the rung the page has to name, and asking a second time is cheaper
     // than making the resolver return its inputs alongside its verdict.
@@ -436,7 +373,8 @@ export function createController(options: ControllerOptions): Controller {
       report("failed", {
         kind: "missing-engine",
         detail,
-        ...searchedPathsOf(configured, detail),
+        // A throw carries no resolution, so nothing was inspected.
+        ...searchedPathsOf(configured, undefined),
       });
 
       return null;
@@ -444,11 +382,11 @@ export function createController(options: ControllerOptions): Controller {
 
     if (!resolved.ok) {
       report("failed", {
-        kind: FAILURE_FOR_REASON[resolved.reason] ?? "missing-engine",
+        kind: failureKindFor(resolved.reason),
         detail: resolved.detail ?? `the engine could not be found (${resolved.reason})`,
         // Only the directories worth a user's attention. The raw `PATH` is
         // deliberately absent; see the helper for why.
-        ...searchedPathsOf(configured, resolved.detail),
+        ...searchedPathsOf(configured, resolved.inspected),
         // What a folder has to hold and does not. The resolver reports it in a
         // sentence; the page needs the entries, because that is a repair list.
         ...missingEntriesOf(resolved.detail),
@@ -479,7 +417,7 @@ export function createController(options: ControllerOptions): Controller {
 
     untested = null;
 
-    return resolved.source;
+    return resolved;
   }
 
   /**
@@ -489,7 +427,7 @@ export function createController(options: ControllerOptions): Controller {
    */
   function pickWorkspace(): string | null {
     const workspace: WorkspaceResolution = resolveWorkspaceCwd({
-      folders: options.folders,
+      folders: typeof options.folders === "function" ? options.folders() : options.folders,
       ...(options.homeDir === undefined ? {} : { homeDir: options.homeDir }),
       confirmedHomeDir,
     });
@@ -518,13 +456,13 @@ export function createController(options: ControllerOptions): Controller {
    * @param engine the accepted engine
    * @param cwd the working directory the child and its engine run in
    */
-  async function startCore(engine: EngineSource, cwd: string): Promise<void> {
+  async function startCore(engine: EngineSource, cwd: string, origin: string): Promise<void> {
     // The one gate a fork passes through, guarded rather than each caller: the
     // engine search reads a setting, so every path here has an await before it,
     // and a window that closes during one of them used to leave a start in
     // flight that forked a child into a torn-down activation. Teardown is the
     // end of an activation, so nothing may start a process after it.
-    if (phase === "closed") {
+    if (isClosed()) {
       log.event("HOST_START_AFTER_CLOSE", {});
 
       return;
@@ -536,11 +474,16 @@ export function createController(options: ControllerOptions): Controller {
       locale: options.locale,
       engine,
       expectedVersion: TESTED_ENGINE_VERSION,
+      // The host's own table, carried rather than restated: the child used to
+      // hold a hardcoded copy, so the two could disagree without either failing.
+      capabilities: port.capabilities,
     };
 
     report("starting", undefined, {
       ...(engine.version === undefined ? {} : { engineVersion: engine.version }),
-      source: engine.kind,
+      // The rung, not the coarse kind: "external" tells the user nothing about
+      // where the engine came from, and the tooltip exists to say where to look.
+      source: origin,
       cwd,
     });
 
@@ -554,6 +497,23 @@ export function createController(options: ControllerOptions): Controller {
 
       log.failure("CORE_START_FAILED", error);
       report("failed", { kind: "start-failed", detail });
+
+      return;
+    }
+
+    // The gate at the top of this function is checked before the fork, and the
+    // fork can take the whole boot budget. A close that landed in that window
+    // already ran its teardown, so the child this line just started is one no
+    // teardown knows about: `onStarted` would write it into a shell whose
+    // deactivation is over, and nothing would ever stop it or the engine behind
+    // it. The same gate therefore has to be passed twice, once on each side of
+    // the await that can outlive the activation.
+    if (isClosed()) {
+      log.event("HOST_START_AFTER_CLOSE", {});
+      await core.stop().catch(() => {
+        // The teardown is already over, so a failed stop has no reporter left.
+        // The child is asked to go either way; the log above records why.
+      });
 
       return;
     }
@@ -604,7 +564,7 @@ export function createController(options: ControllerOptions): Controller {
 
     if (cwd === null) return;
 
-    await startCore(engine, cwd);
+    await startCore(engine.source, cwd, engine.origin);
   }
 
   /** The two directions for one panel, installed the moment the panel exists. */
@@ -650,6 +610,14 @@ export function createController(options: ControllerOptions): Controller {
         // own instead of refusing them, which is what leaves the rest to the
         // dispatch below.
         commandPath.receive(raw);
+
+        // The panel announces itself after every `boot`, and the answer has to
+        // come from the process that owns the bridge version. Without this the
+        // announcement reached nothing: the command path ignores it and it names
+        // no action, so the one message that says "a panel is here" was dropped.
+        const announced = bridgeAnnouncementOf(raw);
+
+        if (announced !== null) core.announce(announced.appVersion, announced.bridgeVersion);
 
         const action = actionOf(raw);
 
@@ -708,14 +676,14 @@ export function createController(options: ControllerOptions): Controller {
    *
    * @param engine the engine the user chose to connect to
    */
-  async function startAccepted(engine: EngineSource): Promise<void> {
+  async function startAccepted(engine: FoundEngine): Promise<void> {
     const cwd = pickWorkspace();
 
     if (cwd === null) return;
 
-    log.event("HOST_ENGINE_CONNECT_ANYWAY", { version: engine.version ?? "unknown" });
+    log.event("HOST_ENGINE_CONNECT_ANYWAY", { version: engine.version });
 
-    await startCore(engine, cwd);
+    await startCore(engine.source, cwd, engine.origin);
   }
 
   /**
@@ -732,7 +700,7 @@ export function createController(options: ControllerOptions): Controller {
         const remembered = untested;
 
         untested = null;
-        void (remembered === null ? startOnce() : startAccepted(remembered.source));
+        void (remembered === null ? startOnce() : startAccepted(remembered));
 
         return;
       }
@@ -931,20 +899,4 @@ export function createController(options: ControllerOptions): Controller {
       await panel?.close();
     },
   };
-}
-
-/**
- * @param raw one message from the panel
- * @returns the action it names, or `null` when it names none
- */
-function actionOf(raw: unknown): string | null {
-  if (typeof raw !== "object" || raw === null) return null;
-
-  const record = raw as Record<string, unknown>;
-
-  if (record["kind"] !== "action") return null;
-
-  const action = record["action"];
-
-  return typeof action === "string" && action.length > 0 ? action : null;
 }

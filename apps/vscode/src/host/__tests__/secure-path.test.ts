@@ -475,6 +475,14 @@ const INIT: CoreHostInit = {
   locale: "en",
   engine: { kind: "bundled", dir: "/engine", bundlePath: "/engine/haruyuki.js" },
   expectedVersion: "1.0.0",
+  capabilities: {
+    canNotify: false,
+    canPopout: false,
+    canFloat: false,
+    canOpenExternal: false,
+    canPickFiles: false,
+    canReadDroppedFiles: false,
+  },
 };
 
 /**

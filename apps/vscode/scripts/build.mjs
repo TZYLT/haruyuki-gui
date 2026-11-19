@@ -300,6 +300,17 @@ async function checkCoreBootstrap(outfile) {
           bundlePath: path.join(scratch, "missing-engine", "haruyuki.js"),
         },
         expectedVersion: "0.0.0",
+        // The host's capability table travels on `init`; a bundle is refused
+        // when it is missing, which is what makes this check catch a build that
+        // forgot to carry it.
+        capabilities: {
+          canNotify: false,
+          canPopout: false,
+          canFloat: false,
+          canOpenExternal: false,
+          canPickFiles: false,
+          canReadDroppedFiles: false,
+        },
       });
 
       // The first answer is the proof that the loop is running; a bundle that

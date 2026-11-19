@@ -117,6 +117,14 @@ const INIT: CoreHostInit = {
   locale: "en",
   engine: { kind: "bundled", dir: "/engine", bundlePath: "/engine/haruyuki.js" },
   expectedVersion: "1.0.0",
+  capabilities: {
+    canNotify: false,
+    canPopout: false,
+    canFloat: false,
+    canOpenExternal: false,
+    canPickFiles: false,
+    canReadDroppedFiles: false,
+  },
 };
 
 /**
@@ -251,6 +259,14 @@ runCoreMain({
         locale: "en",
         engine: { kind: "bundled", dir: "/e", bundlePath: "/e/b.js" },
         expectedVersion: "1.0.0",
+        capabilities: {
+          canNotify: false,
+          canPopout: false,
+          canFloat: false,
+          canOpenExternal: false,
+          canPickFiles: false,
+          canReadDroppedFiles: false,
+        },
       });
 
       await new Promise((resolve) => parent.once("message", resolve));
@@ -305,6 +321,14 @@ runCoreMain({ startEngine: async () => ({ async stop() {} }) });
         locale: "en",
         engine: { kind: "bundled", dir: "/e", bundlePath: "/e/b.js" },
         expectedVersion: "1.0.0",
+        capabilities: {
+          canNotify: false,
+          canPopout: false,
+          canFloat: false,
+          canOpenExternal: false,
+          canPickFiles: false,
+          canReadDroppedFiles: false,
+        },
       });
 
       const messages = await collectMessages(child);

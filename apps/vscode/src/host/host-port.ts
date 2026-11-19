@@ -69,18 +69,33 @@ const ENGINE_ARGV_PREFIX: readonly string[] = [
   "--ws-token-file",
 ];
 
-/** What this shell can do, in the six flags the core branches on. */
+/**
+ * What this shell can do, in the six flags the core branches on.
+ *
+ * A capability is reported `true` only where this shell actually implements it.
+ * The rule the requirement states is that a missing capability hides its entry
+ * point, so a `true` here is a promise that the action exists: claiming
+ * notifications would render an entry that does nothing, and claiming a file
+ * picker would offer one that only knows how to pick directories.
+ */
 export type VSCodeHostCapabilities = {
-  /** A webview can show an OS notification through the extension host. */
-  readonly canNotify: true;
+  /**
+   * No OS notification: the user ruled that failures are reported in the panel
+   * and the status bar, never as a system popup.
+   */
+  readonly canNotify: false;
   /** A panel cannot be popped into its own OS window; that is desktop only. */
   readonly canPopout: false;
   /** A floating/pinned window is a desktop window operation. */
   readonly canFloat: false;
-  /** `env.openExternal` exists and only accepts `http:`/`https:`. */
-  readonly canOpenExternal: true;
-  /** `window.showOpenDialog` exists. */
-  readonly canPickFiles: true;
+  /** `env.openExternal` is not wired in this build, so nothing may offer a link. */
+  readonly canOpenExternal: false;
+  /**
+   * Only a directory picker exists (the engine folder). The file picker this
+   * flag names is not wired, and reporting it would offer an action that cannot
+   * complete.
+   */
+  readonly canPickFiles: false;
   /**
    * A webview drop cannot expose a readable path to the extension host, so the
    * path half of the dropped-file union is unavailable and the caller must
@@ -97,11 +112,11 @@ export type VSCodeHostCapabilities = {
  * silently change what another was told.
  */
 export const VSCODE_HOST_CAPABILITIES: VSCodeHostCapabilities = Object.freeze({
-  canNotify: true,
+  canNotify: false,
   canPopout: false,
   canFloat: false,
-  canOpenExternal: true,
-  canPickFiles: true,
+  canOpenExternal: false,
+  canPickFiles: false,
   canReadDroppedFiles: false,
 });
 

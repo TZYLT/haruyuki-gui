@@ -35,6 +35,8 @@
  * log line, never placed in argv and never put in an environment variable.
  */
 
+import { BRIDGE_VERSION } from "../shared/version.js";
+import { frameMessage } from "./frame-path.js";
 import { isJsonValue, narrowHostToCore } from "./ipc.js";
 import type {
   CoreInit,
@@ -45,7 +47,9 @@ import type {
   RuntimeFailure,
 } from "./ipc.js";
 
+import { nextSeq } from "@haruyuki/core";
 import type { CommandCall, CommandReply } from "@haruyuki/core";
+import type { Frame } from "@haruyuki/protocol";
 
 /** Default cadence of the parent-pid check. */
 const DEFAULT_WATCHDOG_INTERVAL_MS = 5_000;
@@ -64,6 +68,16 @@ export type CoreEngine = {
   onFrame?: (listener: (channel: FrameChannel, payload: string) => void) => () => void;
   /** Subscribe to engine log lines; the returned function unsubscribes. */
   onLog?: (listener: (line: string) => void) => () => void;
+  /**
+   * Subscribe to the engine's own state changes; the returned function
+   * unsubscribes.
+   *
+   * Without this, an engine that dies after `ready` is invisible: the facade
+   * behind it knows, this child does not, and the host goes on showing a
+   * connected panel over a socket with nothing behind it. The facade is a child
+   * of this process, so this is the only place the fact can enter the shell.
+   */
+  onState?: (listener: (state: string) => void) => () => void;
 };
 
 /** Start the engine described by `init`. */
@@ -248,6 +262,30 @@ export function runCoreMain(options: CoreMainOptions): CoreRunner {
         }),
       );
     }
+
+    if (running.onState !== undefined) {
+      engineSubscriptions.push(
+        running.onState((state) => {
+          // Only the end of the engine is news here. Every other state is one
+          // this child produced itself, and re-reporting it would make the host
+          // see the same transition twice.
+          if (state !== "failed" && state !== "stopped") return;
+
+          // The engine was lost after this child said `ready`. The requirement
+          // keeps the panel's content and reports the disconnection; it does not
+          // bring the engine back, so this is a report and nothing more.
+          ready = false;
+
+          emitStatus({
+            phase: "failed",
+            failure: {
+              kind: "engine-lost",
+              detail: `the engine stopped after it was ready (state: ${state})`,
+            },
+          });
+        }),
+      );
+    }
   }
 
   /** Stop the engine once, whatever the trigger. */
@@ -412,6 +450,48 @@ export function runCoreMain(options: CoreMainOptions): CoreRunner {
     }
   }
 
+  /**
+   * Answer the panel's announcement.
+   *
+   * The comparison is the panel's bridge version against this process's, which
+   * is what the requirement asks the core to judge: a panel speaking another
+   * generation of the message family has to be refused rather than allowed to
+   * half-work. The verdict goes back as a frame, because that is the channel the
+   * panel already reads for control traffic.
+   *
+   * @param appVersion the panel's build, echoed back for the log
+   * @param bridgeVersion the message family the panel speaks
+   */
+  function onBridgeReady(appVersion: string, bridgeVersion: string): void {
+    const accepted = bridgeVersion === BRIDGE_VERSION;
+    const detail = accepted
+      ? `${appVersion} speaks bridge ${bridgeVersion}`
+      : `the panel speaks bridge ${bridgeVersion}, this core speaks ${BRIDGE_VERSION}`;
+
+    if (!accepted) emitLog(`bridge refused: ${detail}`);
+
+    // A frame, not a private message: the sequencer's own contract says the
+    // acceptance is what establishes the renderer's watermark, so it has to
+    // travel in the frame envelope and take a number from the one issuer.
+    const frame: Frame = {
+      v: 1,
+      ch: "control",
+      seq: nextSeq(),
+      t: accepted ? "bridge.accept" : "bridge.reject",
+      body: accepted ? {} : { code: "bridge-version", detail },
+    };
+
+    const encoded = frameMessage("control", frame);
+
+    if (!encoded.ok) {
+      emitLog(`the bridge verdict could not be encoded: ${encoded.reason}`);
+
+      return;
+    }
+
+    send(encoded.message);
+  }
+
   /** Route one narrowed host message. */
   function dispatch(message: HostToCore): void {
     switch (message.kind) {
@@ -426,6 +506,9 @@ export function runCoreMain(options: CoreMainOptions): CoreRunner {
         return;
       case "shutdown":
         void leave(CLEAN_EXIT_CODE, { phase: "stopped" });
+        return;
+      case "bridge.ready":
+        onBridgeReady(message.appVersion, message.bridgeVersion);
     }
   }
 

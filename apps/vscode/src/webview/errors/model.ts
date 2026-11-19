@@ -47,7 +47,13 @@ export type ShellFaultAction =
  * here", and they differ only in what the page can say about the folder.
  */
 export type ShellFaultSituation =
-  "engineMissing" | "invalidEngineDir" | "untestedEngine" | "noWorkspace" | "engineStopped";
+  | "engineMissing"
+  | "invalidEngineDir"
+  | "untestedEngine"
+  | "noWorkspace"
+  | "engineStopped"
+  | "engineLost"
+  | "coreStopped";
 
 /** The failure, as the wire carries it. Structural so this module imports no core type. */
 export interface FaultInput {
@@ -94,13 +100,23 @@ const SITUATIONS: Readonly<Record<string, ShellFaultSituation>> = {
   "invalid-dir": "invalidEngineDir",
   "untested-engine": "untestedEngine",
   "no-workspace": "noWorkspace",
-  // The engine was found and did not start, or it started and then died. Both
-  // are "it is not running now", and the answer to both is to try again -- a
-  // page that only offered "choose another directory" would leave the one
-  // action the user wants -- retry -- unavailable.
+  // The engine was found and did not come up. "It is not running now", and the
+  // answer is to try again -- a page that only offered "choose another
+  // directory" would leave the one action the user wants unavailable.
   "start-failed": "engineStopped",
-  crash: "engineStopped",
-  internal: "engineStopped",
+  // The engine was started and then went away. The shell is intact and the
+  // panel still holds its content, so this is the disconnected sentence, not
+  // the failed-to-start one.
+  "engine-lost": "engineLost",
+  // A folder that is there and cannot say what version it is. The page names it
+  // as a bad directory rather than as a missing one: the repair is a different
+  // folder, not a search.
+  "version-unknown": "invalidEngineDir",
+  // The shell's own child is gone. The requirement keeps this row separate from
+  // the engine's: a stopped core takes the shell with it, and telling the user
+  // the engine did not start would name the wrong process.
+  crash: "coreStopped",
+  internal: "coreStopped",
 };
 
 /** The answers per situation, in the order the page offers them. */
@@ -119,6 +135,12 @@ const ACTIONS: Readonly<Record<ShellFaultSituation, readonly ShellFaultAction[]>
   // Retry leads because it is the only answer that needs no decision: the
   // engine was the right one a moment ago. The other two are for when it is not.
   engineStopped: ["retry", "chooseEngineDir", "openLogs"],
+  // The engine was the right one and the folder has not changed: retry leads and
+  // the picker stays available for the case where it will not come back.
+  engineLost: ["retry", "chooseEngineDir", "openLogs"],
+  // Retry is the whole answer here: the core is the shell's own child, and the
+  // folder has not changed.
+  coreStopped: ["retry", "openLogs"],
 };
 
 /**

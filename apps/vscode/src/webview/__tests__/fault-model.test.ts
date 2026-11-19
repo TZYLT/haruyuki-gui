@@ -119,13 +119,19 @@ describe("the fault model", () => {
     // The engine was the right one a moment ago, so "choose another directory"
     // is the wrong answer to lead with: what the user wants is the same engine
     // back. Retry leads, and the other two are for when it is not coming back.
+    // A core that died is not an engine that died: the requirement keeps the two
+    // rows apart, because the sentence names a different process.
     const crashed = toShellFault({ kind: "crash", detail: "the child died" });
 
-    expect(crashed.situation).toBe("engineStopped");
+    expect(crashed.situation).toBe("coreStopped");
     expect(crashed.actions[0]).toBe("retry");
 
-    // A start that failed and a child that reported an internal failure are the
-    // same question from the page's side: it is not running now.
+    // An engine that stopped after it was ready, and one that never came up, are
+    // both "it is not running now" and both offer the retry first.
+    const lost = toShellFault({ kind: "engine-lost", detail: "it stopped" });
+
+    expect(lost.situation).toBe("engineLost");
+    expect(lost.actions[0]).toBe("retry");
     expect(toShellFault({ kind: "internal", detail: "a bug" }).actions).toContain("retry");
     expect(toShellFault({ kind: "start-failed", detail: "no spawn" }).actions).toContain("retry");
   });

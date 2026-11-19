@@ -28,6 +28,8 @@
  * members, so a test drives this module with a recording double and no editor.
  */
 
+import { createTranslator, type Translator } from "@haruyuki/ui";
+
 import type { CoreStatusSnapshot, RuntimePhase } from "../core/ipc.js";
 import { COMMAND_OPEN_PANEL } from "../shared/channels.js";
 import { APP_VERSION, TESTED_ENGINE_VERSION } from "../shared/version.js";
@@ -83,6 +85,14 @@ export interface StatusBarOptions {
   readonly item: StatusBarLike;
   /** The app version a tooltip reports. Defaults to the shell's constant. */
   readonly appVersion?: string;
+  /**
+   * The editor's language tag.
+   *
+   * The five states are words, not icons: a window whose editor speaks Chinese
+   * must not show "Connected" in the status bar while the panel it opens is in
+   * Chinese. Defaults to English so a caller that has no locale still renders.
+   */
+  readonly locale?: string;
   /** Diagnostic sink for transitions a user cannot see. */
   readonly log?: StatusLog;
 }
@@ -102,19 +112,36 @@ export interface StatusBar {
 }
 
 /**
- * The status-bar word for each state.
+ * The catalogue key for each state.
  *
- * Not a translation table: the extension host has no message catalogue of its
- * own, and the item renders one word next to an icon. The prose sentence that
- * explains a failure lives in the panel, which does have one.
+ * The extension host reads the same catalogue the panel does: a hardcoded
+ * English word here is an untranslated word in a Chinese editor, and the
+ * requirement names the status bar as a surface that must follow the language.
+ *
+ * A `switch` returning `t()` calls with literal keys rather than a
+ * `Record<StatusState, MessageKey>` looked up at the call site, because the i18n
+ * gate counts a key as used only where its literal appears inside `t(`. A table
+ * of keys would make every one of the five read as declared-but-unused, which is
+ * the gate working as designed rather than a false alarm.
+ *
+ * @param t the catalogue translator
+ * @param state the state whose word is wanted
+ * @returns the word for that state, in the translator's language
  */
-const LABELS: Readonly<Record<StatusState, string>> = {
-  inactive: "Idle",
-  starting: "Starting",
-  connected: "Connected",
-  disconnected: "Disconnected",
-  failed: "Failed",
-};
+function labelOf(t: Translator, state: StatusState): string {
+  switch (state) {
+    case "inactive":
+      return t("common.engine.status.inactive");
+    case "starting":
+      return t("common.engine.status.starting");
+    case "connected":
+      return t("common.engine.status.connected");
+    case "disconnected":
+      return t("common.engine.status.disconnected");
+    case "failed":
+      return t("common.engine.status.failed");
+  }
+}
 
 /**
  * The theme icon each state shows.
@@ -179,6 +206,9 @@ export function createStatusBar(options: StatusBarOptions): StatusBar {
   const { item } = options;
   const log = options.log ?? ((): void => undefined);
   const appVersion = options.appVersion ?? APP_VERSION;
+  // One translator for the whole item. The catalogue is the panel's own, so a
+  // renamed key breaks the host's compile in the same step it breaks the panel's.
+  const t = createTranslator(options.locale ?? "en");
 
   let state: StatusState = "inactive";
   let details: StatusDetails = {};
@@ -195,15 +225,15 @@ export function createStatusBar(options: StatusBarOptions): StatusBar {
    */
   function tooltip(): string {
     return [
-      `Haruyuki: ${LABELS[state]}`,
+      `Haruyuki: ${labelOf(t, state)}`,
       "",
       `App version: ${appVersion}`,
       `Tested engine: ${TESTED_ENGINE_VERSION}`,
-      `Engine version: ${details.engineVersion ?? "not reported"}`,
-      `Engine source: ${details.source ?? "unknown"}`,
-      `Working directory: ${details.cwd ?? "unknown"}`,
+      t("common.engine.tooltip.version", { version: details.engineVersion ?? "not reported" }),
+      t("common.engine.tooltip.source", { source: details.source ?? "unknown" }),
+      t("common.engine.tooltip.cwd", { cwd: details.cwd ?? "unknown" }),
       "",
-      "Click to open the Haruyuki panel.",
+      t("common.engine.tooltip.open"),
     ].join("\n");
   }
 
@@ -217,7 +247,7 @@ export function createStatusBar(options: StatusBarOptions): StatusBar {
     state = next;
     details = nextDetails;
 
-    item.text = `${ICONS[next]} ${LABELS[next]}`;
+    item.text = `${ICONS[next]} ${labelOf(t, next)}`;
     item.tooltip = tooltip();
     item.command = COMMAND_OPEN_PANEL;
 
@@ -269,7 +299,7 @@ export function createStatusBar(options: StatusBarOptions): StatusBar {
     },
 
     textFor(candidate: StatusState): string {
-      return `${ICONS[candidate]} ${LABELS[candidate]}`;
+      return `${ICONS[candidate]} ${labelOf(t, candidate)}`;
     },
   };
 }

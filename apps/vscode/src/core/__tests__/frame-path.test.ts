@@ -277,6 +277,14 @@ describe("the outlet as the child lifecycle's engine seam", () => {
       locale: "en",
       engine: { kind: "bundled", dir: "/engine", bundlePath: "/engine/haruyuki.js" },
       expectedVersion: "1.0.0",
+      capabilities: {
+        canNotify: false,
+        canPopout: false,
+        canFloat: false,
+        canOpenExternal: false,
+        canPickFiles: false,
+        canReadDroppedFiles: false,
+      },
     });
 
     // Past `ready`, the lifecycle has subscribed to the engine.

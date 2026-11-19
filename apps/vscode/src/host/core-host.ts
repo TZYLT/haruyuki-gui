@@ -159,6 +159,12 @@ export interface CoreHost {
   secure(op: SecureOp, key: string, value?: string): Promise<string | undefined>;
   /** Ask the child to shut down, then kill it if it does not. Idempotent. */
   stop(): Promise<void>;
+  /**
+   * Carry the panel's announcement to the child.
+   *
+   * @returns whether the child was there to receive it
+   */
+  announce(appVersion: string, bridgeVersion: string): boolean;
   /** @returns an unsubscribe function */
   onFrame(callback: FrameListener): () => void;
   /** @returns an unsubscribe function */
@@ -381,6 +387,22 @@ export class CoreProcessHost implements CoreHost {
         resolve(failureReply("NOT_CONNECTED", "the core child pipe is closed"));
       }
     });
+  }
+
+  /**
+   * Carry the panel's announcement to the child.
+   *
+   * Nothing is awaited: the answer is a frame, and frames already have one road
+   * into the panel. A child that is gone answers nothing, which the caller can
+   * tell from the return value rather than from a timeout on a message that was
+   * never going to be answered.
+   *
+   * @param appVersion the panel's build
+   * @param bridgeVersion the message family the panel speaks
+   * @returns whether the child was there to receive it
+   */
+  announce(appVersion: string, bridgeVersion: string): boolean {
+    return this.send({ kind: "bridge.ready", appVersion, bridgeVersion });
   }
 
   /**

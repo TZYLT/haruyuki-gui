@@ -11,12 +11,11 @@
  * force-killed afterwards, so a failing assertion never leaks a process.
  */
 
-import { spawn } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { CoreProcessHost, type CoreHostInit } from "../core-host.js";
 
@@ -59,6 +58,14 @@ const INIT: CoreHostInit = {
   locale: "en",
   engine: { kind: "bundled", dir: "/engine", bundlePath: "/engine/haruyuki.js" },
   expectedVersion: "1.0.0",
+  capabilities: {
+    canNotify: false,
+    canPopout: false,
+    canFloat: false,
+    canOpenExternal: false,
+    canPickFiles: false,
+    canReadDroppedFiles: false,
+  },
 };
 
 /**
@@ -249,16 +256,39 @@ setInterval(() => {}, 1000);
   });
 
   it("settles every in-flight call when the child crashes", async () => {
-    const entry = makeChild(childSource(`send({ kind: "ready" });`));
+    // The child takes the command off the pipe and exits without answering it.
+    // Nothing calls `stop` here: a stop settles the command before the exit arm
+    // runs, so it would pass even with the exit handler's settlement removed.
+    const entry = makeChild(`
+process.on("message", (message) => {
+  if (message.kind === "init") {
+    process.send({ kind: "ready" });
+    return;
+  }
+
+  if (message.kind === "command.invoke") process.exit(3);
+});
+`);
     const host = hostFor(entry);
+    const failures: string[] = [];
+
+    host.onStatus((status) => {
+      if (status.phase === "failed") failures.push(status.failure?.kind ?? "none");
+    });
 
     await host.start(INIT);
 
     const inFlight = host.invoke({ capability: "device.info", body: {} });
 
-    await host.stop();
+    // The detail is the exit sentence. A pipe that was already closed when the
+    // command was sent answers the same code with a different one.
+    await expect(inFlight).resolves.toMatchObject({
+      ok: false,
+      code: "NOT_CONNECTED",
+      detail: expect.stringContaining("exited"),
+    });
 
-    await expect(inFlight).resolves.toMatchObject({ ok: false, code: "NOT_CONNECTED" });
+    expect(failures).toEqual(["crash"]);
   });
 });
 
@@ -331,6 +361,7 @@ describe("stop", () => {
   });
 
   it("kills a child that ignores shutdown, inside the stop budget", async () => {
+    const stopTimeoutMs = 150;
     const entry = makeChild(`
 process.on("message", (message) => {
   if (message.kind === "init") process.send({ kind: "ready" });
@@ -338,7 +369,7 @@ process.on("message", (message) => {
 });
 setInterval(() => {}, 1000);
 `);
-    const host = new CoreProcessHost({ entryPath: entry, stopTimeoutMs: 150 });
+    const host = new CoreProcessHost({ entryPath: entry, stopTimeoutMs });
 
     started.add(host);
     await host.start(INIT);
@@ -347,7 +378,10 @@ setInterval(() => {}, 1000);
 
     await host.stop();
 
-    expect(Date.now() - began).toBeLessThan(5000);
+    // The configured budget plus the margin the kill and the exit event need,
+    // not a number 33 times larger: a stop that silently spends seconds is the
+    // bug this pins, and the old ceiling could not see it.
+    expect(Date.now() - began).toBeLessThan(stopTimeoutMs + 1_000);
   });
 });
 
@@ -426,9 +460,12 @@ process.on("message", (message) => {
     });
 
     await watcher.start(INIT);
-    await new Promise((resolve) => setTimeout(resolve, 300));
 
-    expect(failures).toEqual(["crash"]);
+    // The child exits on its own schedule. Polling for the report is the
+    // contract; a fixed sleep is a race that happens to win on a fast machine.
+    await vi.waitFor(() => {
+      expect(failures).toEqual(["crash"]);
+    });
 
     const orderly = makeChild(
       `process.on("message", (m) => m.kind === "init" && process.send({ kind: "ready" }));`,
@@ -526,7 +563,10 @@ describe("execPath", () => {
   it("runs a plain Node child without ELECTRON_RUN_AS_NODE, which is the remote case", async () => {
     const entry = makeChild(childSource(`send({ kind: "ready" });`));
 
+    // A successful boot from this process binary is the evidence: a plain Node
+    // host has no Electron binary to re-execute, so a child handed the variable
+    // would fail to start instead of answering ready. The variable's own value
+    // is asserted in the sibling case above.
     await expect(hostFor(entry).start(INIT)).resolves.toBeUndefined();
-    expect(spawn).toBeTypeOf("function");
   });
 });

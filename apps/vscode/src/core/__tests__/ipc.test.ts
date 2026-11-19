@@ -40,6 +40,16 @@ const INIT = {
   locale: "en",
   engine: { kind: "bundled", dir: "/engine", bundlePath: "/engine/haruyuki.js" },
   expectedVersion: "1.0.0",
+  // The capability table travels on `init`; a host that omits it is refused,
+  // because a missing flag read as "yes" offers an entry point nothing backs.
+  capabilities: {
+    canNotify: false,
+    canPopout: false,
+    canFloat: false,
+    canOpenExternal: false,
+    canPickFiles: false,
+    canReadDroppedFiles: false,
+  },
 };
 
 describe("isJsonValue", () => {

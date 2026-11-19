@@ -114,38 +114,27 @@ function hostPipe(): HostPipe {
 }
 
 /**
- * What the extension host can do, as the proxy reports it.
- *
- * Frozen here instead of asked for, because the pipe carries no capability
- * message: these are properties of the shell, not of one run. The proxy is the
- * only reader, and it exists so a consumer gets one table rather than a second
- * copy per feature.
- */
-const VSCODE_CAPABILITIES = {
-  canNotify: true,
-  canPopout: false,
-  canFloat: false,
-  canOpenExternal: true,
-  canPickFiles: true,
-  canReadDroppedFiles: false,
-} as const;
-
-/**
  * Build the proxy over the real pipe.
+ *
+ * The capability table is the host's, carried on `init`. It used to be a
+ * hardcoded copy here, because the pipe carried nothing that could bring it --
+ * so the two tables could disagree and neither process would notice. A shell
+ * that stopped offering notifications while this copy still claimed them would
+ * have gone on offering an entry point that did nothing.
  *
  * `resolveSpawnSpec` is deliberately absent: the provider lives in the host
  * process, and the pipe has no message that could carry its answer here. The
  * member therefore refuses by name, which is what {@link startEngineWiring}
  * expects to hear.
  *
- * @param paths the four roots from `init`
+ * @param init the host's `init`, which carries the paths and the capabilities
  * @returns the port as this process sees it
  */
-function createPort(paths: CorePaths): VSCodeHostPortProxy {
+function createPort(init: CoreInit): VSCodeHostPortProxy {
   return createVSCodeHostPortProxy({
     pipe: hostPipe(),
-    capabilities: VSCODE_CAPABILITIES,
-    paths,
+    capabilities: init.capabilities,
+    paths: init.paths,
   });
 }
 
@@ -316,7 +305,7 @@ function createWiring(): {
   }
 
   const startEngine: EngineStarter = async (init: CoreInit): Promise<CoreEngine> => {
-    port ??= createPort(init.paths);
+    port ??= createPort(init);
 
     const wiring = await startEngineWiring(init, requirePort());
     current = wiring;
@@ -329,6 +318,13 @@ function createWiring(): {
       // The outlet already has the engine handle's signature, so no adapter is
       // needed and no frame can be re-encoded on the way out.
       onFrame: wiring.outlet.onFrame,
+      // The facade is this process's child. If it stops after `ready`, nothing
+      // else in the shell can see it, so the subscription is wired here rather
+      // than left to a reader that may not exist.
+      onState: (listener) =>
+        wiring.engine.onState((state) => {
+          listener(state);
+        }),
     };
   };
 

@@ -67,6 +67,9 @@ const PATH_SUBDIRECTORY = "haruyuki";
 /** Why a resolution could not name a startable engine. */
 export type EngineResolutionFailure = "missing" | "invalid-dir" | "version-unknown";
 
+/** The three rungs an external engine can be found on. */
+export type EngineOrigin = "setting" | "path" | "picked";
+
 /**
  * The answer to "which engine, and is it the tested one".
  *
@@ -84,12 +87,30 @@ export type EngineResolution =
       readonly expectedVersion: string;
       /** Whether `version` is exactly `expectedVersion`. */
       readonly tested: boolean;
+      /**
+       * Which rung found it.
+       *
+       * Kept apart from `source.kind`, which only says whether the engine ships
+       * inside the extension. The tooltip has to name the rung -- the setting,
+       * PATH or a hand pick -- because that is what tells the user where to go
+       * when the engine is not the one they expected.
+       */
+      readonly origin: EngineOrigin;
     }
   | {
       readonly ok: false;
       readonly reason: EngineResolutionFailure;
       /** One English sentence per rung that failed; never parsed for control flow. */
       readonly detail?: string;
+      /**
+       * The directories that were opened and refused.
+       *
+       * Carried as data rather than left to be read back out of `detail`: a
+       * caller that has to parse a sentence is a caller that breaks the day the
+       * sentence is reworded, and `PATH` is deliberately absent from this list
+       * because those directories are inputs, not places anyone can go and fix.
+       */
+      readonly inspected?: readonly string[];
     };
 
 /**
@@ -167,6 +188,8 @@ type Attempt =
       readonly kind: "unusable";
       readonly failure: EngineResolutionFailure;
       readonly note: string;
+      /** The directory that was opened and refused, when there was one. */
+      readonly inspected?: string;
     };
 
 /** Everything {@link resolveEngine} needs. */
@@ -201,6 +224,7 @@ export async function resolveEngine(options: ResolveEngineOptions): Promise<Engi
   const expectedVersion = (options.testedVersion ?? TESTED_ENGINE_VERSION).trim();
   const notes: string[] = [];
   const failures = new Set<EngineResolutionFailure>();
+  const inspected = new Set<string>();
 
   const candidates: Candidate[] = [];
 
@@ -232,7 +256,7 @@ export async function resolveEngine(options: ResolveEngineOptions): Promise<Engi
   }
 
   for (const candidate of candidates) {
-    const attempt = await attemptAt(candidate.dir, expectedVersion);
+    const attempt = await attemptAt(candidate.dir, expectedVersion, candidate.origin);
 
     if (attempt.kind === "resolved") {
       // The durable record follows the answer: a pick that resolved is the one
@@ -247,12 +271,15 @@ export async function resolveEngine(options: ResolveEngineOptions): Promise<Engi
 
     notes.push(`${ORIGIN_LABEL[candidate.origin]} does not name a usable engine: ${attempt.note}`);
     failures.add(attempt.failure);
+
+    if (attempt.inspected !== undefined) inspected.add(attempt.inspected);
   }
 
   return {
     ok: false,
     reason: worstFailure(failures),
     detail: `no engine to start: ${notes.join("; ")}`,
+    ...(inspected.size === 0 ? {} : { inspected: [...inspected] }),
   };
 }
 
@@ -263,7 +290,11 @@ export async function resolveEngine(options: ResolveEngineOptions): Promise<Engi
  * @param expectedVersion the tested build, already trimmed
  * @returns the resolution, or why this directory cannot answer
  */
-async function attemptAt(dir: string, expectedVersion: string): Promise<Attempt> {
+async function attemptAt(
+  dir: string,
+  expectedVersion: string,
+  origin: EngineOrigin,
+): Promise<Attempt> {
   if (!isAbsolute(dir)) {
     return {
       kind: "unusable",
@@ -279,6 +310,7 @@ async function attemptAt(dir: string, expectedVersion: string): Promise<Attempt>
       kind: "unusable",
       failure: "invalid-dir",
       note: `${checked.dir}: ${checked.problems.join(", ")}`,
+      inspected: checked.dir,
     };
   }
 
@@ -287,6 +319,7 @@ async function attemptAt(dir: string, expectedVersion: string): Promise<Attempt>
       kind: "unusable",
       failure: "version-unknown",
       note: `${checked.dir} has no readable version in ${ENGINE_MANIFEST_FILE}`,
+      inspected: checked.dir,
     };
   }
 
@@ -297,6 +330,7 @@ async function attemptAt(dir: string, expectedVersion: string): Promise<Attempt>
       tested: checked.version === expectedVersion,
       version: checked.version,
       expectedVersion,
+      origin,
       source: {
         kind: "external",
         dir: checked.dir,

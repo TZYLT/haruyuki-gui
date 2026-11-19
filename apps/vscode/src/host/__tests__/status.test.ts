@@ -216,12 +216,17 @@ describe("status bar: what it reports", () => {
 
     bar.apply(snapshot("ready", { engineVersion: "0.6.0" }));
 
+    // Same state, same facts: the tooltip still names the old version.
+    expect(tooltipLine(recorder.item.tooltip, "Engine version:")).toBe("Engine version: 0.6.0");
     expect(recorder.writes.length).toBe(after);
     expect(recorder.item.text).toBe(text);
 
-    // A new fact is a new render, not a no-op.
+    // A new fact is a new render, not a no-op. The item's text is the state word
+    // alone, so a memo that ignores the facts is only visible in the tooltip --
+    // which is exactly where the third fact line lives.
     bar.apply(snapshot("ready", { engineVersion: "0.6.1" }));
 
+    expect(tooltipLine(recorder.item.tooltip, "Engine version:")).toBe("Engine version: 0.6.1");
     expect(recorder.item.text).toBe(text);
     expect(recorder.writes.length).toBe(after);
   });
