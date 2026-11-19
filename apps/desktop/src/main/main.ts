@@ -80,10 +80,9 @@ import { createRendererRecovery } from "./crash/renderer-recovery.js";
 import { createEngineCrashHandler } from "./crash/engine-handler.js";
 import { showCrashPage, crashVersions } from "./crash/wiring.js";
 import { crashDirFor, readCrashRecords, type CrashRecord } from "./crash/records.js";
-import { runShellCleanup } from "./diagnostics/cleanup.js";
+import { runBootSequence, sweepShell } from "./boot-sequence.js";
 import { registerMainDiagnosticsIpc } from "./diagnostics/main-ipc.js";
-import { registerUpdateIpc } from "./update-check.js";
-import { installAboutOnQuit, type AboutInstall } from "./about-wiring.js";
+import { installAboutForRoot, type AboutInstall } from "./about-wiring.js";
 import { getSessionDiagnosticsSource } from "./diagnostics/session.js";
 import { runBootSupervision, type StaleCandidate } from "./supervision/boot.js";
 import { startRuntimeShell } from "./runtime/shell.js";
@@ -96,6 +95,10 @@ import {
   saveSettings,
 } from "./settings-io.js";
 import { wireBridge, type BridgeWiring } from "./bridge/wire.js";
+import type { LayoutWiring } from "./layout/wiring.js";
+import type { CommandLifecycle } from "./command/lifecycle.js";
+import { createShellServices } from "./services.js";
+import type { LayoutSaveRequest } from "@haruyuki/protocol";
 import {
   DEFAULT_SETTINGS,
   isWindowVisible,
@@ -131,6 +134,16 @@ let quitSupervisor: QuitSupervisor | null = null;
 
 /** D3's app-wide host and its `ipcMain` handlers; created once after `whenReady`. */
 let bridge: BridgeWiring | null = null;
+
+/**
+ * The layout subsystem outlives a renderer reload but not the app. It is kept
+ * beside the bridge because the two close in order: the layout flushes its open
+ * save window before the bridge that carries snapshots goes away.
+ */
+let layoutWiring: LayoutWiring | null = null;
+
+/** The command path: IPC plus the service, rebuilt when an engine arrives. */
+let commandLifecycle: CommandLifecycle | null = null;
 
 /** The about surface's two channels and its window; released on quit. */
 let about: AboutInstall | null = null;
@@ -339,6 +352,7 @@ async function createWindow(allowedDevtools: boolean, locale: string): Promise<B
 
   window.once("ready-to-show", () => window.show());
   bridge?.attachWindow(window);
+  layoutWiring?.publish();
 
   window.on("close", () => {
     settings = rememberGeometry(settings, window);
@@ -761,33 +775,12 @@ async function main(): Promise<void> {
     callback({ responseHeaders: headers });
   });
 
-  const loaded = await loadSettings(logger);
-  settings = loaded.settings;
-  settingsWritable = loaded.writable;
-  // Retention runs before supervision and the window; a failed sweep is a log line only.
-  await runShellCleanup({
-    logsDir: app.getPath("logs"),
-    crashDir: crashDirFor(userData),
-    crashDumpsDir: app.getPath("crashDumps"),
-    ...(settings.logs === undefined ? {} : { logs: settings.logs }),
-    onLog: logSupervision,
-  });
-  // Boot supervision runs before the menu and the window (docs/33 section
-  // 5.5): a stale engine must be gone, or listed for P10, before the user can
-  // ask about it. Its failures are logged inside and never abort the boot.
-  const boot = await runBootSupervision({
-    userData,
-    appVersion: app.getVersion(),
-    onLog: logSupervision,
-  });
-
-  staleCandidates = boot.stale;
-
-  logger.info("supervision.boot", {
-    stale: boot.stale.length,
-    reclaimed: boot.reclaimed.length,
-    candidates: boot.stale.map((candidate) => candidate.pid),
-  });
+  // Settings, then the sweep a previous run left behind, then the stale engine:
+  // the order and the failure behaviour are `boot-sequence.ts`'s, unchanged.
+  const booted = await runBootSequence({ userData, logSupervision, logger });
+  settings = booted.settings;
+  settingsWritable = booted.settingsWritable;
+  staleCandidates = booted.staleCandidates;
 
   // Installed once with a null host so a quit before the engine start finishes
   // still clears the boot marker. The host is attached on start success.
@@ -798,10 +791,31 @@ async function main(): Promise<void> {
     onLog: logSupervision,
   });
 
-  bridge = wireBridge({
+  const bridgeWiring = wireBridge({
     coreVersion: app.getVersion(),
     log: (event, detail) => logger?.info(event, detail),
+    layoutSave: (request) =>
+      layoutWiring === null
+        ? { ok: false, code: "LAYOUT_UNAVAILABLE" }
+        : layoutWiring.channel.handleSave(request as LayoutSaveRequest),
+    layoutState: () => {
+      if (layoutWiring === null) {
+        throw new Error("layout wiring is not ready");
+      }
+
+      return layoutWiring.channel.handleState();
+    },
   });
+  bridge = bridgeWiring;
+
+  const services = await createShellServices({
+    userData,
+    ipc: ipcMain,
+    host: bridgeWiring,
+    log: (code, detail) => logger?.info(code, detail),
+  });
+  layoutWiring = services.layout;
+  commandLifecycle = services.command;
 
   const locale = chooseLocale(settings.locale, app.getLocale());
 
@@ -809,14 +823,12 @@ async function main(): Promise<void> {
   // Installed before the menu because the menu's two build-entry items take its
   // `open` callback; registering it here also means a click can never reach a
   // channel that does not exist yet.
-  about = installAboutOnQuit({
+  about = installAboutForRoot({
     here: HERE,
-    onQuit: (callback) => {
-      app.on("will-quit", callback);
-    },
     ipcMain,
+    app,
     locale: () => locale,
-    theme: () => ({ mode: settings.theme, contrast: settings.contrast }),
+    settings: () => ({ mode: settings.theme, contrast: settings.contrast }),
     devtoolsAllowed,
     liveBundlePath: () => engineHost?.bundlePath ?? null,
     ...(logger === null ? {} : { logger }),
@@ -857,25 +869,8 @@ async function main(): Promise<void> {
     locale,
     getEngineHost: () => engineHost,
     cleanup: async () => {
-      await runShellCleanup({
-        logsDir: app.getPath("logs"),
-        crashDir: crashDirFor(userData),
-        crashDumpsDir: app.getPath("crashDumps"),
-        ...(settings.logs === undefined ? {} : { logs: settings.logs }),
-        onLog: logSupervision,
-      });
+      await sweepShell({ userData, logSupervision, logger }, settings);
     },
-  });
-
-  // The about window's update button. Registered here rather than inside the
-  // window's own module because the version it reports is the running app's, and
-  // this process is the one that knows it. Nothing in this call reaches the
-  // network: the handler only answers when the renderer invokes it, which is
-  // what keeps a launch from spending the query quota nobody asked for.
-  registerUpdateIpc({
-    ipc: ipcMain,
-    current: () => app.getVersion(),
-    ...(logger === null ? {} : { logger }),
   });
 
   // Window first; the runtime layer verifies the lock and hands D4 the bundle.
@@ -891,7 +886,10 @@ async function main(): Promise<void> {
     onCrash: handleEngineCrash,
     quitSupervisor,
     onHost: (host) => {
+      if (host === null) return;
+
       engineHost = host;
+      commandLifecycle?.onHost(host);
     },
   }).catch((error: unknown) => logger?.warn("runtime.startup", { detail: String(error) }));
 
@@ -924,6 +922,10 @@ app.on("window-all-closed", () => {
 // ended -- are the ones most likely to be missing. `will-quit` because it can be
 // cancelled, and an async drain needs to hold the quit open to be worth anything.
 app.on("will-quit", (event) => {
+  commandLifecycle?.dispose();
+  commandLifecycle = null;
+  void layoutWiring?.close();
+  layoutWiring = null;
   bridge?.dispose();
   bridge = null;
   // The port's cleanup runs first, and only once. It is not awaited here: the drain

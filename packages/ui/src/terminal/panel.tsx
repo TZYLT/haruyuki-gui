@@ -156,6 +156,16 @@ export interface TerminalPanelProps {
    */
   readonly engineReady: boolean;
   /**
+   * Ask for a session as soon as one can be started.
+   *
+   * A page that is the terminal starts one on open; a panel embedded beside other
+   * content leaves this false so mounting it does not spawn a process the user did
+   * not ask for. The request goes through the same {@link reopen} path a click
+   * uses, so the phase machine sees one kind of start and a second one cannot
+   * arrive behind it.
+   */
+  readonly autoStart?: boolean;
+  /**
    * The terminal router this panel's output arrives on.
    *
    * Optional because a host may not have one -- this package must mount and take
@@ -259,6 +269,7 @@ export function TerminalPanel({
   cwd,
   send,
   engineReady,
+  autoStart,
   router,
   onSearch,
   onExport,
@@ -460,6 +471,18 @@ export function TerminalPanel({
     });
   }, [cwd, dispatch, send, settleCommand, terminalId]);
 
+  // A terminal page is expected to have a shell when it opens, and the engine can
+  // only be asked once it is reachable. Routing this through `reopen` rather than
+  // sending a second kind of spawn keeps one owner of the phase transition: the
+  // toolbar and this effect request the same thing, and the reducer refuses the
+  // second request while the first is in flight.
+  useEffect(() => {
+    if (autoStart !== true || !engineReady) return;
+    if (stateRef.current.phase !== "idle") return;
+
+    reopen();
+  }, [autoStart, engineReady, reopen]);
+
   /** End the running process. Not phase-gated here: the engine ignores a kill for
    * a terminal that is already gone, and a close that was skipped is a process
    * that outlives its panel. */
@@ -468,6 +491,19 @@ export function TerminalPanel({
       settleCommand(outcome, stateRef.current.phase);
     });
   }, [send, settleCommand, terminalId]);
+
+  /**
+   * Clear the emulator's viewport and scrollback.
+   *
+   * Deliberately not routed through `transmit`: this is the one clear the
+   * emulator owns, so it works for a shell whose terminfo cannot clear (cmd.exe,
+   * `TERM=dumb`) and for a session that already exited. The shell is not told,
+   * because it is not being asked to do anything.
+   */
+  const clearScrollback = useCallback((): void => {
+    setMenuOpen(false);
+    hostRef.current?.terminal.clear();
+  }, []);
 
   /** Apply a paste the exit function has already ruled on. */
   const applyPaste = useCallback(
@@ -721,6 +757,7 @@ export function TerminalPanel({
           setMenuOpen(false);
           transmit(CLEAR_SCREEN);
         }}
+        onClearAll={clearScrollback}
         onFontSize={setFontSize}
         onMore={() => setMenuOpen((open) => !open)}
       />

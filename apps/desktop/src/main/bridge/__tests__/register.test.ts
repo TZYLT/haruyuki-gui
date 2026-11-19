@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { APP_PING, FRAME_SUBMIT, LAYOUT_SAVE, TERMINAL_ACK } from "../channels.js";
 import {
   BAD_PAYLOAD,
+  LAYOUT_STATE,
   LAYOUT_UNAVAILABLE,
   registerBridgeIpc,
   type IpcMainLike,
@@ -52,14 +53,14 @@ function createFakeHost(): BridgeSessionHost {
 }
 
 describe("registerBridgeIpc", () => {
-  it("registers the four handlers once", () => {
+  it("registers the five handlers once", () => {
     const { ipc, handlers } = createFakeIpc();
     const host = createFakeHost();
 
     registerBridgeIpc({ ipc, host });
 
     expect([...handlers.keys()].sort()).toEqual(
-      [APP_PING, FRAME_SUBMIT, LAYOUT_SAVE, TERMINAL_ACK].sort(),
+      [APP_PING, FRAME_SUBMIT, LAYOUT_SAVE, LAYOUT_STATE, TERMINAL_ACK].sort(),
     );
   });
 
@@ -153,6 +154,8 @@ describe("registerBridgeIpc", () => {
     dispose();
     dispose();
 
-    expect(removed.sort()).toEqual([APP_PING, FRAME_SUBMIT, LAYOUT_SAVE, TERMINAL_ACK].sort());
+    expect(removed.sort()).toEqual(
+      [APP_PING, FRAME_SUBMIT, LAYOUT_SAVE, LAYOUT_STATE, TERMINAL_ACK].sort(),
+    );
   });
 });

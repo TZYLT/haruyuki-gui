@@ -56,6 +56,7 @@ function renderToolbar(overrides: Partial<Parameters<typeof TerminalToolbar>[0]>
     onReopen: vi.fn(),
     onStop: vi.fn(),
     onClear: vi.fn(),
+    onClearAll: vi.fn(),
     onFontSize: vi.fn(),
     onMore: vi.fn(),
     ...overrides,

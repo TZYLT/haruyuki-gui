@@ -34,6 +34,7 @@
 export const CORE_PACKAGE_NAME = "@haruyuki/core" as const;
 
 export * from "./bridge/index.js";
+export * from "./command/index.js";
 export * from "./engine";
 export * from "./engine/client/index.js";
 export * from "./layout/index.js";

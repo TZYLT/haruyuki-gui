@@ -62,6 +62,7 @@
  */
 
 // @vitest-environment jsdom
+import { Terminal } from "@xterm/xterm";
 import { act, cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -372,7 +373,6 @@ describe("TerminalPanel: the engine is told when the box changes", () => {
 
     expect(resizeCallbacks.length).toBeGreaterThan(0);
   });
-
 });
 
 describe("TerminalPanel: the engine's bytes have a road to the screen", () => {
@@ -777,6 +777,22 @@ describe("TerminalPanel: the toolbar actions", () => {
     await user.click(screen.getByRole("button", { name: "Clear" }));
 
     expect(harness.inputs()).toEqual(["\f"]);
+  });
+
+  it("clears the scrollback through the emulator without sending a byte", async () => {
+    // The second clear is the emulator's own: it must not be a second spelling of
+    // the shell-delegating `\f`, or a shell that cannot clear would leave the
+    // scrollback in place while the button claimed otherwise.
+    const clear = vi.spyOn(Terminal.prototype, "clear");
+    const user = userEvent.setup();
+    const harness = renderPanel();
+    harness.run();
+
+    await user.click(screen.getByRole("button", { name: "Clear scrollback" }));
+
+    expect(clear).toHaveBeenCalledTimes(1);
+    expect(harness.inputs()).toEqual([]);
+    clear.mockRestore();
   });
 
   it("refuses clear while the shell is not running", async () => {

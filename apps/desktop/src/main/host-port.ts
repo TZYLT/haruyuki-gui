@@ -149,6 +149,12 @@ export function engineEnvironment(
   // The engine home, which is also `cwd`, so the engine writes one tree.
   env[ENGINE_HOME_ENV] = userData;
 
+  // PTY children inherit the engine's environment and readline/terminfo key off
+  // TERM; under `dumb` a clear-screen does not even clear the viewport.
+  if (base.TERM === undefined || base.TERM === "" || base.TERM === "dumb") {
+    env["TERM"] = "xterm-256color";
+  }
+
   env["NODE_OPTIONS"] = `--require "${watchdogPath}"`;
 
   return env;

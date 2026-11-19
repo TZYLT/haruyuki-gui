@@ -49,11 +49,12 @@ describe("D3 channel names", () => {
     }
   });
 
-  it("keeps the allowlist at exactly D3's eight, D2's one, D4's three, G1's five and the about window's three", () => {
+  it("keeps the allowlist at exactly the channels the shipped shells register", () => {
     // The channels in the list this item does not own: D2's dropped-file report, D4's
-    // three diagnostics commands, G1's five runtime channels and the three the about
-    // window added. The comparison stays exact rather than "contains": an unnoticed
-    // extra entry is the failure this assertion exists to catch.
+    // three diagnostics commands, G1's five runtime channels, C4's layout read path,
+    // the command layer's invoke channel, and the about window's three. The
+    // comparison stays exact rather than "contains": an unnoticed extra entry is the
+    // failure this assertion exists to catch.
     expect([...CHANNEL_ALLOWLIST].sort()).toEqual(
       [
         ...D3_CHANNELS,
@@ -61,6 +62,8 @@ describe("D3 channel names", () => {
         DIAGNOSTICS_CHANNELS.export,
         DIAGNOSTICS_CHANNELS.relaunch,
         DIAGNOSTICS_CHANNELS.quit,
+        BRIDGE_CHANNEL_NAMES.layoutState,
+        BRIDGE_CHANNEL_NAMES.commandInvoke,
         "bridge:control.runtime.failed",
         "bridge:control.runtime.log",
         "bridge:control.runtime.pick",

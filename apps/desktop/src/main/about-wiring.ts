@@ -13,10 +13,11 @@
  * document with no handler would be wrong about the only thing its button does.
  */
 
-import { app, shell, type IpcMain } from "electron";
+import { app, shell, type App, type IpcMain } from "electron";
 import path from "node:path";
 
 import { registerAboutIpc } from "./about-ipc.js";
+import { registerUpdateIpc } from "./update-check.js";
 import { closeAboutWindow, openAboutWindow, type AboutWindowDeps } from "./about-window.js";
 import type { Logger } from "./log.js";
 import { computeRuntimeLayout } from "./runtime/layout.js";
@@ -109,6 +110,25 @@ export function installAbout(deps: AboutInstallDeps): AboutInstall {
     ...(deps.logger === undefined ? {} : { logger: deps.logger }),
   });
 
+  // The update button lives in this window, so its handler belongs to this
+  // surface rather than to the composition root: the root registers a menu entry
+  // and a window, and this call is what makes the window's one button answer.
+  // Nothing here reaches the network - the handler only runs when the renderer
+  // invokes it, which keeps a launch from spending a query quota nobody asked
+  // for.
+  const disposeUpdate = registerUpdateIpc({
+    ipc: {
+      handle: (channel, listener) => {
+        deps.ipcMain.handle(channel, listener);
+      },
+      removeHandler: (channel) => {
+        deps.ipcMain.removeHandler(channel);
+      },
+    },
+    current: () => app.getVersion(),
+    ...(deps.logger === undefined ? {} : { logger: deps.logger }),
+  });
+
   return {
     open: () => {
       const open = deps.openWindow ?? openAboutWindow;
@@ -133,6 +153,7 @@ export function installAbout(deps: AboutInstallDeps): AboutInstall {
       // would show a page whose buttons all fail -- the worst of the two.
       closeAboutWindow();
       dispose();
+      disposeUpdate();
     },
   };
 }
@@ -166,4 +187,39 @@ export function installAboutOnQuit(deps: AboutInstallDeps & QuitHook): AboutInst
   });
 
   return about;
+}
+
+/**
+ * Install the about surface from the composition root's own vocabulary.
+ *
+ * Exists so `main.ts` can call one function: the root is at its size gate, and
+ * every line it keeps is a line something else has to give up. This assembles
+ * the two facts the root knows and hands the rest to `installAboutOnQuit`, which
+ * owns the lifetime.
+ *
+ * @param deps what the root has, named the way the root names it
+ * @returns the surface, for the menu
+ */
+export function installAboutForRoot(deps: {
+  readonly here: string;
+  readonly ipcMain: IpcMain;
+  readonly app: App;
+  readonly settings: () => { readonly mode: string; readonly contrast: string };
+  readonly locale: () => string;
+  readonly devtoolsAllowed: () => boolean;
+  readonly liveBundlePath: () => string | null;
+  readonly logger?: Logger;
+}): AboutInstall {
+  return installAboutOnQuit({
+    here: deps.here,
+    ipcMain: deps.ipcMain,
+    onQuit: (callback) => {
+      deps.app.on("will-quit", callback);
+    },
+    locale: deps.locale,
+    theme: deps.settings,
+    devtoolsAllowed: deps.devtoolsAllowed,
+    liveBundlePath: deps.liveBundlePath,
+    ...(deps.logger === undefined ? {} : { logger: deps.logger }),
+  });
 }

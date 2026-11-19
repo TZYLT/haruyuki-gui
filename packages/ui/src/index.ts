@@ -29,6 +29,7 @@ export type {
 export type { CommandParamKind, CommandParamSpec } from "./command/params.generated.js";
 export * from "./bridge/index.js";
 export * from "./components/index.js";
+export * from "./frame/index.js";
 export * from "./i18n/index.js";
 export * from "./icons/index.js";
 export * from "./tokens/index.js";

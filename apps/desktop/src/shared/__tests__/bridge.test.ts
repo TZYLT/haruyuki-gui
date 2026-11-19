@@ -183,8 +183,9 @@ describe("allowlist", () => {
     // appearing, and a list that quietly grew is how that happens unnoticed.
     //
     // D2 appends the dropped-file report, D4 the three diagnostics commands, D3
-    // its seven, and G1 the five runtime channels. `channel-name v1` freezes the bridge's
-    // *members*, not its channel list.
+    // its seven, G1 the five runtime channels, and E1 the layout read and the
+    // command entry. `channel-name v1` freezes the bridge's *members*, not its channel
+    // list.
     expect(CHANNEL_ALLOWLIST).toEqual([
       PING,
       "bridge:control.diagnostics.export",
@@ -196,6 +197,8 @@ describe("allowlist", () => {
       "bridge:stream.frame.deliver",
       "bridge:bulk.frame.deliver",
       "bridge:control.layout.save",
+      "bridge:control.layout.state",
+      "bridge:control.command.invoke",
       "bridge:stream.terminal.ack",
       "bridge:stream.terminal.notice",
       "bridge:control.runtime.status",

@@ -188,13 +188,21 @@ afterEach(async () => {
 });
 
 describe("installAbout", () => {
-  it("registers the two about channels and nothing else", async () => {
+  it("registers the two about channels and the update check the window calls", async () => {
+    // Three, not two: the window's update button is answered by a handler that
+    // belongs to this surface, so it is installed and torn down with it rather
+    // than by the composition root. The list is exact so that a fourth entry
+    // appearing here - or one of these going missing - fails once.
     const { installAbout } = await import("../about-wiring.js");
     const { deps, ipc } = installDeps();
 
     installAbout(deps);
 
-    expect(ipc.handled).toEqual(["bridge:control.about.info", "bridge:control.about.open"]);
+    expect(ipc.handled).toEqual([
+      "bridge:control.about.info",
+      "bridge:control.about.open",
+      "bridge:control.update.check",
+    ]);
   });
 
   it("hands the menu entry an opener that opens the window", async () => {
@@ -283,13 +291,17 @@ describe("installAbout", () => {
 });
 
 describe("dispose", () => {
-  it("removes both channels", async () => {
+  it("removes every channel it registered", async () => {
     const { installAbout } = await import("../about-wiring.js");
     const { deps, ipc } = installDeps();
 
     installAbout(deps).dispose();
 
-    expect(ipc.removed).toEqual(["bridge:control.about.info", "bridge:control.about.open"]);
+    expect(ipc.removed).toEqual([
+      "bridge:control.about.info",
+      "bridge:control.about.open",
+      "bridge:control.update.check",
+    ]);
   });
 
   it("closes the window as well as removing the channels", async () => {
@@ -324,7 +336,11 @@ describe("dispose", () => {
 
     registered[0]!();
 
-    expect(ipc.removed).toEqual(["bridge:control.about.info", "bridge:control.about.open"]);
+    expect(ipc.removed).toEqual([
+      "bridge:control.about.info",
+      "bridge:control.about.open",
+      "bridge:control.update.check",
+    ]);
     expect(primed.closes()).toBe(1);
   });
 
@@ -337,6 +353,6 @@ describe("dispose", () => {
     about.dispose();
     about.dispose();
 
-    expect(ipc.removed).toHaveLength(2);
+    expect(ipc.removed).toHaveLength(3);
   });
 });

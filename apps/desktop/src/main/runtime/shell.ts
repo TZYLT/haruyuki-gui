@@ -415,6 +415,12 @@ export async function startRuntimeShell(deps: RuntimeShellDeps): Promise<void> {
       logPath: layout.logsDir,
     });
   }
+
+  // The first start is the one moment the composition root has to learn about
+  // the host: the command path builds its channel pool from it, and waiting for
+  // a status poll would leave a ready engine with no command surface. Restarts
+  // already publish through `RuntimeController`'s own `onHost`.
+  deps.onHost(host);
 }
 
 /** Send the failure after the page can receive it. */

@@ -130,6 +130,31 @@ describe("engineEnvironment", () => {
     expect(env["PRESENT"]).toBe("x");
     expect("ABSENT" in env).toBe(false);
   });
+
+  it("supplies TERM when the parent has none", () => {
+    // The PTY child inherits this environment, and readline/terminfo read TERM
+    // to decide what the screen can do; without one the engine's full-screen
+    // output is addressed to a terminal nobody described.
+    const env = engineEnvironment({ PATH: "/usr/bin" }, "/w/watchdog.cjs", "/home/u");
+
+    expect(env["TERM"]).toBe("xterm-256color");
+  });
+
+  it("keeps a TERM the parent already chose", () => {
+    const env = engineEnvironment({ TERM: "xterm" }, "/w/watchdog.cjs", "/home/u");
+
+    // A caller that selected a terminal type meant it; overriding it would break
+    // the screen the user actually has.
+    expect(env["TERM"]).toBe("xterm");
+  });
+
+  it("replaces dumb, which cannot even clear the viewport", () => {
+    const env = engineEnvironment({ TERM: "dumb" }, "/w/watchdog.cjs", "/home/u");
+
+    // `dumb` can print but cannot address the screen, so a clear-screen sequence
+    // does not clear the viewport and the engine's redraws pile up.
+    expect(env["TERM"]).toBe("xterm-256color");
+  });
 });
 
 describe("watchdogFor", () => {
