@@ -35,7 +35,7 @@ import { homedir } from "node:os";
 
 import * as vscode from "vscode";
 
-import { createController, type Controller } from "./host/controller.js";
+import { createController, type Controller, type ControllerEditor } from "./host/controller.js";
 import { createVSCodeEngineSettings } from "./host/engine-source.js";
 import { createLifecycle, type Lifecycle, type LifecycleCoreHost } from "./host/lifecycle.js";
 import { createShellLog, type ShellLog } from "./host/log.js";
@@ -129,6 +129,40 @@ function handlePanelAction(action: string): void {
       shellLog?.event("PANEL_ACTION_UNHANDLED", { action });
   }
 }
+
+/**
+ * The editor surfaces the controller's panel actions reach.
+ *
+ * Bound here rather than inside the controller because that module deliberately
+ * imports no editor API: this is the one file that may, and a second binding
+ * site would be a second composition root. Only the editor's own surfaces live
+ * here -- the picker and the folder chooser -- since the log and the settings
+ * page are reachable without a dialog.
+ */
+const panelActionEditor: ControllerEditor = {
+  async pickEngineDirectory(): Promise<string | undefined> {
+    const picked = await vscode.window.showOpenDialog({
+      canSelectFiles: false,
+      canSelectFolders: true,
+      canSelectMany: false,
+      // No `openLabel`: the editor's own label is already in the user's language,
+      // and a literal here would be the one English word in a translated dialog.
+      // The setting's description says which directory this is for.
+    });
+
+    return picked?.[0]?.fsPath;
+  },
+
+  openSettings(): void {
+    void vscode.commands.executeCommand("workbench.action.openSettings", "haruyuki.enginePath");
+  },
+
+  openFolder(): void {
+    // The editor's own command, so the folder opened is the one the workspace
+    // then reports and the run that follows reads it back from there.
+    void vscode.commands.executeCommand("vscode.openFolder");
+  },
+};
 
 /**
  * Install the panel opener.
@@ -271,6 +305,7 @@ export function activate(context: vscode.ExtensionContext): void {
     onAction: (action) => {
       handlePanelAction(action);
     },
+    editor: panelActionEditor,
   });
 
   setPanelOpener({

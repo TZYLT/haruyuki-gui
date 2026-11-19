@@ -52,10 +52,10 @@
  *   - The engine's argv and environment: `./host-port.ts`.
  */
 
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 
 import type { CoreHostInit } from "./core-host.js";
-import type { EngineSource } from "../core/ipc.js";
+import type { EngineSource, RuntimeFailure } from "../core/ipc.js";
 import { createCommandPath, createFrameForwarder, createOutbox } from "./command-path.js";
 import {
   CoreProcessHost,
@@ -92,25 +92,44 @@ const FAILURE_FOR_REASON: Readonly<Record<string, "missing-engine" | "start-fail
 type FoundEngine = Extract<EngineResolution, { ok: true }>;
 
 /** One failure, in the runtime's own vocabulary. */
-type ReportedFailure = {
-  readonly kind: "missing-engine" | "start-failed" | "crash" | "internal";
-  readonly detail: string;
-};
+type ReportedFailure = RuntimeFailure;
 
 /**
  * The `status` message the panel accepts.
  *
- * Only the phase survives the webview's own narrowing, which keeps this shape
- * deliberately: sending more fields would look like a page that received a
- * sentence when it received a word. The sentence a user needs therefore goes to
- * the log and the status bar's tooltip, and the panel learns only that the
- * shell is not connected -- the full text on a page is the panel's own error
- * surface to add, not something this file can invent.
+ * The failure travels with it. It used to be the phase alone, and the sentence a
+ * user needed went only to the log and the status bar's tooltip -- which meant a
+ * panel could say "not connected" and nothing more, on a page whose whole job is
+ * to say which directory to look in. The optional members are the facts the page
+ * renders; see `RuntimeFailure` for why they are data rather than prose.
  */
 type StatusMessage = {
   readonly kind: "status";
   readonly phase: string;
+  readonly failure?: RuntimeFailure;
 };
+
+/**
+ * The editor surfaces a panel action can ask for.
+ *
+ * Injected because this file deliberately binds no editor API: the entry owns
+ * `vscode.window.showOpenDialog`, `workbench.action.openSettings` and
+ * `vscode.openFolder`, and a copy bound here would be a second composition root.
+ * Every member is optional, so a test -- and a build that has no editor -- can
+ * leave the whole seam out and the actions simply report themselves unanswered.
+ */
+export interface ControllerEditor {
+  /**
+   * Ask the user for an engine directory.
+   *
+   * @returns the absolute directory, or `undefined` when the dialog was dismissed
+   */
+  pickEngineDirectory?(): Promise<string | undefined>;
+  /** Open the editor's settings page on the engine setting. */
+  openSettings?(): void;
+  /** Ask the editor to open a folder, so the run has a working directory. */
+  openFolder?(): void;
+}
 
 /** Everything the assembly needs, all of it injected. */
 export interface ControllerOptions {
@@ -161,9 +180,18 @@ export interface ControllerOptions {
    */
   readonly onStarted?: (host: CoreHost, tokenDir: string) => void;
   /**
-   * Handles the panel actions that need an editor surface -- the settings page, a
-   * folder picker, the log. This file moves the ones that only change its own
-   * state; the rest belong to the module that binds the editor's API.
+   * The editor surfaces the panel's actions reach, all optional.
+   *
+   * A member that is absent is an action this build cannot answer; it reports
+   * itself unanswered instead of pretending to have opened something.
+   */
+  readonly editor?: ControllerEditor;
+  /**
+   * Handles the panel actions this file does not own at all.
+   *
+   * Kept as a last resort rather than the main path: every action the error
+   * surface offers is answered here, because a button that reaches a logger is
+   * a button that does nothing.
    */
   readonly onAction?: (action: string) => void;
   /** Test seam: the pipe to the child. Defaults to the real forked child. */
@@ -185,6 +213,57 @@ export interface Controller {
 
 /** Where the assembly is in its own lifecycle. */
 type Phase = "idle" | "started" | "closed";
+
+/**
+ * Split one failure sentence back into the entries it named.
+ *
+ * The resolver builds its sentence as `<dir>: <entry> is missing, <entry> is not
+ * a directory`, and that list is exactly the repair list a user needs. It is
+ * read here -- once, at the boundary -- rather than in the page, so no rendering
+ * code parses prose. A sentence that does not have the shape yields nothing
+ * instead of guessing.
+ *
+ * @param detail the resolver's sentence, when there is one
+ * @returns the entries, without the `is missing` / `is not a ...` tails
+ */
+function missingEntriesOf(detail: string | undefined): { missingEntries?: readonly string[] } {
+  if (detail === undefined) return {};
+
+  const entries = new Set<string>();
+
+  for (const match of detail.matchAll(/\b([\w.-]+) is (?:missing|not a [a-z]+)\b/g)) {
+    if (match[1] !== undefined && match[1].length > 0) entries.add(match[1]);
+  }
+
+  return entries.size === 0 ? {} : { missingEntries: [...entries] };
+}
+
+/**
+ * The directory inputs the engine search reads, in its own order.
+ *
+ * The resolver walks the setting, then `PATH`, and then a hand-picked folder,
+ * and which of those exist is what tells a user where to look. It is derived
+ * from the same inputs the resolver is given rather than from its internals,
+ * because `./engine-source.ts` owns the walk and a second copy of it here would
+ * drift the day a rung is added.
+ *
+ * @param configured the `enginePath` setting, when one is set
+ * @param pathEnv the process `PATH`, when the shell has one
+ * @returns the directories to report as searched, most specific first
+ */
+function engineSearchPaths(configured?: string, pathEnv?: string): readonly string[] {
+  const paths: string[] = [];
+
+  if (configured !== undefined && configured.trim() !== "") paths.push(configured.trim());
+
+  if (pathEnv !== undefined) {
+    for (const entry of pathEnv.split(delimiter)) {
+      if (entry.trim() !== "") paths.push(entry.trim());
+    }
+  }
+
+  return paths;
+}
 
 /**
  * Build the assembly.
@@ -246,6 +325,17 @@ export function createController(options: ControllerOptions): Controller {
   let confirmedHomeDir = false;
 
   /**
+   * The last status this host told any panel.
+   *
+   * A closed panel is not a stopped core: the child keeps running and the
+   * status bar keeps its word, so a panel that is opened again is a new document
+   * looking at a phase nobody will re-report. Without this replay the reopened
+   * panel would show a frame and no status until the next unrelated change --
+   * which for a refused start is never.
+   */
+  let lastStatus: StatusMessage | null = null;
+
+  /**
    * Tell the status bar and the panel the same fact.
    *
    * Written together because a state only one of them learned is a user who sees
@@ -270,12 +360,20 @@ export function createController(options: ControllerOptions): Controller {
 
     if (failure !== undefined) {
       log.event("HOST_START_REFUSED", { kind: failure.kind });
-      // Kept whole: this is the only surface that carries the sentence, because
-      // the panel's message family has one field and it is the phase.
+
+      // Still written whole: a pasted log has to contain the sentence even when
+      // the panel is not open, and this line is what a bug report quotes.
       log.write(failure.detail);
     }
 
-    postStatus?.({ kind: "status", phase: options.status.state });
+    // The failure travels with the phase, which is the whole point of the added
+    // members: the panel renders the facts, and a panel that shows nothing is
+    // now a rendering bug rather than a missing field.
+    postStatus?.({
+      kind: "status",
+      phase: options.status.state,
+      ...(failure === undefined ? {} : { failure }),
+    });
   }
 
   /**
@@ -284,6 +382,11 @@ export function createController(options: ControllerOptions): Controller {
    * @returns the accepted engine, or `null` once the refusal was reported
    */
   async function pickEngine(): Promise<EngineSource | null> {
+    // Read here as well as inside the resolver: the resolver owns the walk, but
+    // this is the rung the page has to name, and asking a second time is cheaper
+    // than making the resolver return its inputs alongside its verdict.
+    const configured = await readEngineSetting();
+
     let resolved: EngineResolution;
 
     try {
@@ -294,7 +397,11 @@ export function createController(options: ControllerOptions): Controller {
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
 
-      report("failed", { kind: "missing-engine", detail });
+      report("failed", {
+        kind: "missing-engine",
+        detail,
+        searchedPaths: engineSearchPaths(configured, options.pathEnv),
+      });
 
       return null;
     }
@@ -303,6 +410,13 @@ export function createController(options: ControllerOptions): Controller {
       report("failed", {
         kind: FAILURE_FOR_REASON[resolved.reason] ?? "missing-engine",
         detail: resolved.detail ?? `the engine could not be found (${resolved.reason})`,
+        // The directories the search actually tried, so a page can say where to
+        // look instead of asking the user to read a log first. Every setting and
+        // `PATH` entry the resolver walks is in this list.
+        searchedPaths: engineSearchPaths(configured, options.pathEnv),
+        // What a folder has to hold and does not. The resolver reports it in a
+        // sentence; the page needs the entries, because that is a repair list.
+        ...missingEntriesOf(resolved.detail),
       });
 
       return null;
@@ -315,8 +429,14 @@ export function createController(options: ControllerOptions): Controller {
       untested = resolved;
       log.event("HOST_ENGINE_UNTESTED", { version: resolved.version });
       report("failed", {
-        kind: "start-failed",
+        kind: "untested-engine",
         detail: `the engine reports version ${resolved.version}, and this build was tested against ${resolved.expectedVersion}`,
+        // Both versions as data: a page that showed only the sentence would be
+        // showing English under a translated heading, and the pair is the one
+        // fact the decision turns on.
+        expectedVersion: resolved.expectedVersion,
+        actualVersion: resolved.version,
+        candidateDir: resolved.source.dir,
       });
 
       return null;
@@ -342,8 +462,14 @@ export function createController(options: ControllerOptions): Controller {
     if (workspace.ok) return workspace.cwd;
 
     // A missing folder is not consent to run in the user's home directory, so the
-    // refusal is reported and the degradation waits for an explicit answer.
-    report("failed", { kind: "start-failed", detail: workspace.detail });
+    // refusal is reported and the degradation waits for an explicit answer. The
+    // offered directory travels as data because the page shows it *before* the
+    // user agrees, and the answer is about that exact path.
+    report("failed", {
+      kind: "no-workspace",
+      detail: workspace.detail,
+      homeDir: workspace.homeDir,
+    });
 
     return null;
   }
@@ -426,15 +552,22 @@ export function createController(options: ControllerOptions): Controller {
     // 3. The panel's own messages, answered over the same core and outbox.
     const commandPath = createCommandPath({ host: core, outbox, log: pathLog });
 
+    // A second panel would have a second sink and could not be told apart from
+    // the first, so the previous directions are released rather than leaked.
+    //
+    // Released BEFORE the new poster is installed, because the previous handle's
+    // `dispose` clears `postStatus` as part of letting go. The other order looks
+    // identical and silently leaves every later status with nowhere to go.
+    live?.dispose();
+
     // The one message the outbox's shape has no room for. Bound per panel: a
     // poster kept from a closed panel writes nowhere.
-    postStatus = (message: StatusMessage): void => {
+    const mine = (message: StatusMessage): void => {
+      lastStatus = message;
       post(message);
     };
 
-    // A second panel would have a second sink and could not be told apart from
-    // the first, so the previous two directions are released rather than leaked.
-    live?.dispose();
+    postStatus = mine;
 
     const handle: PanelLink = {
       receive(raw: unknown): void {
@@ -450,7 +583,10 @@ export function createController(options: ControllerOptions): Controller {
       dispose(): void {
         if (live === handle) live = null;
 
-        postStatus = null;
+        // Only the poster this handle installed. An unconditional clear here
+        // would wipe the next document's poster, because a rebuild disposes the
+        // previous link after the new one exists.
+        if (postStatus === mine) postStatus = null;
 
         forwarder.dispose();
         commandPath.dispose();
@@ -461,6 +597,11 @@ export function createController(options: ControllerOptions): Controller {
 
     log.event("HOST_LINK_READY", {});
 
+    // Everything this host already knows, said to the document that just
+    // appeared. A panel reopened after a close is a fresh webview with an empty
+    // store, and nothing else will repeat a phase that was settled a while ago.
+    if (lastStatus !== null) postStatus(lastStatus);
+
     return handle;
   };
 
@@ -469,7 +610,14 @@ export function createController(options: ControllerOptions): Controller {
     // The status bar owns the phase-to-word mapping, so nothing here repeats it.
     options.status.apply(snapshot);
 
-    postStatus?.({ kind: "status", phase: options.status.state });
+    // The child's own failure is forwarded whole. It is the crash and
+    // start-failed case, and the panel has to be able to render it: the phase
+    // alone would leave the error surface with a heading and no facts.
+    postStatus?.({
+      kind: "status",
+      phase: options.status.state,
+      ...(snapshot.failure === undefined ? {} : { failure: snapshot.failure }),
+    });
   };
 
   /** One log line from the child, tagged so a pasted log names its source. */
@@ -525,14 +673,140 @@ export function createController(options: ControllerOptions): Controller {
         return;
 
       case "useHomeDir":
+        // The confirmation has already happened: the page shows the directory and
+        // requires a second, explicit answer before it sends this. Nothing here
+        // may treat an unconfirmed run as consent.
         confirmedHomeDir = true;
         void startOnce();
 
         return;
 
+      case "chooseEngineDir":
+        void chooseEngineDir();
+
+        return;
+
+      case "openSettings":
+        answerWith("openSettings");
+
+        return;
+
+      case "openLogs":
+        // The log is this module's own sink, so there is no editor seam for it.
+        log.show();
+
+        return;
+
+      case "openFolder":
+        answerWith("openFolder");
+
+        return;
+
       default:
-        // Not ours: the entry owns the ones that need the editor's own surfaces.
+        // Not ours: the entry owns whatever is left.
         options.onAction?.(action);
+    }
+  }
+
+  /**
+   * Ask the user for an engine directory, then start from it.
+   *
+   * The picker is the editor's, so the seam answers it; the write is the
+   * resolver's, so the setting keeps what actually worked. A dismissed dialog is
+   * not a failure -- the page is left exactly as it was, because the user did
+   * not answer the question it asked.
+   */
+  async function chooseEngineDir(): Promise<void> {
+    const pick = options.editor?.pickEngineDirectory;
+
+    if (pick === undefined) {
+      answerWith("chooseEngineDir");
+
+      return;
+    }
+
+    const picked = await pick().catch(() => undefined);
+
+    if (picked === undefined || picked.trim() === "") {
+      log.event("HOST_ENGINE_PICK_CANCELLED", {});
+      postStatus?.({ kind: "status", phase: options.status.state });
+
+      return;
+    }
+
+    const dir = picked.trim();
+
+    // Written before the start rather than after it: the resolver reads this
+    // setting first, so a write that came second would be a start from the old
+    // directory followed by a setting change nothing acted on.
+    await options.settings.write(dir).catch((error: unknown) => {
+      log.failure("HOST_ENGINE_PICK_WRITE_FAILED", error);
+    });
+
+    log.event("HOST_ENGINE_PICKED", { dir });
+
+    // The remembered refusal belongs to the old directory, so it is dropped: the
+    // answer the user just gave supersedes the question this file was holding.
+    untested = null;
+
+    await startOnce();
+  }
+
+  /**
+   * Report an action this build cannot answer.
+   *
+   * Logged rather than swallowed, so a button that does nothing says so
+   * somewhere. Not an OS notification: this is a diagnostic, not a status.
+   *
+   * @param action the action name
+   */
+  function answerWith(action: string): void {
+    if (options.editor === undefined) {
+      log.event("PANEL_ACTION_UNHANDLED", { action });
+
+      return;
+    }
+
+    switch (action) {
+      case "openSettings":
+        if (options.editor.openSettings === undefined) {
+          log.event("PANEL_ACTION_UNHANDLED", { action });
+
+          return;
+        }
+
+        options.editor.openSettings();
+
+        return;
+
+      case "openFolder":
+        if (options.editor.openFolder === undefined) {
+          log.event("PANEL_ACTION_UNHANDLED", { action });
+
+          return;
+        }
+
+        options.editor.openFolder();
+
+        return;
+
+      default:
+        log.event("PANEL_ACTION_UNHANDLED", { action });
+    }
+  }
+
+  /**
+   * Read the engine setting outside a resolution.
+   *
+   * @returns the configured directory, or `undefined` when none is set
+   */
+  async function readEngineSetting(): Promise<string | undefined> {
+    try {
+      return await options.settings.read();
+    } catch {
+      // A setting that cannot be read is the resolver's failure to report, not
+      // this one's: the search still runs and still records where it looked.
+      return undefined;
     }
   }
 
