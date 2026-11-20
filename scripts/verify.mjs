@@ -3,28 +3,17 @@
  * verify.mjs - the one command behind the repository promise
  * ("a single local command runs every gate").
  *
- * Default mode (`pnpm verify`) runs seven segments, in this order:
+ * Default mode (`pnpm verify`) runs the default segments, in this order:
  *
- *   [1] typecheck       pnpm typecheck (the five workspace packages, then
- *                       `tsc -p scripts` for the gate self-tests)
- *   [2] lint            pnpm exec eslint . - the fast first pass, matching the
- *                       raw import string
- *   [3] boundaries      node scripts/check-boundaries.mjs - the authoritative
- *                       verdict: every specifier is resolved against the real
- *                       file system, so relative paths, require(), dynamic
- *                       import() and `export ... from` cannot slip past it
- *   [4] gate self-test  vitest over the gates' red/green fixture pairs. A
- *                       failure here means the GATE is broken, not the code
- *                       under test, so the segment says so out loud
- *   [5] contract        node scripts/check-contract.mjs - the committed
- *                       contract artifacts must still match their truth sources
- *   [6] test            vitest over every other test file
- *   [7] coverage        vitest --coverage - numbers only, no thresholds,
- *                       uncovered code never fails verify
+ *   typecheck, lint, boundaries, literals, gate self-test, contract, tokens,
+ *   i18n, fixtures, frame, capabilities, docs, test, file size.
  *
- * `--full` (`pnpm verify:full`) appends the three O(file count) repository
- * discipline gates: file size, cycles, module ownership. They stay out of the
- * default mode because they are not part of the package-boundary judgement.
+ * Each segment owns its justification, next to its definition below. The two
+ * shell segments (typecheck and build for an app shell) are appended when a
+ * shell package is present, so the printed count is larger in this repository.
+ * `--full` (`pnpm verify:full`) appends the two O(file count) repository
+ * discipline gates, cycles and module ownership, which are not part of the
+ * package-boundary judgement.
  *
  * Behaviour, frozen:
  *   - no fail-fast: every segment runs, then the summary lists every failure,
@@ -449,6 +438,15 @@ function buildSegments(options) {
       // are checked against capabilities.json so the exception cannot hide a typo.
       label: "capabilities",
       command: () => gate("scripts/check-capabilities.mjs", options.verbose),
+    },
+    {
+      // The public documents are reader-facing assets, so a stale command table, a
+      // status section that does not say which commit it describes, or a private
+      // identifier in a README is a defect rather than a note. Text only and cheap,
+      // so it runs before `test`, where a documentation failure would otherwise be
+      // reported as a confusing test result.
+      label: "docs",
+      command: () => gate("scripts/docs/check-public-docs.mjs", options.verbose),
     },
     {
       // One run, two outputs: the test verdicts and the coverage numbers.
