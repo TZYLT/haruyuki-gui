@@ -1,0 +1,473 @@
+{
+  "$comment": "Hand-written purpose and exit-code notes for every command the READMEs list. Generator: scripts/docs/gen-command-table.mjs. Contract: `packages` must cover exactly the `scripts` of the root and of every apps/* package, no more and no less; `files` must name repository scripts that exist. A script with no note, a note naming a script that no longer exists, or a file entry pointing at a missing path makes the generator (and `node scripts/docs/check-public-docs.mjs`) fail. Text only; the generator owns the command column and the ordering.",
+  "packages": {
+    "root": {
+      "typecheck": {
+        "purpose": {
+          "zh": "工作区各包与门禁脚本的类型检查",
+          "en": "type-checking for every workspace package plus the gate scripts"
+        },
+        "exit": {
+          "zh": "`0` 通过；非 `0` 有类型错误或配置错误（tsc 自己的退出码）",
+          "en": "`0` clean; non-zero type or config errors (tsc's own code)"
+        }
+      },
+      "lint": {
+        "purpose": {
+          "zh": "ESLint 扫全仓",
+          "en": "ESLint over the whole repository"
+        },
+        "exit": {
+          "zh": "`0` 通过；`1` 有告警或错误；`2` ESLint 自身的配置或参数错误",
+          "en": "`0` clean; `1` warnings or errors; `2` ESLint's own config or argument error"
+        }
+      },
+      "verify": {
+        "purpose": {
+          "zh": "全部门禁，一条命令跑完默认段",
+          "en": "every gate, the default segments, in one run"
+        },
+        "exit": {
+          "zh": "`0` 全绿；`1` 至少一段失败；`2` 聚合器自身坏了",
+          "en": "`0` all green; `1` at least one segment failed; `2` the aggregator itself is broken"
+        }
+      },
+      "verify:full": {
+        "purpose": {
+          "zh": "再加三项仓库纪律检查（文件体积、循环依赖、模块归属）",
+          "en": "adds the three repository discipline checks (file size, cycles, module ownership)"
+        },
+        "exit": {
+          "zh": "同上",
+          "en": "same as `verify`"
+        }
+      },
+      "contract:update": {
+        "purpose": {
+          "zh": "从引擎源码重生成契约快照；必须显式给 `--engine <dir>`，`package.json` 里的别名没带这个参数，直接跑会按用法错误退出",
+          "en": "regenerate the contract snapshot from an engine tree; it needs an explicit `--engine <dir>`, and the alias in `package.json` supplies none, so running it as-is exits as a usage error"
+        },
+        "exit": {
+          "zh": "`0` 写出并通过自检；`2` 输入坏、缺参数或快照降级（什么都没写）",
+          "en": "`0` written and self-checked; `2` bad input, a missing flag or a degraded snapshot (nothing written)"
+        }
+      },
+      "contract:check": {
+        "purpose": {
+          "zh": "契约产物与真源一致（另有 `contract:diff`、`contract:generate`）",
+          "en": "contract artifacts still match their truth sources (`contract:diff` and `contract:generate` also exist)"
+        },
+        "exit": {
+          "zh": "`0` 一致；`1` 有不一致；`2` 输入或用法错误",
+          "en": "`0` consistent; `1` a drift was found; `2` bad input or a usage error"
+        }
+      },
+      "tokens:check": {
+        "purpose": {
+          "zh": "设计令牌与调色板的一致性",
+          "en": "design-token and palette consistency"
+        },
+        "exit": {
+          "zh": "`0` 干净；`1` 发现违规；`2` 门禁自身坏了",
+          "en": "`0` clean; `1` a violation; `2` the gate itself is broken"
+        }
+      },
+      "i18n:check": {
+        "purpose": {
+          "zh": "文案目录的完整性与一致性",
+          "en": "catalogue completeness and consistency"
+        },
+        "exit": {
+          "zh": "`0` 干净；`1` 发现违规；`2` 门禁自身坏了",
+          "en": "`0` clean; `1` a violation; `2` the gate itself is broken"
+        }
+      },
+      "fixtures:check": {
+        "purpose": {
+          "zh": "录制样本的格式与头部",
+          "en": "shape and header of the recorded fixtures"
+        },
+        "exit": {
+          "zh": "`0` 干净；`1` 发现违规；`2` 门禁自身坏了（`--help` 退 `0`）",
+          "en": "`0` clean; `1` a violation; `2` the gate itself is broken (`--help` exits `0`)"
+        }
+      },
+      "ui:e2e": {
+        "purpose": {
+          "zh": "浏览器里的布局与本地化检查",
+          "en": "layout and localisation checks in a browser"
+        },
+        "exit": {
+          "zh": "`0` 干净；`1` 发现违规；`2` 没有可用浏览器或脚本坏了",
+          "en": "`0` clean; `1` a violation; `2` no usable browser, or the script is broken"
+        }
+      },
+      "perf:check": {
+        "purpose": {
+          "zh": "五项性能基线；超过目标 1.5 倍是警告，超过 2 倍才失败",
+          "en": "five performance baselines; over 1.5x the target is a warning, over 2x is a failure"
+        },
+        "exit": {
+          "zh": "`0` 没有超 2 倍；`1` 有指标超 2 倍；`2` 脚本自身坏了",
+          "en": "`0` nothing over 2x; `1` a measurement is over 2x; `2` the script itself is broken"
+        }
+      },
+      "contract:diff": {
+        "purpose": {
+          "zh": "打印两份契约快照的差异；给一个参数表示与本仓已提交的快照比",
+          "en": "print the difference between two contract snapshots; one argument compares against the committed one"
+        },
+        "exit": {
+          "zh": "`0` 无差异；`1` 有差异；`2` 输入或用法错误",
+          "en": "`0` no difference; `1` a difference; `2` bad input or a usage error"
+        }
+      },
+      "contract:generate": {
+        "purpose": {
+          "zh": "由已提交的契约输入重生成能力名到 wire id 的映射表",
+          "en": "regenerate the capability-to-wire-id map from the committed contract inputs"
+        },
+        "exit": {
+          "zh": "`0` 写出；`2` 能力表不合法或输入坏（什么都没写）",
+          "en": "`0` written; `2` the capability table is invalid or the input is broken (nothing written)"
+        }
+      },
+      "test": {
+        "purpose": {
+          "zh": "单元测试（vitest）",
+          "en": "unit tests (vitest)"
+        },
+        "exit": {
+          "zh": "`0` 全过；`1` 有用例失败",
+          "en": "`0` all passed; `1` a test failed"
+        }
+      },
+      "desktop:smoke:supervision": {
+        "purpose": {
+          "zh": "在真机上跑监督探针（转到 `@haruyuki/desktop` 的 `smoke:supervision`）",
+          "en": "run the supervision probe on a real machine (forwards to `smoke:supervision` in `@haruyuki/desktop`)"
+        },
+        "exit": {
+          "zh": "`0` 全部通过；`1` 有失败或跳过；`2` 前置产物缺失（Electron 二进制、引擎包等）",
+          "en": "`0` every required id passed; `1` a failure or a skip; `2` an artifact is missing (Electron binary, engine bundle, ...)"
+        }
+      },
+      "release:verify": {
+        "purpose": {
+          "zh": "判已打包的产物能否启动并画出窗口，以及引擎能否就绪",
+          "en": "judge whether a packaged artifact starts, paints a window and brings the engine to ready"
+        },
+        "exit": {
+          "zh": "`0` 判过；`1` 判不过；`2` 脚本或输入坏；`3` 树里没有可判的产物",
+          "en": "`0` judged and passed; `1` judged and failed; `2` the script or its inputs are broken; `3` there is no packaged artifact to judge"
+        }
+      },
+      "vscode:build": {
+        "purpose": {
+          "zh": "构建编辑器扩展（转到 `@haruyuki/vscode` 的 `build`）",
+          "en": "build the editor extension (forwards to `build` in `@haruyuki/vscode`)"
+        },
+        "exit": {
+          "zh": "`0` 每个目标都写出了产物；`1` 至少一个目标失败",
+          "en": "`0` every target wrote its artifacts; `1` at least one target failed"
+        }
+      },
+      "vscode:test": {
+        "purpose": {
+          "zh": "只跑编辑器扩展的测试",
+          "en": "run only the editor extension's tests"
+        },
+        "exit": {
+          "zh": "`0` 全过；`1` 有用例失败",
+          "en": "`0` all passed; `1` a test failed"
+        }
+      },
+      "hooks:install": {
+        "purpose": {
+          "zh": "让 git 指向版本化的提交钩子（重复运行无害）",
+          "en": "point git at the versioned commit hooks (running it twice is a no-op)"
+        },
+        "exit": {
+          "zh": "`0` 已装或已存在；`1` 不在仓库里或钩子目录不可用；`2` 环境坏",
+          "en": "`0` installed or already present; `1` not in a repository or the hook directory is unusable; `2` broken environment"
+        }
+      },
+      "record": {
+        "purpose": {
+          "zh": "把一次真实的引擎会话录成回放样本（需要本机引擎与凭据）",
+          "en": "record one real engine session as a replay fixture (needs a local engine and credentials)"
+        },
+        "exit": {
+          "zh": "`0` 录完；`1` 这次运行失败或没录完；`2` 用法错误或缺少要用的产物",
+          "en": "`0` recorded; `1` the run failed or stayed incomplete; `2` a usage error or a missing artifact"
+        }
+      },
+      "b2:demo": {
+        "purpose": {
+          "zh": "跑引擎客户端的验收演示（一套剧本式的端到端用例）",
+          "en": "run the engine client's acceptance demo (one scripted end-to-end scenario)"
+        },
+        "exit": {
+          "zh": "`0` 通过；`1` 失败",
+          "en": "`0` passed; `1` failed"
+        }
+      },
+      "terminal:probe": {
+        "purpose": {
+          "zh": "终端栈的版本与接线回归探针（四个 xterm 包、样式表、滚动缓冲）",
+          "en": "the terminal stack's version and wiring regression probe (the four xterm packages, the stylesheet, scrollback)"
+        },
+        "exit": {
+          "zh": "`0` 全部成立；`1` 有一条不成立",
+          "en": "`0` every claim held; `1` one did not"
+        }
+      }
+    },
+    "apps/desktop": {
+      "setup:electron": {
+        "purpose": {
+          "zh": "手动下载 Electron 二进制（本仓的依赖没有 postinstall）",
+          "en": "download the Electron binary by hand (the dependency here has no postinstall)"
+        },
+        "exit": {
+          "zh": "`0` 已就位；非 `0` 下载失败",
+          "en": "`0` in place; non-zero the download failed"
+        }
+      },
+      "build": {
+        "purpose": {
+          "zh": "构建主进程、渲染层与探针三份产物",
+          "en": "build all three targets: main process, renderer and probe"
+        },
+        "exit": {
+          "zh": "`0` 三个都写出；非 `0` 至少一个失败",
+          "en": "`0` all three written; non-zero at least one failed"
+        }
+      },
+      "build:main": {
+        "purpose": {
+          "zh": "只构建主进程（esbuild）",
+          "en": "build only the main process (esbuild)"
+        },
+        "exit": {
+          "zh": "`0` 写出；非 `0` 构建失败",
+          "en": "`0` written; non-zero the build failed"
+        }
+      },
+      "build:renderer": {
+        "purpose": {
+          "zh": "只构建渲染层（vite）",
+          "en": "build only the renderer (vite)"
+        },
+        "exit": {
+          "zh": "`0` 写出；非 `0` 构建失败",
+          "en": "`0` written; non-zero the build failed"
+        }
+      },
+      "start": {
+        "purpose": {
+          "zh": "用本机构建产物直接开窗（开发者路径）",
+          "en": "open the window from a local build (developer path)"
+        },
+        "exit": {
+          "zh": "Electron 进程的退出码",
+          "en": "the Electron process exit code"
+        }
+      },
+      "typecheck": {
+        "purpose": {
+          "zh": "只对这个应用做类型检查",
+          "en": "type-check this application alone"
+        },
+        "exit": {
+          "zh": "`0` 通过；非 `0` 有类型错误或配置错误（tsc 自己的退出码）",
+          "en": "`0` clean; non-zero type or config errors (tsc's own code)"
+        }
+      },
+      "build:probe": {
+        "purpose": {
+          "zh": "只构建监督探针",
+          "en": "build only the supervision probe"
+        },
+        "exit": {
+          "zh": "`0` 写出；非 `0` 构建失败",
+          "en": "`0` written; non-zero the build failed"
+        }
+      },
+      "package:dir": {
+        "purpose": {
+          "zh": "用 electron-builder 打 Windows 目录包（不含压缩与清单）",
+          "en": "produce the Windows directory package with electron-builder (no archive, no manifest)"
+        },
+        "exit": {
+          "zh": "`0` 成功；其余由 electron-builder 决定",
+          "en": "`0` succeeded; anything else is electron-builder's own code"
+        }
+      },
+      "smoke:engine": {
+        "purpose": {
+          "zh": "判随包引擎能否被找到并起得来",
+          "en": "judge whether the bundled engine can be found and started"
+        },
+        "exit": {
+          "zh": "`0` 通过；`1` 失败；`2` 引擎产物缺失",
+          "en": "`0` passed; `1` failed; `2` the engine artifact is missing"
+        }
+      },
+      "smoke:supervision": {
+        "purpose": {
+          "zh": "在真机上构建并运行监督探针，判引擎退出后的收尾",
+          "en": "build and run the supervision probe on a real machine, judging the cleanup after an engine exit"
+        },
+        "exit": {
+          "zh": "`0` 全部通过；`1` 有失败或跳过；`2` 前置产物缺失",
+          "en": "`0` every required id passed; `1` a failure or a skip; `2` an artifact is missing"
+        }
+      },
+      "verify:gui-host": {
+        "purpose": {
+          "zh": "在真实主进程里跑宿主接口的断言",
+          "en": "run the host-API assertions inside a real main process"
+        },
+        "exit": {
+          "zh": "`0` 全部通过；`1` 有一条失败；`2` 产物缺失",
+          "en": "`0` all passed; `1` one failed; `2` an artifact is missing"
+        }
+      },
+      "verify:bridge-transport": {
+        "purpose": {
+          "zh": "判渲染桥的三条通道是否按帧正确投递",
+          "en": "judge whether the render bridge delivers on all three channels frame by frame"
+        },
+        "exit": {
+          "zh": "`0` 全部通过；`1` 有一条失败；`2` 产物缺失",
+          "en": "`0` all passed; `1` one failed; `2` an artifact is missing"
+        }
+      },
+      "verify:bootstrap-error": {
+        "purpose": {
+          "zh": "判启动失败时错误页是否撑住、窗口是否还在",
+          "en": "judge whether the error surface holds and the window survives a failed start"
+        },
+        "exit": {
+          "zh": "`0` 撑住了；`1` 没撑住；`2` 产物缺失",
+          "en": "`0` it held; `1` it did not; `2` an artifact is missing"
+        }
+      },
+      "verify:media": {
+        "purpose": {
+          "zh": "判媒体与内容面的断言（真实主进程，不靠截图）",
+          "en": "run the media and content-surface assertions in a real main process, without screenshots"
+        },
+        "exit": {
+          "zh": "`0` 全部通过；`1` 有一条失败；`2` 产物缺失",
+          "en": "`0` all passed; `1` one failed; `2` an artifact is missing"
+        }
+      },
+      "verify:host-port": {
+        "purpose": {
+          "zh": "在真实主进程里判宿主接口的实现（目录、通知、路径）",
+          "en": "judge the host-port implementation in a real main process (directories, notifications, paths)"
+        },
+        "exit": {
+          "zh": "`0` 全部通过；`1` 有一条失败；`2` 产物缺失",
+          "en": "`0` all passed; `1` one failed; `2` an artifact is missing"
+        }
+      }
+    },
+    "apps/vscode": {
+      "typecheck": {
+        "purpose": {
+          "zh": "只对编辑器扩展做类型检查",
+          "en": "type-check the editor extension alone"
+        },
+        "exit": {
+          "zh": "`0` 通过；非 `0` 有类型错误或配置错误（tsc 自己的退出码）",
+          "en": "`0` clean; non-zero type or config errors (tsc's own code)"
+        }
+      },
+      "build": {
+        "purpose": {
+          "zh": "构建扩展包与它的 webview 产物",
+          "en": "build the extension bundle and its webview artifacts"
+        },
+        "exit": {
+          "zh": "`0` 每个目标都写出；`1` 至少一个目标失败",
+          "en": "`0` every target wrote its artifacts; `1` at least one target failed"
+        }
+      },
+      "test": {
+        "purpose": {
+          "zh": "只跑扩展的测试",
+          "en": "run the extension's tests only"
+        },
+        "exit": {
+          "zh": "`0` 全过；`1` 有用例失败",
+          "en": "`0` all passed; `1` a test failed"
+        }
+      }
+    }
+  },
+  "files": {
+    "apps/desktop/scripts/manifest.mjs": {
+      "purpose": {
+        "zh": "单独重写发布清单与校验和（单一产出者）",
+        "en": "rewrite the release manifest and the checksums alone (the single producer)"
+      },
+      "exit": {
+        "zh": "`0` 写出且两张表一致；`2` 输入不足以描述一次构建",
+        "en": "`0` written and both tables agree; `2` the inputs cannot describe a build"
+      }
+    },
+    "apps/desktop/scripts/release.mjs": {
+      "purpose": {
+        "zh": "一条命令出产物与清单（退出码语义见下面的散文）",
+        "en": "one command, artifacts plus manifest (the exit-code semantics are in the prose below)"
+      },
+      "exit": {
+        "zh": "`0` / `1` / `2` / `3`",
+        "en": "`0` / `1` / `2` / `3`"
+      }
+    },
+    "apps/desktop/scripts/verify-artifacts.mjs": {
+      "purpose": {
+        "zh": "判有没有解包树与至少一个压缩包",
+        "en": "judge whether there is an unpacked tree and at least one archive"
+      },
+      "exit": {
+        "zh": "`0` 有；`1` 没有；`2` 发布目录不存在",
+        "en": "`0` present; `1` absent; `2` the release directory does not exist"
+      }
+    },
+    "apps/desktop/scripts/verify-linux-package.sh": {
+      "purpose": {
+        "zh": "在容器里产出 Linux 单文件包，并做存活与绘制探针",
+        "en": "produce the Linux single-file package inside a container, then run the survival and paint probes"
+      },
+      "exit": {
+        "zh": "`0` 通过；`1` 产物起不来；`3` 这台机器做不了（没有 Docker 等）",
+        "en": "`0` passed; `1` the artifact does not start; `3` this machine cannot do it (no Docker, etc.)"
+      }
+    },
+    "apps/desktop/scripts/verify-manifest.mjs": {
+      "purpose": {
+        "zh": "判清单与磁盘是否逐条相符、两处哈希是否一致",
+        "en": "judge that the manifest matches the disk claim by claim and that both hash tables agree"
+      },
+      "exit": {
+        "zh": "`0` 相符；`1` 不相符；`2` 没有清单可判",
+        "en": "`0` they agree; `1` they do not; `2` there is no manifest to judge"
+      }
+    },
+    "apps/desktop/scripts/verify-round-one.mjs": {
+      "purpose": {
+        "zh": "判“运行时树与锁是否就位”",
+        "en": "judge whether the runtime tree and its lock are in place"
+      },
+      "exit": {
+        "zh": "与 `release.mjs` 同一套",
+        "en": "the same set as `release.mjs`"
+      }
+    }
+  }
+}
