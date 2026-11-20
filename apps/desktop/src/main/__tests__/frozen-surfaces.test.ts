@@ -20,10 +20,11 @@
  *   and `csp.ts` must still contain every `D1` directive with its `D1` tokens as an
  *   ordered prefix. That is the "only add, never change" claim as an assertion.
  *
- * The git half is advisory: it reports what the branch touched, and a missing git binary
- * makes it skip rather than fail, because a test that cannot run its check must not
- * pretend to have run it (see doc 31 section 5.5 -- the same rule that turned an early
- * `return` into `it.skipIf`).
+ * The git half is advisory: it reports what the branch touched outside a comment, and a
+ * missing git binary makes it skip rather than fail, because a test that cannot run its
+ * check must not pretend to have run it (see doc 31 section 5.5 -- the same rule that
+ * turned an early `return` into `it.skipIf`). A comment-only edit is not a contract
+ * change, so the classification lives in one place and is visible.
  */
 
 import { execFileSync } from "node:child_process";
@@ -65,20 +66,35 @@ class CheckCouldNotRun extends Error {
 }
 
 /**
- * Ask git for the names of files changed on this branch.
+ * Ask git which lines of one file this branch changed outside a comment.
  *
- * @returns the paths, or `null` when git cannot answer
+ * The frozen checks below ask "did this branch touch the file", which is the right
+ * question for a behaviour change and the wrong one for a comment rewrite: a frozen
+ * file whose private citations were removed is still the same contract. So every
+ * added or removed line is classified, and anything that is not a comment line -- a
+ * `//` line, a block comment's `*` continuation, or a `/*` opener -- is reported.
+ * Prose that moves into a different number of lines still shows up here, which is
+ * why the caller compares against an empty list rather than a count.
+ *
+ * @param relative path from the repository root
+ * @returns the offending lines, or `null` when git cannot answer
  */
-function changedFiles(): string[] | null {
+function changesOutsideComments(relative: string): string[] | null {
   try {
-    const output = execFileSync("git", ["diff", "--name-only", "main...HEAD"], {
+    const output = execFileSync("git", ["diff", "--unified=0", "main...HEAD", "--", relative], {
       cwd: REPO_ROOT,
       encoding: "utf8",
       // A git failure is a skip, not a red: see the file header.
       stdio: ["ignore", "pipe", "ignore"],
     });
 
-    return output.split("\n").filter((line) => line !== "");
+    return output.split("\n").filter((line) => {
+      if (!line.startsWith("+") && !line.startsWith("-")) return false;
+      if (line.startsWith("+++") || line.startsWith("---")) return false;
+      const body = line.slice(1).trim();
+      if (body.length === 0) return false;
+      return !(body.startsWith("//") || body.startsWith("/*") || body.startsWith("*"));
+    });
   } catch {
     return null;
   }
@@ -133,8 +149,8 @@ describe("the frozen contract is untouched", () => {
     expect(source).toContain("reason: string");
   });
 
-  it("was not modified by this branch", () => {
-    const changed = changedFiles();
+  it("changed no code outside its comments on this branch", () => {
+    const changed = changesOutsideComments("packages/core/src/port/host-port.ts");
 
     // A git that cannot answer means the check did not run. Reporting that as a pass
     // would lie about the reading (doc 31 section 5.5); reporting it as a failure would
@@ -144,7 +160,7 @@ describe("the frozen contract is untouched", () => {
       throw new CheckCouldNotRun("git diff did not answer");
     }
 
-    expect(changed).not.toContain("packages/core/src/port/host-port.ts");
+    expect(changed).toEqual([]);
   });
 });
 
@@ -167,8 +183,8 @@ describe("app:// behaviour and the CSP are additive only", () => {
     expect(source).toContain("outside-root");
   });
 
-  it("was not modified by this branch", () => {
-    const changed = changedFiles();
+  it("changed no code outside its comments on this branch", () => {
+    const changed = changesOutsideComments("apps/desktop/src/main/protocol.ts");
 
     // Unrun, not passing -- see the note above.
     if (changed === null) {
@@ -177,7 +193,7 @@ describe("app:// behaviour and the CSP are additive only", () => {
 
     // The file `app://` lives in. Adding a scheme elsewhere is the whole point of this
     // item; editing this file is how `app://` behaviour would drift.
-    expect(changed).not.toContain("apps/desktop/src/main/protocol.ts");
+    expect(changed).toEqual([]);
   });
 
   it("only added to the CSP: every D1 directive is still there in order", () => {
