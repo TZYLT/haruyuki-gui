@@ -1,7 +1,7 @@
 /**
  * Contract tests for the frozen engine type surface.
  *
- * This file is the cheap tripwire for the layer above: if a later work package
+ * This file is the cheap tripwire for the layer above: if a later change
  * widens a union, drops a spawn field or renames a wire-facing field, these
  * assertions fail before any spawn or socket code runs. Two kinds of check are
  * mixed on purpose:

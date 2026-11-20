@@ -1,13 +1,15 @@
 /**
  * Contract tests for `HostPortStartup`, the startup subset of the host port.
  *
- * Shape source: no recursive-B1 sections 3.3(a) (HostPortStartup), 3.3(b)
- * (EngineSpawnSpec), 3.4 (watchdog injection), 4.2 , 5.1 (isolation and
- * cleanup rules), 6.1  and 8 (invariants).
+ * The shapes under test are declared in this package: `HostPortStartup` and the
+ * spawn-spec getter in `host-port.ts`, the eight fields of `EngineSpawnSpec` in
+ * `engine/types.ts`, and the watchdog `NODE_OPTIONS` injection. The isolation
+ * and cleanup rules are stated where the cases below enforce them.
  *
- * This file is not a second copy of a behaviour suite: `host-port.test.ts`
- * already pins the headless implementation's own decisions (tokenDir
- * containment, `cwd === paths.userData`, the refusal naming the bundle path).
+ * This file is not a second copy of the headless behaviour suite
+ * (`host-port.test.ts`): that file already pins the headless implementation's
+ * own decisions (tokenDir containment, `cwd === paths.userData`, the refusal
+ * naming the bundle path).
  * What is asserted here is what ANY implementation must satisfy - the headless
  * one today, the Electron shell and a VSCode shell later - and the assertion is
  * kept implementation-independent by running ONE function,
@@ -26,17 +28,17 @@
  * and absolute - whenever that variable is present.
  *
  * Deliberately NOT covered, listed so the gap is visible rather than assumed:
- * the token file's permissions and lifetime (, V-3/V-4); the refusal being
- * classified as SPAWN_FAILED ; whether a desktop env is complete with
- * respect to Electron and its path conventions (the desktop shell's own suite);
- * path containment of the real token file (`send.ts`/); and any actual process
- * spawn - no engine is ever started here.
+ * the token file's permissions and lifetime (`engine/token.ts`); the refusal
+ * being classified as SPAWN_FAILED (`engine/errors.ts`); whether a desktop env
+ * is complete with respect to Electron and its path conventions (the desktop
+ * shell's own suite); path containment of the real token file
+ * (`headless-host-port.ts` and its suites); and any actual process spawn - no
+ * engine is ever started here.
  *
  * Every case uses real temporary directories and real files: mocking node:fs
- * would test the mock instead of the host. Cleanup is point-by-point (no recursive
- * section 5.1, rule 3): each bundle is unlinked, each directory is rmdir'd only
- * after its children, so a fixture bug can never delete a tree this suite did
- * not create.
+ * would test the mock instead of the host. Cleanup is point-by-point: each
+ * bundle is unlinked, each directory is rmdir'd only after its children, so a
+ * fixture bug can never delete a tree this suite did not create.
  */
 
 import { existsSync, statSync, writeFileSync } from "node:fs";
@@ -179,10 +181,10 @@ describe("host port startup contract (implementation independent)", () => {
   });
 
   it("accepts a host that preloads the watchdog through NODE_OPTIONS", async () => {
-    // The headless port always injects the preload; a desktop host may be
+    // The headless port always injects the preload; a desktop host whose build
     // disables the preload fuse may be unable to, so the invariant is
-    // invariant is conditional and both branches are exercised by the two
-    // fixtures. This case covers the "present" branch on the desktop side.
+    // conditional and both branches are exercised by the two fixtures. This
+    // case covers the "present" branch on the desktop side.
     const { port } = await FAKE_DESKTOP.create({ withWatchdog: true });
 
     const spec = await assertHostPortContract(port);
@@ -365,7 +367,8 @@ describe("implementation differences stay inside host facts", () => {
  * ------------------------------------------------------------------------- */
 
 /**
- * Assert everything `HostPortStartup` requires of a host port, whatever its implementation.
+ * Assert everything `HostPortStartup` requires of a host port, whatever its
+ * implementation.
  *
  * Returns the accepted spawn spec so a caller can add host-specific checks
  * without opening the assertion. A refusal is not an acceptable answer here: it
@@ -483,7 +486,7 @@ function assertSpawnSpecContract(
 
     // On Windows the quoted path must use forward slashes: Node unescapes
     // backslashes inside NODE_OPTIONS, so a native `C:\a\watchdog.cjs` preload
-    // becomes `C:awatchdog.cjs` and the watchdog silently never loads (measured,
+    // becomes `C:awatchdog.cjs` and the watchdog silently never loads (measured
     // on Windows). This is the form the headless port produces, and the one a
     // second host port has to reproduce.
     if (process.platform === "win32") {
@@ -692,7 +695,7 @@ type FakeDesktopOptions = {
  * Not product code and not exported: it exists so that a statement in
  * `assertHostPortContract` can be shown to hold for a host that answers
  * differently, which is exactly the claim the contract makes about a future
- * shell. It mirrors the headless refusal behaviour (a missing bundle is
+ * desktop shell. It mirrors the headless refusal behaviour (a missing bundle is
  * `ok:false`) because that too is contract, not implementation detail.
  */
 async function createFakeDesktopHostPort(

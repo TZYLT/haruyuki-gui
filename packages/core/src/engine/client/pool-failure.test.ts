@@ -6,7 +6,7 @@
  * the ruling was made, not a detail of it.
  *
  * The measured fact it protects: with agent C's connection closed at 3 of A's
- * closed at 3 of A's 10 frames, **A still received 10 of 10**. Under one shared
+ * 10 frames, **A still received 10 of 10**. Under one shared
  * connection that is impossible - closing it would have taken everyone's frames,
  * and there is no unsubscribe command in the engine (124 client-to-server commands,
  * none of them `unsub*`), so evicting one agent is only possible if each agent owns
@@ -18,11 +18,11 @@
  *    leaves A's in-flight request waiting for its own answer rather than settling it
  *    early or clearing its table. A factory that throws for one agent degrades that
  *    agent alone.
- * 2. **A channel always exists.** The engine's endpoint is `null` until it is ready
+ * 2. **A channel always exists.** The engine's endpoint is `null` until it is
  *    ready, and a resolver may throw or return junk. None of those may reach a
- *    those may reach a render path as an exception: the caller gets a channel that
- *    answers `NOT_CONNECTED` with the §5.2.2 "never came up" wording, so `B3` can
- *    tell that apart from "dropped" when it decides where to reconnect from.
+ *    render path as an exception: the caller gets a channel that answers
+ *    `NOT_CONNECTED` with the "never came up" wording, so a caller can tell that
+ *    apart from "dropped" when it decides where to reconnect from.
  *
  * The harness is `pool-test-support.ts`; identity and lifetime are `pool.test.ts`.
  */
@@ -53,7 +53,7 @@ describe("local failure does not spread", () => {
     expect(h.pool.channels().map((channel) => channel.agentId)).toEqual(["a", "b"]);
   });
 
-  it("keeps A's and B's subscribers receiving after C is closed (probe-10 shape)", () => {
+  it("keeps A's and B's subscribers receiving after C is closed at 3 of 10 frames", () => {
     // The measured behaviour: A is at 3/10 when C's connection
     // closes and still receives 10/10. Red when: closing one agent touches a shared subscriber set
     // or a shared socket.
@@ -218,7 +218,7 @@ describe("endpoint seam", () => {
         expect(result.ok).toBe(false);
         if (!result.ok) {
           expect(result.error.code).toBe("NOT_CONNECTED");
-          // §5.2.2: "never came up" must be distinguishable from "dropped".
+          // "never came up" must be distinguishable from "dropped".
           expect(result.error.detail).toContain("engine has not become ready");
         }
       },
@@ -376,7 +376,7 @@ describe("endpoint seam", () => {
         expect(result.ok).toBe(false);
         if (!result.ok) {
           expect(result.error.code).toBe("NOT_CONNECTED");
-          // §5.2.2: "never came up" must stay distinguishable from "dropped".
+          // "never came up" must stay distinguishable from "dropped".
           expect(result.error.detail).toContain("engine has not become ready");
         }
       }

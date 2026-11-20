@@ -3,7 +3,7 @@
  *
  * These are pure-name tests: no filesystem, no clock. The point is that the four
  * keys are exactly the frozen ones, that the two shells can never alias each
- * other (invariant I-4), and that a timestamp cannot turn a backup name into a
+ * other, and that a timestamp cannot turn a backup name into a
  * path that escapes `layout/`.
  */
 

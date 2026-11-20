@@ -124,7 +124,7 @@ export interface CompactSideRailProps {
  *
  * At less than 1200px there is no room for a side panel, so the pages behind the
  * rails have to be reachable from the single main area. Clicking an entry opens
- * that page in the main area (`59` section 4.8); it does not move it.
+ * that page in the main area; it does not move it.
  *
  * @param props compact rail props
  * @returns the grouped list

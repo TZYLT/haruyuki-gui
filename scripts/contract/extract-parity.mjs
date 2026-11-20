@@ -3,7 +3,7 @@
  *
  * Three frozen facts about the pinned engine are extracted here, all by syntax
  * only (`ts.createSourceFile`, no Program, no type checker, no module
- * resolution), matching the seam policy of A2-D04:
+ * resolution), the same syntax-only policy as `lib/scan.mjs`:
  *
  *   1. `src/websocket/listener/listener-constants.ts`
  *        SUPPORTED_REMOTE_COMMANDS            -> remoteCommands.advertised
@@ -27,7 +27,7 @@
  * literals in `app-server.ts` (see `shapeFromChunks`), so the only pinned
  * vocabulary is the URL token below.
  *
- * Failure semantics (route doc 08 section 3.2 step 8): a missing symbol is a
+ * Failure semantics: a missing symbol is a
  * structured `{ ok: false, code }` result, never a thrown exception and never
  * an empty "looks fine" object. Exit code 2 is the caller's decision; single
  * unparseable entries land in `health.coarse` and the rest of the extraction
@@ -42,7 +42,8 @@
  *   else parity.remoteCommands, parity.startupText, parity.consistency, parity.counts;
  *
  * The pure parsers (`parseRemoteConstants`, `parseDispatchCases`,
- * `parseStartupLines`) take source text, so the contract replay fixture strings
+ * `parseStartupLines`) take source text, so the contract gate can replay fixture
+ * strings
  * without copying the engine tree.
  *
  * `consistency` is `checkParityConsistency(remoteCommands)` re-exported from

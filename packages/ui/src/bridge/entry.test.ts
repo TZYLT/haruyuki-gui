@@ -6,7 +6,7 @@
  * Requirement source: the frozen frame-entry interface and its acceptance
  * criteria -- a stale watermark is dropped, the version guard is enforced and
  * the entry stays silent after a reject, approval ordering is preserved, and a
- * C5-R07 (one page per cursor). The corpus is the recorded one under
+ * page never crosses its cursor twice. The corpus is the recorded one under
  * `fixtures/bridge/`, read as raw text and parsed here line by line, so the
  * assertions run against the exact bytes a socket would deliver rather than
  * against a pre-digested model of them. `loadFramesFixture` in `@haruyuki/core`
@@ -417,7 +417,7 @@ describe("watermark", () => {
   });
 });
 
-describe("duplicate pages (C5-R07)", () => {
+describe("duplicate pages", () => {
   it("drops a repeated (watermark, token) pair", () => {
     const entry = createFrameEntry(corpusOptions());
 
@@ -508,7 +508,7 @@ describe("a cursor the entry cannot read", () => {
 
 describe("handshake before the type table", () => {
   it("still rejects an incompatible bridge when the table omits bridge.ready", () => {
-    // Downstream items inject only the types they decode (C5-Q24), so a table
+    // Downstream consumers inject only the types they decode, so a table
     // without `bridge.ready` is a legal configuration. Checking the table first
     // switched the version guard off in exactly that configuration, and a peer
     // on an incompatible bridge had its pages routed and rendered.

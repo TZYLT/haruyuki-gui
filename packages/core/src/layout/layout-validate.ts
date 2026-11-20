@@ -14,8 +14,8 @@
  *   limits, uniqueness, then the soft repairs that are *not* errors.
  *
  * Unknown keys are the point, not noise
- *   `LayoutDoc` names the keys C4 understands; a newer renderer may add keys at
- *   any level. Those keys are preserved verbatim by the JSON round-trip clone
+ *   `LayoutDoc` names the keys core understands; a newer renderer may add keys
+ *   at any level. Those keys are preserved verbatim by the JSON round-trip
  *   clone this function returns, so nothing here
  *   rebuilds an object from known fields. The returned document is a clone:
  *   a caller that mutates it cannot reach the value it passed in.
@@ -54,7 +54,7 @@ import { LAYOUT_DOC_VERSION, LAYOUT_LIMITS } from "@haruyuki/protocol";
 /**
  * The result of validating one candidate document.
  *
- * `ok: false` carries a `LayoutErrorCode` from the shared protocol vocabulary
+ * `ok: false` carries a `LayoutErrorCode` from the shared protocol vocabulary,
  * never user-facing prose: the renderer decides how to
  * explain it. `detail` is for logs and tests and names the offending path.
  */
@@ -313,7 +313,7 @@ export function validateLayoutDoc(
       corrupt("layout document must be a JSON object");
     }
 
-    // The store substitutes version 1 for a missing field before calling here
+    // The store substitutes version 1 for a missing field before calling here;
     // anything that survives to this point must say 1.
     if (value["version"] !== LAYOUT_DOC_VERSION) {
       throw new LayoutViolation(

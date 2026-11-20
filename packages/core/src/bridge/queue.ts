@@ -1,5 +1,5 @@
 /**
- * queue.ts - the three-channel bounded outbound queue (C5).
+ * queue.ts - the three-channel bounded outbound queue.
  *
  * Shape source: the three physical channels of the frame envelope
  * (packages/protocol/src/frame/frame.ts): `control` carries ordered

@@ -260,7 +260,7 @@ describe("tool messages", () => {
     expect(second).toHaveLength(1);
 
     // A history page is finished by definition, so an unclosed call closes as
-    // incomplete here instead of keeping an in-progress card (§4.8).
+    // incomplete here instead of keeping an in-progress card.
     expect(typed(first[0], "tool_call").status).toBe("incomplete");
     expect(typed(first[0], "tool_call").orphan).toBe(false);
     expect(typed(first[0], "tool_call").result).toBeNull();

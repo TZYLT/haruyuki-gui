@@ -1,9 +1,8 @@
 /**
  * One channel's own lifecycle, and why its failure stays its own.
  *
- * `I-1` is not "agents cannot see each other" -  covers that, and
- * `multichannel.test.ts`  is its evidence. `I-1` is the **vertical** claim,
- * one channel deep:
+ * The claim here is not "agents cannot see each other" - `multichannel.test.ts`
+ * covers that. It is the **vertical** claim, one channel deep:
  *
  * > C's own state goes handshaking -> ready -> dropped, and each of those states
  * > changes what **C** answers and nothing else.
@@ -20,11 +19,11 @@
  *
  * 1. **Each channel owns its readiness.** A is ready, C is still handshaking:
  *    A's command goes out, C's does not, and C says *why*, in the two wordings
- *    §5.2.2 makes an interface. Red when readiness is one shared cell.
+ *    that are part of the channel's interface. Red when readiness is one shared cell.
  * 2. **A drop is a fact about one channel.** C was ready and dropped: C's answer
  *    changes from "written" to "was ready and dropped", and A's answer, A's
  *    readiness reading and A's diagnostic ring are byte-identical to before.
- *    Red when the drop path resets a global flag - the defect `I-1` is named for.
+ *    Red when the drop path resets a global flag.
  * 3. **A rebuilt channel starts over.** Re-fetching after a drop must not hand
  *    back the corpse (every later send would fail forever) and must not inherit
  *    the corpse's latch, because a new connection has, truthfully, never been
@@ -106,7 +105,7 @@ describe("each channel owns its readiness", () => {
         "C's send while handshaking",
       );
       expect(cError.code).toBe("NOT_CONNECTED");
-      // §5.2.2, first sentence: a startup problem, not a dropped connection.
+      // The first wording: a startup problem, not a dropped connection.
       expect(cError.detail).toContain("engine has not become ready");
       expect(cError.detail).not.toContain("ready and dropped");
       // And nothing was written on C's behalf: "not ready" refuses *before* the
@@ -158,7 +157,7 @@ describe("each channel owns its readiness", () => {
 
 describe("a drop changes one channel's answer and nothing else", () => {
   it("moves C from 'written' to 'was ready and dropped' while A keeps writing", () => {
-    // This is `I-1`'s core sentence: **C's disconnection is not reported as a
+    // This is the vertical claim's core sentence: **C's disconnection is not reported as a
     // global failure.** Both channels were ready; C's connection then went away.
     // Red when: the drop path resets a readiness flag that is not C's - then A's
     // second send would be refused too, and the user would lose a working agent
@@ -220,8 +219,8 @@ describe("a drop changes one channel's answer and nothing else", () => {
   });
 
   it("latches everReady on the channel that dropped and leaves it off the one that never came up", () => {
-    // The two sentences are not decoration: §5.2.2 makes them the only signal a
-    // reconnect policy (B3) has to decide whether a replay is worth attempting.
+    // The two sentences are not decoration: they are the only signal a
+    // reconnect policy has to decide whether a replay is worth attempting.
     // Two channels, two different truthful answers, live at the same moment.
     // Red when: `everReady` is stored per process (everyone says "dropped" once
     // anyone has been up), or never latched (the dropped channel claims startup).
@@ -260,13 +259,13 @@ describe("a drop changes one channel's answer and nothing else", () => {
 
 describe("re-fetching after a drop starts from a channel that never came up", () => {
   it("replaces a closed channel with a new object that answers the startup wording", () => {
-    // Reading `pool.ts` first, as the work package requires: `closeChannel` drops
+    // Reading `pool.ts` first: `closeChannel` drops
     // the entry and closes the kernel, so the next `getChannel` must build a new
     // one. The sharp half is the *wording*. The dead object keeps its `everReady`
     // latch and says "was ready and dropped"; the replacement has never spoken to
     // an engine and must say "has not become ready". A pool that handed the dead
     // object back, or a rebuild that copied the latch forward, collapses the two
-    // and leaves B3 unable to tell a retry from a lost connection.
+    // and leaves a reconnect policy unable to tell a retry from a lost connection.
     // Red when: the closed entry is returned (zombie), or the rebuilt channel
     // inherits the old readiness.
     const h = makeLifecycle();
@@ -359,7 +358,7 @@ describe("re-fetching after a drop starts from a channel that never came up", ()
 
 describe("a failed connection degrades one agent and does not escalate", () => {
   it("gives C a stand-in, keeps A and B working, and keeps their rings their own", () => {
-    // `I-1`'s body. "这个 agent 连接建不起来" is a runtime condition - a refused
+    // The claim's body. "This agent's connection cannot be built" is a runtime
     // condition - a refused socket, a poison endpoint - and the caller still gets
     // a channel. The half that makes this case different from the pool's factory-throw
     // case is the *diagnostics*: a failure that lands in a shared ring is a
@@ -475,7 +474,7 @@ describe("a failed connection degrades one agent and does not escalate", () => {
     // channel claim the first caller's id - a cross-talk defect that is invisible
     // in a single-broken-agent test, because there is nothing to confuse it with.
     //
-    // This is `I-1` at its narrowest: a *local* failure stays local, including in
+    // This is the vertical claim at its narrowest: a *local* failure stays local, including in
     // the object handed out for it. Red when: `unconnected()` memoises its result,
     // or builds the kernel under a constant id.
     const h = makeLifecycle({ failing: ["c", "d"] });

@@ -11,7 +11,7 @@
  *
  * - **Docked** (default). Left and right rails list the side-zone pages; the
  *   dock shows the saved layout. Collapsing a rail only narrows the rail strip.
- * - **Compact** (`< 1200px`, `59` section 4.8). The dock is unchanged and every
+ * - **Compact** (`< 1200px`). The dock is unchanged and every
  *   page stays mounted; the active main group is *maximised* so one main tab
  *   fills the width, and the side pages move behind a "side rail" entry that
  *   opens them into the main group. Leaving compact mode exits the maximised
@@ -68,13 +68,13 @@ import { PagePicker } from "./PagePicker.js";
 import { CompactSideRail, SideRail, type SideRailSide } from "./SideRail.js";
 import type { OpenTarget, PageDefinition, PageRegistry } from "./types.js";
 
-/** Content width below which only one main tab is shown, in px (`59` section 4.8). */
+/** Content width below which only one main tab is shown, in px. */
 export const COMPACT_WIDTH = 1200;
 
 /** What the shell supplies; the frame never invents these. */
 export interface AppFrameProps {
   readonly registry: PageRegistry;
-  /** The authoritative document, from C4 or the first-run default. */
+  /** The authoritative document, from the layout store or the first-run default. */
   readonly doc: LayoutDoc;
   readonly revision: number;
   readonly onLayoutChange: (doc: LayoutDoc) => void;
@@ -494,10 +494,10 @@ export function AppFrame(props: AppFrameProps): ReactElement {
     else exitCompact(api);
   }, [compact]);
 
-  // The one global shortcut (`59` section 4.11): cycle the active group's tabs.
+  // The one global shortcut: cycle the active group's tabs.
   // It listens in the bubble phase, so a page that consumed Tab first wins.
   // A dock that never calls `onReady` is a capability failure, not a hang:
-  // after five seconds the two-column fallback takes over (`59` section 4.8).
+  // after five seconds the two-column fallback takes over.
   useEffect(() => {
     fallbackTimer.current = setTimeout(() => {
       if (apiRef.current === null) {
@@ -566,7 +566,7 @@ export function AppFrame(props: AppFrameProps): ReactElement {
 
     const close = (panel: IDockviewPanel): void => {
       // An unregistered page is hidden, not deleted: the document keeps it so a
-      // later build can show it (`59` section 4.4).
+      // later build can show it.
       if (props.registry.get(pageIdOfPanel(panel)) === undefined) hideTab(panel.id);
       else panel.api.close();
     };

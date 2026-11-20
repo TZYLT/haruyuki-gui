@@ -1,11 +1,10 @@
 /**
  * Port discovery: read the engine's WebSocket URL out of stdout.
  *
- * Shape source: no recursive-B1 section 2.2 (F-6/F-7/F-8), section 3.1
- * (`port-discovery.ts`: stdout parsing plus the 10 s timeout), section 3.3 (f)
- * (`PORT_NOT_FOUND` when no matching line arrives) and section 8 invariant 3
- * ("do not guess the port"). This module therefore *only* parses strings: it
- * never connects, never probes and never scans a port range.
+ * This module parses stdout plus the 10 s timeout, reports `PORT_NOT_FOUND`
+ * when no matching line arrives, and never guesses the port. It therefore
+ * *only* parses strings: it never connects, never probes and never scans a port
+ * range.
  *
  * The engine (`haruyuki.js server --listen ws://127.0.0.1:0 ...`) prints two
  * lines once the server is up:
@@ -15,8 +14,8 @@
  *
  * Only the second line is the client endpoint: the first one is the listen
  * address without the `/ws` path, and `--openai-api` adds an `OpenAI:` line that
- * also carries a `ws://` URL, so neither may be accepted (F-6). Ports are
- * assigned by the system (F-7) and 0.6.0 has no `ws-url-file` (F-8), which makes
+ * also carries a `ws://` URL, so neither may be accepted. Ports are
+ * assigned by the system and 0.6.0 has no `ws-url-file`, which makes
  * this stdout parse the only discovery path.
  *
  * Reading rules, all of which exist because stdout is a byte stream and not a
@@ -31,7 +30,7 @@
  * Failure is local: this file raises `PortNotFoundError` with
  * `code = "PORT_NOT_FOUND"`. Mapping it onto the frozen `EngineErrorCode`
  * taxonomy (and onto `EngineError`) belongs to the facade (`engine.ts`,
- * which owns that shared contract.
+ * `errors.ts`), which owns that shared contract.
  */
 
 import { StringDecoder } from "node:string_decoder";
@@ -43,7 +42,7 @@ const DEFAULT_TIMEOUT_MS = 10_000;
 const MAX_LAST_LINE_CHARS = 200;
 
 /**
- * The only accepted line shape (F-6).
+ * The only accepted line shape.
  *
  * Anchored at both ends, so `Listening on ws://...` and `OpenAI: ws://...` can
  * never match. `\S+` stops at the first whitespace and `$` then requires the end
@@ -130,7 +129,7 @@ type EndAwareStream = NodeJS.ReadableStream & { readonly readableEnded?: boolean
  *   `end` never fires twice.
  *
  * @param stream engine stdout (a pipe created with `stdio: "pipe"`)
- * @param timeoutMs upper bound for the wait, 10 s by default (3.3 (f))
+ * @param timeoutMs upper bound for the wait, 10 s by default
  */
 export function waitForWsUrl(
   stream: NodeJS.ReadableStream,

@@ -203,7 +203,11 @@ async function checkV08(): Promise<void> {
     }
   } catch (error) {
     reloadFailureDetail = describe(error);
-    record("renderer-recovery-reload-failure", "SKIP", `the reload-failure scenario threw: ${describe(error)}`);
+    record(
+      "renderer-recovery-reload-failure",
+      "SKIP",
+      `the reload-failure scenario threw: ${describe(error)}`,
+    );
   }
 
   const dumps = listDumpSizes();

@@ -4,7 +4,7 @@
  * The contract covers the plan, options and handle shapes plus the wire fixture
  * line format. The cases assert that only s2c lines are emitted, in order, and
  * that the injected clock drives the timing. The replay engine is loaded through
- * dynamic `import()` of the fixture path, the same way `fake-server.test.ts`
+ * a dynamic `import()` of the fixture path, the same way `fake-server.test.ts`
  * loads its fixture, because `fixtures/` is outside the package's tsconfig.
  *
  * Every socket and server opened here is released in `afterEach`, so vitest

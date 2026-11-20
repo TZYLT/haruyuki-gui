@@ -20,8 +20,8 @@
  * one span (`"hello <reminder>...</reminder>world"` reads as `"hello world"`)
  * while a notification quoted inside a reminder disappears with it.
  *
- * Outside those removals the source text is preserved verbatim, as required by
- * §4.13: spaces, blank lines and line endings are never rewritten. Only the
+ * Outside those removals the source text is preserved verbatim: spaces, blank
+ * lines and line endings are never rewritten. Only the
  * engine's own transcript pointer lines are dropped.
  *
  * Notifications can arrive unclosed at the end of the content, and the engine
@@ -129,8 +129,8 @@ function noticeBody(text: string): string {
 /**
  * Append a text span only when it has visible characters.
  *
- * The text is sliced from the source verbatim: §4.13 forbids rewriting the
- * user's prose, so there is no trim, no line-ending conversion and no
+ * The text is sliced from the source verbatim: the user's prose is never
+ * rewritten, so there is no trim, no line-ending conversion and no
  * blank-line collapsing. Only transcript pointer lines are removed, and an
  * empty or whitespace-only run still produces no span.
  */

@@ -5,8 +5,8 @@
  * Scope
  *   `pnpm contract:check --dts <dir>` compares the committed snapshot with a
  *   directory of TypeScript declarations. In this repo the directory is a
- *   self-made fixture (route doc 08 section 9): the real `@letta-ai/letta-client`
- *   package is not installed and must not be installed (A2 hard constraint 1).
+ *   self-made `.d.ts` fixture: the real `@letta-ai/letta-client` package is not
+ *   installed and must not be installed.
  *
  *   Only `.d.ts` files below `dtsDir` are read, recursively, in sorted posix
  *   path order. Each file is parsed with
@@ -47,7 +47,7 @@
  *   `dtsDir/package.json` may carry `gitHead`. It is compared with
  *   `snapshot.engine.commit`; a mismatch adds one warning line and never fails
  *   the run. The comparison tolerates an abbreviated form on either side: the
- *   (P6-F3): the snapshot stores the short commit from `git rev-parse --short
+ *   snapshot stores the short commit from `git rev-parse --short
  *   HEAD` while a published package pins the full 40-character SHA, so the two
  *   only warn when neither value is a prefix of the other. Both sides must be at
  *   least 7 hex characters for the prefix rule to apply. A missing or unreadable

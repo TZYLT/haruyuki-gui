@@ -2,7 +2,7 @@
  * Tests for the fixture loaders.
  *
  * The contract is the two line formats the loaders accept: `wire` and `frames`.
- * formats). The wire cases prove that validation is delegated to
+ * The wire cases prove that validation is delegated to
  * `fixtures/engine/replay.mjs` - the error text and the 1-based line number are
  * that module's, not a second implementation's - while the bridge cases cover the
  * format this module owns.
@@ -124,7 +124,7 @@ const FRAMES_HEADER = {
   schemaVersion: 1,
   bridgeVersion: 1,
   clock: "virtual",
-  note: "t vocabulary pending C5",
+  note: "t vocabulary not frozen yet",
 };
 
 /** Build bridge-frame JSONL text: the header, then one envelope per line. */

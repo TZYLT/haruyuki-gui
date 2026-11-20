@@ -1,7 +1,6 @@
 /**
- * Tests for the engine facade : the seven-state machine, the five error
- * codes, the event stream and frame tracking (no recursive-B1 sections 3.3 (c), (e),
- * (f); decisions in docs/15 D-01, D-10, D-11).
+ * Tests for the engine facade (`engine.ts`): the seven-state machine, the five
+ * error codes, the event stream and frame tracking.
  *
  * - The real engine is preferred: `_research/engine-0.6.0/package/haruyuki.js`
  *   runs `start -> ready -> stopGraceful`; the case is skipped (`it.skipIf`) when
@@ -13,7 +12,7 @@
  *
  * `spawn.ts` composes child argv as `[bundlePath, ...argvPrefix]`, and
  * `headless-host-port.ts` puts the engine entry in `bundlePath` and the
- * engine options in `argvPrefix` (the F-6 shape `node haruyuki.js server ...`).
+ * engine options in `argvPrefix` (the `node haruyuki.js server ...` shape).
  * The real-engine case still drives the engine through a test-only launcher
  * that rewrites `process.argv` and loads the bundle in the same process: the
  * spawned child is still the engine (one pid, no wrapper to orphan).
@@ -292,7 +291,7 @@ describe("Engine.start", () => {
     const tokenPath = path.join(tokenDir, TOKEN_FILE_NAME);
     expect(existsSync(tokenPath)).toBe(true);
 
-    // kill() is synchronous and only *starts* the unlink, so the documented way
+    // kill() is synchronous and only *starts* the unlink, so the reliable way
     // to get proof of removal is a following stopGraceful. That promise is
     // worthless if it resolves before the unlink it shares, hence no waitFor here.
     engine.kill();
@@ -394,7 +393,7 @@ describe("Engine.degradations", () => {
     const stub = await startHandshakeStub();
     const engine = startTracking();
 
-    // R-3: the fuse disables `--require`, or the path is wrong. Orphan
+    // The fuse disables `--require`, or the path is wrong. Orphan
     // protection then rests on the parent, and the host has to know.
     await engine.start({
       spawnSpec: {
@@ -462,7 +461,7 @@ describe("Engine.start failure classification", () => {
     expect(engine.state).toBe("failed");
     expect(engine.socketState).toBe("closed");
 
-    // The failure event fires once, before the cleanup (work package order).
+    // The failure event fires once, before the cleanup.
     expect(errors).toHaveLength(1);
     expect(errors[0]?.code).toBe("AUTH_FAILED");
 

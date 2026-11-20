@@ -12,9 +12,8 @@
  *   attributes the requirement says must come from keys.
  *
  * This module is deliberately shaped as a set of `flatConfig` rule objects:
- * wiring them into `eslint.config.mjs` is a small change in that file, which is
- * owned by type. Keeping the rules here is what lets both land without two owners
- * editing one config (`D-03`).
+ * wiring them into `eslint.config.mjs` is a small change in that file. Keeping
+ * the rules here is what lets both land without two owners editing one config.
  *
  * Why a lint rule rather than the gate script: the violation is local to one
  * expression and belongs on the line the author is typing, where it can be fixed

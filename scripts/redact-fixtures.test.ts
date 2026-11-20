@@ -1,6 +1,5 @@
 /**
- * Self-tests for `scripts/redact-fixtures.mjs` (A3; docs/18 R-06 / the log,
- * section 3.2 step 1, section 8 INV-A3-2).
+ * Self-tests for `scripts/redact-fixtures.mjs`.
  *
  * One raw `kind: "wire"` recording is built in `os.tmpdir()` and trips every
  * gate rule: an absolute Windows path, an absolute POSIX path, the local user

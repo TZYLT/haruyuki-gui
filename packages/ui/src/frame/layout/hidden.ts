@@ -3,7 +3,7 @@
  *
  * A tab the user closes because this build cannot render it is not deleted: the
  * layout document keeps it with `hidden: true` so a later build that registers
- * the page shows it again (`59` section 4.4, `60` section 3.4). Dockview has no
+ * the page shows it again. Dockview has no
  * "hidden tab", so the frame has to push that bit into the document itself, and
  * `toLayoutDoc` needs the document it is merging against to *already* carry the
  * flag -- otherwise the tab is simply gone from the next save.

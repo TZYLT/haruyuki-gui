@@ -20,8 +20,9 @@
  *
  * Consequence worth stating, because it is where this suite's coverage stops:
  * the **wiring** that closes the kernel when a socket dies (`transport.onClose`
- * -> `channel.close()`) is the obligation, and this rig *assumes* it exists.
- * A suite that wants to see the socket's own close event must use the horizontal rig fleet;
+ * -> `channel.close()`) is the wiring's obligation, and this rig *assumes* it exists.
+ * A suite that wants to see the socket's own close event must use the horizontal
+ * rig's fleet;
  * a suite that wants to see what the kernel does once it has been closed is
  * this one.
  *
@@ -50,9 +51,9 @@
  * | dropped | `{false, true}` | `NOT_CONNECTED`, "channel was ready and dropped" | reconnect problem |
  *
  * The `everReady` half **latches**: once a channel has been usable it keeps the
- * second wording for the rest of its life, which is the fact B3 reads to decide
+ * second wording for the rest of its life, which is what a reconnect policy
  * reads when it decides whether a replay is worth attempting - the two English
- * sentences are an interface there, not prose).
+ * sentences are an interface, not prose.
  *
  * ## The cell is per channel, and that is the whole point
  *
@@ -61,7 +62,7 @@
  * even by accident, and a **rebuild** starts from a fresh cell - so a channel
  * that comes back after a drop is truthfully "never ready" rather than
  * inheriting the dead connection's latch. A single module-level cell is the
- * defect `I-1` names, and it is the first mutant this suite is built to kill.
+ * defect this rig exists to catch, and it is the first mutant this suite is built to kill.
  *
  * ## Discipline this file keeps
  *
@@ -292,8 +293,8 @@ export function makeLifecycle(
     }
 
     // A fresh cell per build. A rebuild therefore starts at "never ready", which
-    // is the truthful state of a new connection and the fact §5.2.2 turns into
-    // the startup wording.
+    // is the truthful state of a new connection and the fact the startup wording
+    // reports.
     const cell: ReadinessCell = { ready: false, everReady: false };
     cells.set(agentId, cell);
 

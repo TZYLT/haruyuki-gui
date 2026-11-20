@@ -1,6 +1,5 @@
 /**
- * The desktop host port: `nine-item contract` implemented against a real Electron main
- * process.
+ * The desktop host port, implemented against a real Electron main process.
  *
  * The shape is not defined here. `packages/core/src/port/host-port.ts` is the
  * only definition (a test asserts it does not change), and the headless

@@ -1,11 +1,10 @@
 /**
  * snapshot.ts - the deterministic serialiser behind vitest snapshots.
  *
- * Scope sources: docs/18-A3 section 3.4.5 (the frozen `SnapshotRules` shape and
- * `normalizeForSnapshot` signature), section 1.2 `R-05` (vitest's native
- * `toMatchSnapshot` plus this serialiser; no third tool), `R-06` (redaction is a
- * recording-time concern; this is the gate-side normaliser) and section 8
- * (`INV-A3-4`). Requirement side: docs/17-A3 sections 5.1 `V-8` and 6.4.
+ * Scope: the `SnapshotRules` shape and the `normalizeForSnapshot` signature
+ * below. A golden file is produced by vitest's native `toMatchSnapshot` over
+ * this serialiser's output; no third snapshot tool is involved. Redaction is a
+ * recording-time concern and is not done here: this is the gate-side normaliser.
  *
  * The output is plain JSON-shaped data, so a snapshot is a stable string and a
  * failure says "these bytes changed" rather than "these object identities
@@ -22,7 +21,7 @@
  * The last rule is why `undefined` becomes `"<undefined>"`: a serialiser that
  * must return JSON-able data cannot keep `undefined` as a value, and turning it
  * into `null` would erase the difference a snapshot exists to show. `null`
- * so the two remain distinguishable in the snapshot.
+ * stays `null`, so the two remain distinguishable in the snapshot.
  *
  * Volatile and path rules are applied to the whole tree, including map-shaped
  * objects whose keys happened to be paths. If two keys normalise to the same

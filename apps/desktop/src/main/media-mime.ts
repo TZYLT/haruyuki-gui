@@ -2,8 +2,8 @@
  * Which file types the media channel may serve, and as what.
  *
  * The table is the security boundary of this item. Viewing the user's own files
- * viewing outside "approval" and bounds it by OS permissions, and the readable set
- * is only a convenience range -- so the only thing standing between a user's file
+ * needs no approval step and is bounded by OS permissions, and the readable set is
+ * only a convenience range -- so the only thing standing between a user's file
  * and an executable document is this table plus the render-side rule that content
  * never reaches `innerHTML`.
  *

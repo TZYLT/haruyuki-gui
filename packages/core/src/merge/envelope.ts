@@ -33,7 +33,7 @@ export type EnvelopeFacts = {
   readonly authorAgentId: string | null;
   /** `msg.subagent_id`, or `null` on the main line. */
   readonly subagentId: string | null;
-  /** Arrival time from B2 (not the engine's `emitted_at`). */
+  /** Arrival time the engine client recorded (not the engine's `emitted_at`). */
   readonly at: number;
 };
 
@@ -55,7 +55,7 @@ export function readSeq(value: unknown): number | null {
 /**
  * Read one frame's envelope facts.
  *
- * @param frame one B2 event frame
+ * @param frame one engine event frame
  * @param defaultConversationId used when `runtime.conversation_id` is absent
  */
 export function readEnvelope(

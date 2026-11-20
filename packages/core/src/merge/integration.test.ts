@@ -6,7 +6,7 @@
  * share an id across the main line and a subagent, and one recording carries no
  * sequence numbers at all. Those are the shapes the corpus exists for.
  *
- * Every frame here is built the way B2 builds one: the wire message's envelope
+ * Every frame here is built the way the engine client builds one: the wire message's envelope
  * fields (`event_seq`, `idempotency_key`, `runtime`, `emitted_at`) are lifted
  * into `envelope`, and the whole message stays as `raw`. A file without
  * `event_seq` gets no envelope at all rather than an empty one, because the
@@ -90,7 +90,7 @@ function runtimeScopeOf(value: unknown): RuntimeScope | undefined {
 }
 
 /**
- * The envelope B2 would have attached to this message.
+ * The envelope the engine client would have attached to this message.
  *
  * `event_seq` decides whether an envelope exists at all: the terminal corpus has
  * no numbering, and a frame that never had one must not gain an empty envelope.

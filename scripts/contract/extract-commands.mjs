@@ -2,23 +2,25 @@
  * extract-commands.mjs - command extraction for the contract snapshot.
  *
  * Input: the pinned engine source below `_research/haruyuki` (read-only). The
- * only indexed declarations are `src/types/**\/*.ts`, via the frozen type seam:
+ * only indexed declarations are `src/types/**\/*.ts`, via the frozen type-index
+ * seam:
  *
  *   const index = createTypeIndex(engineRoot);
  *   const union = index.resolveUnion("WsProtocolCommand", "src/types/protocol_v2.ts");
  *
- * Output: one record per wire command, shaped for `snapshot.json` v1
- * `commands[]` (08 section 3.4a):
+ * Output: one record per wire command, shaped for the `snapshot.json` v1
+ * `commands[]` slice:
  *
  *   { wire, type, home, direction, fields, shapeFingerprint, health }
  *
  * `counts.wireCommands` counts the records with a non-null wire only: a coarse
  * record (`wire: null`) stays in `commands[]` for the validator to reject, but it
- * is not a wire command (07 section 6.6).
+ * is not a wire command.
  *
- * `inbound` and `fieldLevel` are deliberately absent. snapshot assembly owns the capability
- * join (`inbound` comes from ) and the `detail` filter (`fieldLevel` comes
- * from `capabilities.json`). Emitting either here would be a second source of
+ * `inbound` and `fieldLevel` are deliberately absent. `snapshot.mjs` owns the
+ * capability join (`inbound` comes from `extract-messages.mjs`) and the
+ * `detail` filter (`fieldLevel` comes from `capabilities.json`). Emitting either
+ * here would be a second source of
  * truth for a fact this package cannot see.
  *
  * Union expansion
@@ -43,7 +45,7 @@
  *     - `ambiguous-symbol` keeps a `coarse` record (wire null, candidate home)
  *       because the declaration exists more than once; only a human can pick.
  *     - Any other unresolved member goes to `health.unparsed` and marks the
- *       whole extraction `degraded` (08 section 3.2 item 3).
+ *       whole extraction `degraded`.
  *     - A resolved interface without a `type` literal keeps its record with
  *       `wire: null` and `health: "coarse"`.
  *   `snapshot.mjs` maps `health.coarse` / `health.unparsed` into the snapshot
@@ -354,8 +356,9 @@ function walkUnion(index, members, state, health, depth) {
 /**
  * Resolve a union and recursively expand its aliases.
  *
- * Pure with respect to the injected index: the contract pass a string-backed stub
- * to test expansion, cycles and ambiguity without creating an engine tree.
+ * Pure with respect to the injected index: the contract gate can pass a
+ * string-backed stub to test expansion, cycles and ambiguity without creating an
+ * engine tree.
  *
  * @param {{resolveUnion: (name: string, fromFile: string) => object}} index type index
  * @param {string} unionName
@@ -444,7 +447,7 @@ function resolveBidirectionalHomes(index, health, fromFile) {
 
   const state = { entries: [], unresolved: [], visited: new Set() };
   // Reporting individual message members belongs to `extract-messages.mjs`; only the
-  // itself matters here, so the scratch accumulator is intentionally dropped.
+  // union itself matters here, so the scratch accumulator is intentionally dropped.
   walkUnion(index, resolved.members, state, createHealth(), 0);
 
   for (const entry of state.entries) {
@@ -457,9 +460,10 @@ function resolveBidirectionalHomes(index, health, fromFile) {
 /**
  * Extract every wire command from the pinned engine source.
  *
- * `index` is optional so snapshot assembly can reuse one index for commands, messages and
- * parity instead of parsing `src/types` three times. `unionName` / `fromFile`
- * are overridable so the contract drive the whole pipeline from a string-backed
+ * `index` is optional so `snapshot.mjs` can reuse one index for commands,
+ * messages and parity instead of parsing `src/types` three times. `unionName` /
+ * `fromFile` are overridable so the contract gate can drive the whole pipeline
+ * from a string-backed
  * stub (its fixture tree has no real protocol file).
  *
  * @param {{

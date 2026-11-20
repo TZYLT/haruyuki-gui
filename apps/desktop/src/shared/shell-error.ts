@@ -30,7 +30,7 @@ import type { EngineErrorCode } from "@haruyuki/core";
  * with no message is a string that reaches a user untranslated. Adding one is a
  * contract change, not a refactor.
  *
- * D4 adds four runtime outcomes of supervision and diagnostics
+ * Four runtime outcomes of supervision and diagnostics were added
  * (`ENGINE_CRASHED`, `DIAGNOSTIC_EXPORT_FAILED`, `STALE_ENGINE_FOUND`,
  * `STALE_ENGINE_CLEAN_FAILED`); the five earlier ones are unchanged.
  *

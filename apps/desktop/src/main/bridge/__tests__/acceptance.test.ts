@@ -54,7 +54,7 @@ function fakeTarget() {
   };
 }
 
-describe("D3 acceptance", () => {
+describe("bridge acceptance", () => {
   it("1 MiB through the router writes once per slice and never renders", () => {
     const writes: string[] = [];
     const sink: TerminalSink = {
@@ -163,7 +163,7 @@ describe("D3 acceptance", () => {
     host.submit(READY);
     const before = calls.length;
 
-    // C5's sender is muted after a reject; the throw is the producer's signal.
+    // The sender is muted after a reject; the throw is the producer's signal.
     // What matters here is that nothing reaches the renderer.
     expect(() => host.send(termFrame("late"))).toThrow();
 

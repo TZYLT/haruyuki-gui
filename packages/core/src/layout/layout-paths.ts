@@ -3,8 +3,8 @@
  *
  * The two shells never share a file: `layout/desktop.json` and
  * `layout/vscode.json` are separate documents, and the two draft files are
- * separate too. Keeping the mapping in one module is what makes invariant I-4
- * ("a write for one shell cannot touch the other shell") checkable in one place
+ * separate too. Keeping the mapping in one module is what makes "a write for
+ * one shell cannot touch the other shell" checkable in one place
  * instead of at every call site.
  *
  * Nothing here reads or writes: this is pure name construction, so the store and
@@ -16,7 +16,10 @@
 
 import { basename, dirname, join } from "node:path";
 
-/** The shells C4 stores for. A closed union on purpose: an unknown shell must not invent a key. */
+/**
+ * The shells the layout store keeps files for. A closed union on purpose: an
+ * unknown shell must not invent a key.
+ */
 export type LayoutShell = "desktop" | "vscode";
 
 /** Every shell, in stable order; tests iterate this instead of hard-coding the list. */
@@ -25,7 +28,7 @@ export const LAYOUT_SHELLS = ["desktop", "vscode"] as const satisfies readonly L
 /** Directory under `paths.userData` that holds all four files and the backup copies. */
 export const LAYOUT_DIR_NAME = "layout";
 
-/** The directory that owns every C4 file. */
+/** The directory that owns every layout file. */
 export function layoutDir(userData: string): string {
   return join(userData, LAYOUT_DIR_NAME);
 }

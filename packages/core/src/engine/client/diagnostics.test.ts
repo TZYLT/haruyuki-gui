@@ -1,20 +1,19 @@
 /**
  * Tests for the diagnostic ring, the text fence and the unknown-event tally.
  *
- * Scope sources: docs/26-B2 section 6.5 (record shape and the "no token, no
- * absolute path" rule), -B2 facts 44-45 and decisions `B2-D07` /
- * `B2-D09`.
+ * Scope: the record shape and the "no token, no absolute path" rule, plus the
+ * corpus facts below.
  *
  * Wiring: every assertion is written so ONE deliberate change to
  * `diagnostics.ts` makes it fail, and the change is named in the test's
- * description. The mutation list that was actually run is reported with the
- * work package; the shapes picked for the redaction cases are real ones
+ * description. The mutation list that was actually run is recorded in the
+ * change description; the shapes picked for the redaction cases are real ones
  * (`sk-`, a three-segment JWT, the engine's own 64-hex token, a Windows path
  * with a project tree, a POSIX home path under `.haruyuki`) because a test
  * that feeds `"secret"` to a regex proves nothing about the regex.
  *
  * The last group reads the recorded corpus and pins the corpus arithmetic
- * 44 (295 s2c frames, 155 of them one streaming type, 19 distinct types) as
+ * (295 s2c frames, 155 of them one streaming type, 19 distinct types) as
  * arithmetic over the files, not as a remembered number: that is the fact the
  * "count instead of store" decision rests on, so a corpus change that moves it
  * should be a red test rather than a stale comment.

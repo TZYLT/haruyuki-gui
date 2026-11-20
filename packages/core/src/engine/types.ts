@@ -4,8 +4,8 @@
  * These types are the contract between the engine facade (`engine.ts`), the
  * spawn/token/port/connection layers beside it and the `HostPort` interface
  * (`../port/host-port.ts`). They are deliberately free of behaviour: no class,
- * behaviour: no class, no default, no validation, so a later package can change
- * the implementation without reopening the contract.
+ * no default, no validation, so a later package can change the implementation
+ * without reopening the contract.
  *
  * The two runtime tuples below are the single source of truth for the matching
  * unions. Deriving the union from a tuple costs nothing at runtime for the
@@ -17,8 +17,8 @@
 /**
  * Lifecycle of one hosted engine process.
  *
- * `failed` is terminal. `reconnecting` is out of scope here: it belongs to the
- * B3 reconnection work, so it must not appear before then.
+ * `failed` is terminal. `reconnecting` is out of scope here: it belongs to a
+ * later reconnection phase, so it must not appear before then.
  */
 export const ENGINE_STATES = [
   "idle",
@@ -72,10 +72,9 @@ export type EngineError = {
 /**
  * How one engine child process exited.
  *
- * Added as part of B1's document-level contract `v1.1` (master `R-062`): D4
- * needs the exit code and signal to write a `CrashRecord` and to show the user
- * what happened. `detail` is a human sentence and must not be parsed; these two
- * fields are the machine-readable facts.
+ * The host needs the exit code and signal to record a crash and to show the
+ * user what happened. `detail` is a human sentence and must not be parsed;
+ * these two fields are the machine-readable facts.
  *
  * Both values are `null` when the platform did not report them. A normal stop on
  * Windows usually yields `code: 0` or `1` with `signal: null`; a POSIX SIGKILL
@@ -111,7 +110,7 @@ export type AppServerInfo = {
  *
  * Why this is a value and not an error: the engine can run with a degraded
  * protection, and the host must be able to *report* it without turning a usable
- * engine into a failure. Three cases are decided in the requirements:
+ * engine into a failure. Three cases are possible:
  *
  * - `engine-version` / `protocol-version`: a build other than the tested one is a
  *   warning, not a veto. The engine still connects.
@@ -140,8 +139,8 @@ export type EngineDegradation = {
  * `cwd` is where the engine writes its `.haruyuki` state, so it must point at an
  * isolated directory. `stdio` is pinned to `"pipe"` because the port discovery
  * reads stdout and the watchdog needs a live stdin. `detached` and
- * `windowsHide` are process-group and console-window decisions; keeping them in
- * the spec keeps `child_process.spawn` calls free of platform branching.
+ * `windowsHide` are process-group and console-window decisions; declaring them on
+ * this type keeps `child_process.spawn` calls free of platform branching.
  */
 export type EngineSpawnSpec = {
   exePath: string;
@@ -164,8 +163,7 @@ export type EngineSpawnSpec = {
  * needs, and it makes an exhaustiveness check possible when a future variant is
  * added.
  *
- * - `state` fires on every accepted transition (see the state diagram in
- *   no recursive section 3.3(e)).
+ * - `state` fires on every accepted transition (see `ENGINE_STATES` above).
  * - `error` fires once per classified failure; the accompanying state change to
  *   `failed` is a separate `state` event, so a consumer can log the cause and the
  *   consequence independently.

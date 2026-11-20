@@ -1,4 +1,4 @@
-# Wire command ids pinned for engine 0.6.0 @ 1641a4f (A2 V-1 human checklist).
+# Wire command ids pinned for engine 0.6.0 @ 1641a4f (human checklist).
 # Regenerate only when the pinned engine changes; every id must stay in snapshot.json.
 # One id per line, lexicographic order.
 

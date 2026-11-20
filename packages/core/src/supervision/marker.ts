@@ -2,9 +2,9 @@
  * Runtime marker storage: atomic write, defensive read, and stale transfer.
  *
  * Ownership: this module owns marker storage and the marker lifecycle. It is
- * (marker lifecycle). This module is deliberately free of policy: it does not
- * decide whether an old engine may be killed and it does not delete a token
- * file. It only turns a marker directory into marker records, or refuses to.
+ * deliberately free of policy: it does not decide whether an old engine may be
+ * killed and it does not delete a token file. It only turns a marker directory
+ * into marker records, or refuses to.
  *
  * Atomicity matters because a crash can land between the write and the rename.
  * Every write goes to a sibling `*.tmp` first, so a reader sees either the old

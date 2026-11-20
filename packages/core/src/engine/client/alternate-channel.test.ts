@@ -4,7 +4,7 @@
  *
  * Claim under test: **swapping the pool implementation
  * changes one layer and nothing above it.** The alternate implementation is
- * `alternate-channel.ts` a comparison artifact only: it lives next to this file,
+ * a comparison artifact only: `alternate-channel.ts` lives next to this file,
  * is exported from no barrel, and is not used in production. Its job is to be a
  * *different* implementation of the same frozen interface so that "the caller
  * cannot tell" is a measurement rather than an assurance.
@@ -42,7 +42,7 @@ import {
   runDual,
   teardownDifferential,
   TRACKED,
-  v16Template,
+  templateAssertions,
 } from "./alternate-harness";
 import type { Dual } from "./alternate-harness";
 import {
@@ -143,11 +143,11 @@ async function scenario(
 
 describe("the four assertions, on each implementation", () => {
   it("holds for the production pool", async () => {
-    await v16Template(makeDual().production.pool);
+    await templateAssertions(makeDual().production.pool);
   });
 
   it("holds for the alternate pool", async () => {
-    await v16Template(makeDual().alternate.pool);
+    await templateAssertions(makeDual().alternate.pool);
   });
 
   it("reaches the same verdicts on both, step for step", async () => {
@@ -155,8 +155,8 @@ describe("the four assertions, on each implementation", () => {
     // absence. Now that divergence 1 is fixed the whole result agrees, but the
     // template only ever required these two verdicts.
     const dual = makeDual();
-    const production = await v16Template(dual.production.pool);
-    const alternate = await v16Template(dual.alternate.pool);
+    const production = await templateAssertions(dual.production.pool);
+    const alternate = await templateAssertions(dual.alternate.pool);
 
     expect(alternate).toEqual(production);
     expect(alternate.staleDetail).toContain(CLOSED_PHRASE);

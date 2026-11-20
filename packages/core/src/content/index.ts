@@ -2,7 +2,7 @@
  * The conversation content model's contract surface.
  *
  * The protocol content modules hold types only, and the core package exports
- * core package exports just the facade and its types. Everything else in this
+ * just the facade and its types. Everything else in this
  * directory (the parsers, the tool table, the reasoning aggregator, the fence
  * scanner and the sanitizer) is module-local: a consumer that renders blocks
  * imports `createContentModel` and the protocol's `Block` union, and tests drive

@@ -1,5 +1,5 @@
 /**
- * Tests for the global sequence issuer (C5).
+ * Tests for the global sequence issuer.
  *
  * The claim under test is narrow and load-bearing: `seq` is a total order over
  * every frame this process emits, produced by exactly one counter, so a

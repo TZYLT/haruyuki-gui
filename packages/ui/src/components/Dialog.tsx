@@ -3,7 +3,7 @@
  *
  * A shell, not a feature: it owns the surface, the title, the close affordance and
  * the footer slot, and nothing else. Business behaviour -- what opening means,
- * what confirming does -- belongs to whoever renders it (FZ §6.4, and the same
+ * what confirming does -- belongs to whoever renders it, and the same
  * "draws, does not decide" split the empty and error states follow).
  *
  * Base UI supplies what is genuinely hard: focus trapping, restoring focus on

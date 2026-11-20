@@ -36,7 +36,7 @@ const D3_CHANNELS = [
   APP_PING,
 ] as const;
 
-describe("D3 channel names", () => {
+describe("bridge channel names", () => {
   it("all pass the channel-name grammar", () => {
     for (const name of D3_CHANNELS) {
       expect(validateChannelName(name).ok, name).toBe(true);

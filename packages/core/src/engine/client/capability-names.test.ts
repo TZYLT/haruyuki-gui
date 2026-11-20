@@ -945,8 +945,8 @@ describe("wire vocabulary containment, this module", () => {
 describe("wire vocabulary containment, whole directory", () => {
   // Wire vocabulary is a property of the *module*, not of one file: the scan runs on
   // `client/`, and a per-file guard leaves every sibling unguarded. One test file
-  // four wire literals into its own test before noticing, because at that point
-  // nothing scanned its file - the guard it had only covered this one.
+  // once wrote four wire literals into itself before noticing, because at that
+  // point nothing scanned its file - the guard it had only covered this one.
   //
   // Two exemptions, both narrow and both for the same reason: a guard has to be
   // able to show it can fail. A test that plants a wire id to prove the scan

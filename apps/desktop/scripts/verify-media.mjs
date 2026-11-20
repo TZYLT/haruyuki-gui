@@ -212,10 +212,9 @@ async function main() {
     `contentType=${String(htmlType)} executed=${String(htmlExecuted)}`,
   );
 
-  //  a large image streams without stalling the main process. The budget is
-  // the requirement's 200 ms, but the measurement is "no gap above the sampler's
-  // resolution", so the message reports what was actually observed rather than
-  // claiming a zero.
+  // A large image streams without stalling the main process. The budget is 200 ms,
+  // but the measurement is "no gap above the sampler's resolution", so the message
+  // reports what was actually observed rather than claiming a zero.
   const gap = typeof result["imageWorstGapMs"] === "number" ? result["imageWorstGapMs"] : null;
   const loaded = result["imageOutcome"] === "loaded";
   report(

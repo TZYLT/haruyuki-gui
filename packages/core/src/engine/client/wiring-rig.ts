@@ -11,9 +11,10 @@
  * is the real `createWiredChannelPool`. A rig built on narrower doubles would make
  * a passing case say little about the stack.
  *
- * Not a `*.test.ts` file, so vitest does not collect it and the pick-path scan treats
- * it as ordinary source - which is correct: the frames it builds come from
- * `channel-test-support`'s marker constructors, and it names no wire id.
+ * Not a `*.test.ts` file, so vitest does not collect it and the
+ * `capability-names.test.ts` scan treats it as ordinary source - which is
+ * correct: the frames it builds come from `channel-test-support`'s marker
+ * constructors, and it names no wire id.
  */
 
 import {
@@ -291,7 +292,8 @@ export function rigOf(options: Parameters<typeof makeRig>[0] = {}): Rig {
  * Send one tracked request and answer it immediately on the same agent's socket.
  *
  * A tracked send waits for a correlated answer, so a case that merely awaited one
- * would hang until the test timeout - the failure mode Spent 93 seconds on.
+ * would hang until the test timeout - a failure mode that once cost this suite
+ * 93 seconds of wall-clock time.
  * Answering is also the only honest way to assert `ok: true`: a send that was
  * written but never acknowledged has not succeeded. The answer uses the id the
  * wiring itself chose, taken from the rig's mint rather than from the bytes.

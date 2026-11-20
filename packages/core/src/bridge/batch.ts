@@ -224,9 +224,10 @@ export function createBatchWindow(options: BatchWindowOptions): BatchWindow {
   /**
    * Whether the current burst has already emitted its first frame directly.
    *
-   * This is the state that makes V-2 a once-per-burst behaviour: after a direct
-   * send the buffer is empty again, so without this flag the next payload would
-   * also be "the first". Cleared by every flush and by `reset`.
+   * This is the state that makes the direct path a once-per-burst behaviour:
+   * after a direct send the buffer is empty again, so without this flag the
+   * next payload would also be "the first". Cleared by every flush and by
+   * `reset`.
    */
   let firstFrameSent = false;
 

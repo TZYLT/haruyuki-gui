@@ -1,4 +1,4 @@
-{"kind":"frames","schemaVersion":1,"bridgeVersion":1,"clock":"virtual","note":"paging boundary, multi page: one snapshot spans three bulk.page frames whose more flips true, true, false; the last frame closes the snapshot (V-9). No replay plan."}
+{"kind":"frames","schemaVersion":1,"bridgeVersion":1,"clock":"virtual","note":"paging boundary, multi page: one snapshot spans three bulk.page frames whose more flips true, true, false; the last frame closes the snapshot. No replay plan."}
 {"v":1,"ch":"control","seq":1,"t":"bridge.ready","body":{"appVersion":"0.1.0","bridgeVersion":1}}
 {"v":1,"ch":"bulk","seq":2,"t":"bulk.page","body":{"page":1,"items":["alpha","beta"]},"page":{"watermark":12,"token":"snap-multi-p1","more":true}}
 {"v":1,"ch":"bulk","seq":3,"t":"bulk.page","body":{"page":2,"items":["gamma"]},"page":{"watermark":12,"token":"snap-multi-p2","more":true}}

@@ -43,7 +43,7 @@ describe("behaviour the frozen contract does not pin", () => {
   /**
    * Divergence 1 is **gone**: the readiness prefix of a handle closed before first
    * use (production `was ready and dropped`, the lazy pool `has not become ready`).
-   * Fixed by making the facade report the right half rather than by rewording
+   * Fixed by making the facade report the right half, not by redefining the
    * wording - an enrolled slot is one `getChannel` found an
    * endpoint for, and `degraded` is set only by a build that produced nothing.
    */

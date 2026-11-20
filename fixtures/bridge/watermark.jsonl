@@ -1,4 +1,4 @@
-{"kind":"frames","schemaVersion":1,"bridgeVersion":1,"clock":"virtual","note":"watermark: a stale bulk.page carrying watermark 40 arrives between two fresh pages at watermark 100, so the consumer must drop it (V-4). No replay plan."}
+{"kind":"frames","schemaVersion":1,"bridgeVersion":1,"clock":"virtual","note":"watermark: a stale bulk.page carrying watermark 40 arrives between two fresh pages at watermark 100, so the consumer must drop it. No replay plan."}
 {"v":1,"ch":"control","seq":1,"t":"bridge.ready","body":{"appVersion":"0.1.0","bridgeVersion":1}}
 {"v":1,"ch":"bulk","seq":2,"t":"bulk.page","body":{"page":1,"items":["alpha","beta"]},"page":{"watermark":100,"token":"snap-100-p1","more":true}}
 {"v":1,"ch":"bulk","seq":3,"t":"bulk.page","body":{"page":2,"items":["gamma"]},"page":{"watermark":100,"token":"snap-100-p2","more":true}}

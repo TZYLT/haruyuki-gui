@@ -5,22 +5,21 @@
  * through the fake server's `replay` mode with one plan that exercises `speed`
  * (a numeric multiplier, so the per-step delay arithmetic runs), `duplicate`
  * and `reorder`. Each run's collected s2c texts are hashed with sha256 and the
- * are hashed with sha256 and the test demands exactly one distinct hash; the
+ * test demands exactly one distinct hash; the raw text sequence is also compared
  * run to run, because determinism here means the same bytes, not merely the same
- * same bytes, not merely the same digest. A wall-clock read, a random order or
- * a timestamp added on the replay path would show up as a second hash.
+ * digest. A wall-clock read, a random order or a timestamp added on the replay
+ * path would show up as a second hash.
  *
  * Why the comparison input is the text the client received: the replay engine
- * 3.4.3 fixes the comparison object as each line's compact JSON serialization,
- * with the recorder and the replay engine sharing that serializer (ruling
+ * emits each line as `JSON.stringify(line.msg)` once (compact JSON), and the
+ * recorder writes through the same serializer, so the received text is the
  * comparison object. Hashing the received `msg` objects again would compare
  * parsed values and hide a serialization drift.
  *
  * Why the default instant clock: `speed: 2` still runs the arithmetic that
  * turns `at` deltas into waits, but the injected clock never sleeps, so 100
- * runs cost socket round-trips rather than seconds of wall time. The measured
- * wall time is in the delivery report; the whole file is sized to fit the
- * repository's 180 s test-segment appetite.
+ * runs cost socket round-trips rather than seconds of wall time. The whole file
+ * is sized to fit the 180 s segment timeout in `scripts/verify.mjs`.
  *
  * The plan is derived from each fixture, never hard-coded: injection line
  * numbers are 1-based indexes into `fixture.lines` (header excluded), and a
@@ -43,7 +42,7 @@ import { replayThrough } from "./replay-client";
 /** `packages/core/src/testing` -> repo root. */
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../..");
 
-/** Directory the corpus lives in; the task's "every fixture" scope. */
+/** Directory the corpus lives in: every recording under it is graded. */
 const CORPUS_DIR = path.join(REPO_ROOT, "fixtures", "engine", "recordings");
 
 /** Runs per fixture: determinism means "the same fixture 100 times", byte for byte. */

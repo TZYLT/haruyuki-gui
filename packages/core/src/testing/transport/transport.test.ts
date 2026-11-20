@@ -1,14 +1,10 @@
 /**
- * Tests for the two transport doubles (`send.ts`, acceptance pick-path).
- *
- * Requirement source: docs/17-A3 sections 4.3 and 5.1 pick-path; contract source:
- * docs/18-A3 sections 1.2 `R-06`, 3.4.4 (the frozen `TransportDouble`) and 8
- * (`INV-A3-4`, `INV-A3-8`); frame envelope: docs/01-3 sections 3.1 and 3.3.
+ * Tests for the two transport doubles.
  *
  * The claim under test is deliberately narrow. The doubles must move the same
  * frame stream through two platform shapes and hand both an equal JSON copy;
  * they must preserve post order within one double; they must NOT be asserted to
- * agree on a global arrival order, because `R-06` makes their async granularity
+ * agree on a global arrival order, because their async granularity is
  * intentionally different (microtask vs macrotask). The granularity test proves
  * that difference is real rather than a comment.
  *

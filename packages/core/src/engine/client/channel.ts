@@ -2,28 +2,21 @@
  * Channel kernel: one agent's in-flight table, event dispatch, capability
  * snapshot and diagnostic wiring.
  *
- 
- * (the layer split), 3.2 (the three data flows), 3.7 (the three-state snapshot),
- * 4 (timeouts), 5.1 (the frozen `Channel` surface) and the implementation
- 
- 
- * rather than queue).
- *
  * This module is the *kernel*, not the whole client:
  *
  * - **No transport.** It never opens, owns or inspects a socket. It writes
  *   through an injected `write` function and is fed by `ingest(raw: string)`,
- *   which the transport layer  and the pool        wire together.
+ *   which the transport layer (`transport.ts`) and the pool (`pool.ts`) wire
+ *   together.
  * - **No wire vocabulary.** Every engine spelling this layer would otherwise
  *   have to know - the field carrying the correlation id, the field carrying the
  *   success flag, the envelope's own names as they appear on the wire, the field
  *   carrying the advertised slash commands - arrives through one of the injected
- *   ports below, or through the already-frozen type. That keeps the pick-path
- *   rule ("no wire id literal under `client/`") true by construction rather than
- *   by review.
- * - **No policy other modules own.** The timeout table belongs to 
- *   (`timeouts.ts`) and the bounded, redacted diagnostic history belongs to the log
- *   (`diagnostics.ts`). Both are injected with the real implementation as the
+ *   ports below, or through the frozen types in `types.ts`. That keeps this file
+ *   free of wire vocabulary by construction rather than by review.
+ * - **No policy other modules own.** The timeout table belongs to
+ *   `timeouts.ts` and the bounded, redacted diagnostic history belongs to
+ *   `diagnostics.ts`. Both are injected with the real implementation as the
  *   default, so this file composes them instead of growing a second copy that
  *   would drift from theirs.
  * - **No delivery judgement.** It settles an in-flight entry; it does not decide
@@ -118,8 +111,7 @@ export type ChannelTimer = unknown;
  *
  * Injecting it is what makes the timeout tests instant: a real
  * `setTimeout(..., 180_000)` in a test would spend three minutes of the
- * repository's gate budget proving nothing a fake clock does not prove faster
- * . The pool itself 6.4 forbids exactly that).
+ * repository's gate budget proving nothing a fake clock does not prove faster.
  */
 export interface ChannelClock {
   /** Milliseconds since the epoch, used for `at`, `sentAt` and `probedAt`. */
@@ -189,8 +181,8 @@ export interface CapabilityProbePort {
  * Whether a command may be written right now, and whether it ever could be.
  *
  * The second half exists because `NOT_CONNECTED` must distinguish "never came
- * to distinguish "never came up" (a startup problem, reported through the
- * diagnostics) from "was up and dropped" (a reconnect problem, owned by B3). The
+ * up" (a startup problem, reported through the diagnostics) from "was up and
+ * dropped" (a reconnect problem, owned by the reconnect layer). The
  * kernel cannot derive that from a socket it does not own, so the transport layer
  * states it.
  */
@@ -206,7 +198,8 @@ export type ChannelReadiness = {
  * caller-supplied id for a tracked command, a minted (never caller-supplied) one
  * for a silent command, and `undefined` for the commands whose wire has no
  * request id at all. Turning `(request, requestId)` into bytes - envelope,
- * capability mapping, serialization - belongs to the send path . Handing it
+ * capability mapping, serialization - belongs to the send path (`send.ts`).
+ * Handing it
  * the id rather than a whole frame keeps the decisions this layer exists for
  * (which class, which id, track or not) in one place.
  */
@@ -222,14 +215,16 @@ export interface ChannelOptions {
   /** Feeds the capability snapshot; omitted means the snapshot stays `unknown`. */
   readonly probe?: CapabilityProbePort;
   /**
-   * How the end of a command is observed. Defaults to the capability table's table, which
-   * classifies all 68 capabilities (60 response, 2 silent, 5 untracked, 1
-   * duplex); injected only by tests that want a synthetic classification.
+   * How the end of a command is observed. Defaults to the table in
+   * `capability-names.ts`, which classifies all 68 capabilities (60 response,
+   * 2 silent, 5 untracked, 1 duplex); injected only by tests that want a synthetic
+   * classification.
    */
   readonly completionOf?: (name: CapabilityName) => CompletionMode;
   /**
-   * The budget for one request, given the caller's override. Defaults to the
-   * `resolveTimeout`, so the family table and the 10x clamp live in one place.
+   * The budget for one request, given the caller's override. Defaults to
+   * `resolveTimeout` (`timeouts.ts`), so the family table and the 10x clamp live
+   * in one place.
    */
   readonly resolveTimeoutMs?: (name: CapabilityName, requestedMs?: number) => ResolvedBudget;
   /** Readiness at send time; defaults to "ready, and always was". */
@@ -244,16 +239,18 @@ export interface ChannelOptions {
   /**
    * Secrets that must never reach a diagnostic - in practice the endpoint's
    * token. The channel never holds the endpoint itself; it only knows what to
-   * never holds the endpoint itself; it only knows what to erase, so a token whose
+   * erase, so a token whose shape the redaction rules do not recognise (a test
    * token, a future format) is still removed by value before the record is
-   * removed by value before the record is stored.
+   * stored.
    */
   readonly secrets?: readonly string[];
   /** Time source and timers; defaults to the system clock. */
   readonly clock?: ChannelClock;
   /** Mints a request id; defaults to a per-channel counter plus noise. */
   readonly mintRequestId?: () => string;
-  /** Diagnostic history; defaults to a fresh the log log at its documented capacity. */
+  /**
+   * Diagnostic history; defaults to a fresh log at its documented capacity.
+   */
   readonly diagnostics?: DiagnosticLog;
 }
 
@@ -261,10 +258,9 @@ export interface ChannelOptions {
 export type ResolvedBudget = {
   readonly ms: number;
   /**
-   * `true` when the caller's `timeoutMs` was cut to the 10x cap 
-   * section 4.4). Exposed because the channel reports it rather than failing:
-   *  section 4.4 is explicit that a defensive parameter must not cost the
-   * caller their command.
+   * `true` when the caller's `timeoutMs` was cut to the 10x cap. Exposed because
+   * the channel reports it rather than failing: a defensive parameter must not
+   * cost the caller their command.
    */
   readonly clamped: boolean;
 };
@@ -281,8 +277,7 @@ export type ResolvedBudget = {
  * the correlation field and the success flag, and both belong to the send path
  * (`send.ts`) where the engine's spelling of them already lives. A channel built
  * without a reader therefore delivers every frame as an event, which is the
- * documented fallback for an unmatched frame  rather than a
- * special case.
+ * normal fallback for an unmatched frame rather than a special case.
  *
  * The `typeof` guard is not decoration: `type` is engine output, so it can be a
  * number, null or absent, and the kernel must not turn that into the string
@@ -437,7 +432,7 @@ export class EngineChannel implements Channel {
    */
   private sendUntracked(request: CommandRequest, mode: CompletionMode): Promise<CommandResult> {
     // A silent capability still carries a request id, and an untracked one must
-    // untracked one must never carry it (fact 30) - not even one the caller
+    // never carry it - not even one the caller
     // passed: the wire has no such field, so forwarding it would be a field the
     // engine does not read.
     const requestId = mode === "silent" ? (request.requestId ?? this.mint()) : undefined;
@@ -532,7 +527,7 @@ export class EngineChannel implements Channel {
    * two channels - or two processes writing into one engine - unlikely to collide.
    * Uniqueness is all the engine's correlation needs; this is not an idempotency
    * token: the table does not defend against network duplication, which TCP does
-   * TCP does not produce).
+   * not produce.
    *
    * @returns a fresh request id
    */
@@ -643,11 +638,10 @@ export class EngineChannel implements Channel {
   /**
    * Feeds one raw frame from the transport.
    *
-   * Routing follows  section 3.2: a frame that matches an in-flight request
-   * settles it and is not delivered as an event; everything else - a push, a late
-   * answer, a duplicate - becomes an event. A frame that does not parse, or that
-   * is not an object, is a diagnostic and nothing more (V-4: the next frame still
-   * flows).
+   * Routing follows one rule: a frame that matches an in-flight request settles
+   * it and is not delivered as an event; everything else - a push, a late answer,
+   * a duplicate - becomes an event. A frame that does not parse, or that is not
+   * an object, is a diagnostic and nothing more: the next frame still flows.
    *
    * @param raw the frame exactly as it crossed the wire
    */
@@ -706,7 +700,8 @@ export class EngineChannel implements Channel {
    * Counted per type, never stored per frame. 155 of the 295 recorded
    * frames are one type, so per-frame storage would fill the 512-record history
    * with a single answer to "what is the engine pushing that we do not model?".
-   * The count lives in  log, and only the first frame of a type costs a
+   * The count lives in the diagnostic log, and only the first frame of a type
+   * costs a
    * record - a summary, not a copy of the frame.
    *
    * With no type table injected there is nothing to compare against, so nothing is
@@ -755,8 +750,7 @@ export class EngineChannel implements Channel {
    * The capability snapshot, in one of its three states.
    *
    * `unknown` carries no collections at all, so a consumer that forgets to narrow
-   * cannot read an empty list and conclude "no slash commands" . The seam for "which
-   * 6.4, V-5).
+   * cannot read an empty list and conclude "no slash commands".
    *
    * @returns a fresh snapshot; mutating it cannot change the channel
    */
@@ -850,12 +844,12 @@ export class EngineChannel implements Channel {
    * Records one diagnostic through the diagnostic log.
    *
    * The channel's own contribution before handing it over is the by-value secret
-   * scrub: the log redacts by *shape* (bearer headers, 64-hex, JWT, provider keys,
+   * scrub: the log redacts by *shape* (bearer headers, 64-hex, JWT, provider
+   * keys,
    * absolute paths), which covers the real capability token, but the endpoint's
    * token must not survive even if its shape is not one of the recognised ones.
    * Erasing the exact secret first makes that a guarantee rather than a bet on the
-   * token's format, and it is the one hard boundary  section 3.6.2 states
-   * about diagnostics.
+   * token's format, and it is the one hard boundary diagnostics must never cross.
    *
    * @param kind the stable signal
    * @param subject what the record is about

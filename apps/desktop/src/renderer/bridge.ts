@@ -2,8 +2,8 @@
  * The renderer half of the bridge.
  *
  * C5's `FrameEntry` validates and counts; it deliberately does not dispatch to
- * business code (`entry.ts:59-64`). This module adds the one narrow route D3
- * owns: `term.output` goes straight to the terminal router, never through React
+ * business code (`entry.ts:59-64`). This module adds the one narrow route this
+ * layer owns: `term.output` goes straight to the terminal router, never through
  * React state. Every other frame stays with `FrameEntry` for the layers that
  * render it.
  *

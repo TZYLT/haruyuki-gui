@@ -1,10 +1,10 @@
 /**
  * Tests for the terminal router.
  *
- * Requirement source: doc 38 section 6.3 (the sink owns the write) and section
- * 10.2 (acknowledgements are batched). The two claims that matter operationally
- * are that a 1 MiB payload arrives as text and costs a bounded number of acks,
- * and that an ack is never claimed for bytes the sink has not confirmed.
+ * The sink owns the write and acknowledgements are batched. The two claims
+ * that matter operationally are that a 1 MiB payload arrives as text and costs
+ * a bounded number of acks, and that an ack is never claimed for bytes the sink
+ * has not confirmed.
  *
  * Why fake timers
  *   The ack deadline is the only timer in the module, and the interesting cases
@@ -25,7 +25,7 @@ import type {
   TermOutputBody,
 } from "../terminal.js";
 
-/** The slice size C5 froze for `term.output`. */
+/** The fixed slice size for `term.output`. */
 const SLICE_BYTES = 8 * 1024;
 
 /** The batch size the router defaults to. */

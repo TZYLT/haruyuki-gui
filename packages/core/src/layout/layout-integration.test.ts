@@ -2,20 +2,20 @@
  * End-to-end integration for the layout store.
  *
  * This file is the end-to-end acceptance script for the store's file contract:
- * is named for the V-* row it covers, and each runs the real store over a real
- * `node:fs/promises` adapter against a disposable `mkdtemp` directory. The only
+ * every case below names the behaviour it covers, and each runs the real store
+ * over a real `node:fs/promises` adapter against a disposable `mkdtemp`
  * directory. The only place an injected filesystem appears is the atomic-write
- * because a rename that dies mid-save cannot be produced on demand.
+ * failure, because a rename that dies mid-save cannot be produced on demand.
  *
  * The precondition test in this file (fixtures readable, unparseable throws) is
- * kept as the precondition test: if the frozen samples ever move, that fails
- * first instead of presenting a confusing store error.
+ * kept first: if the frozen samples ever move, that fails instead of presenting
+ * a confusing store error.
  *
  * What this file does NOT prove
  *   Rendering, drag-and-drop, the 800 ms channel window and the draft file
  *   belong to other modules and their own tests. This file owns the store's
- *   store's file contract end to end: load outcomes, backups, unknown-tab
- *   preservation, shell isolation and the version guard.
+ *   file contract end to end: load outcomes, backups, unknown-tab preservation,
+ *   shell isolation and the version guard.
  *
  * Fixtures are addressed through `import.meta.url`, not `process.cwd()`, and
  * all mutable state lives under `tmpdir()/haruyuki-layout-integration-*`.
@@ -256,7 +256,7 @@ describe("layout integration", () => {
       unknownPageIds: [],
     });
 
-    // A clean load is read-only on disk (invariant I-2).
+    // A clean load does not touch the file on disk.
     expect(await readTarget("desktop")).toBe(text);
 
     // The sample is the minimal legal shape: one split, two panels, one tab each.
@@ -338,7 +338,7 @@ describe("layout integration", () => {
     expect(onDisk).toEqual(first.doc);
 
     // Reload through a fresh store: the written document is accepted as-is and
-    // every field the acceptance row names survives.
+    // every field it carried survives.
     const reloaded = loaded(await makeStore().load());
     expect(reloaded.outcome).toBe("ok");
     expect(reloaded.doc).toEqual(first.doc);
@@ -372,7 +372,7 @@ describe("layout integration", () => {
     const recoveredPages = recovery?.tabs.map((tab) => tab.pageId) ?? [];
     expect(recoveredPages).toContain("vendor.future");
 
-    // Load never touches the target file (invariant I-2).
+    // Load never touches the target file.
     expect(await readTarget("desktop")).toBe(text);
 
     // The original bytes are preserved in a single corruption backup.
@@ -480,7 +480,7 @@ describe("layout integration", () => {
     changed.activePanelId = "top-left";
     expect(await desktopStore.save(changed)).toEqual({ ok: true, revision: 1 });
 
-    // A desktop write cannot reach the vscode file (invariant I-4).
+    // A desktop write cannot reach the vscode file.
     expect(await readTarget("vscode")).toBe(vscodeBytesBefore);
 
     const desktopBytesAfter = await readTarget("desktop");
@@ -821,7 +821,7 @@ describe("layout integration", () => {
     expect(result.foundVersion).toBeNull();
     expect(result.doc).toEqual(defaultDoc);
 
-    // Load does not rewrite the file it could not read (invariant I-2), and the
+    // Load does not rewrite the file it could not read, and the
     // bytes are copied aside so the user can inspect them.
     expect(await readTarget("desktop")).toBe(text);
     expect(await readFile(await firstBackup("desktop"), "utf8")).toBe(text);

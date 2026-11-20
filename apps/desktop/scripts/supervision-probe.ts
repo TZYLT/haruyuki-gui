@@ -14,39 +14,43 @@
  *   FAIL <id> <why>
  *   SKIP <id> <why it cannot be judged honestly here>
  *
- * Required ids: leaked-child-reclaimed, engine-stop-exit-record, ambiguous-pid-not-killed, engine-crash-record, renderer-recovery-sequence, main-crash-record, diagnostic-bundle-tree. A SKIP is not a pass.
+ * A SKIP is not a pass: every id in `REQUIRED_IDS` must print a PASS line.
  *
- * What the ids mean in this probe:
+ * What each id means in this probe:
  *
- *   leaked-child-reclaimed  a leaked real child survives the death of the process that recorded it,
- *         and the next boot reclaims it on two-condition evidence, removes the
- *         token file and rewrites the runtime marker
- *   engine-stop-exit-record  a real engine child killed while ready leaves `lastExit` and a readable
- *         `stderrTail`; a normal stop reports whatever the OS exposed, or null
- *   ambiguous-pid-not-killed  the reclaim decision is two-condition: a live PID with a matching time
- *         or image alone is `ambiguous` and is never killed
- *   engine-crash-record  log retention (7 days / 50 MB, current day never deleted) and redaction
- *         (home -> ~, known secret -> [redacted]) on temp directories only
- *   renderer-recovery-sequence  renderer recovery, two stages plus the fallback: first death reloads the
- *         normal interface (interactive, no error page), second death shows the D4
- *         crash page (title 界面已停止, three enabled actions), third death calls the
- *         fallback exactly once and does not navigate again
- *   main-crash-record  an engine that dies while ready produces a CrashRecord and a
- *         `?crash=engine` crash-page query
- *   diagnostic-bundle-tree  `collectDiagnostics` + `writeZip` produce the documented tree, manifest
- *         hashes match the shipped bytes, and no default session content ships
+ * - `leaked-child-reclaimed`: a leaked real child survives the death of the
+ *   process that recorded it, and the next boot reclaims it on two-condition
+ *   evidence, removes the token file and rewrites the runtime marker.
+ * - `engine-stop-exit-record`: a real engine child killed while ready leaves
+ *   `lastExit` and a readable `stderrTail`; a normal stop reports whatever the OS
+ *   exposed, or null.
+ * - `ambiguous-pid-not-killed`: the reclaim decision is two-condition, so a live
+ *   PID with a matching time or image alone is `ambiguous` and is never killed.
+ * - `engine-crash-record`: an engine that dies while ready produces a CrashRecord
+ *   and a `?crash=engine` crash-page query.
+ * - `renderer-recovery-sequence`: two stages plus the fallback -- the first death
+ *   reloads the normal interface (interactive, no error page), the second shows
+ *   the crash page (title 界面已停止, three enabled actions), the third calls the
+ *   fallback exactly once and does not navigate again.
+ * - `diagnostic-bundle-tree`: `collectDiagnostics` + `writeZip` produce the
+ *   documented tree, manifest hashes match the shipped bytes, and no default
+ *   session content ships.
  *
- * Two environment facts this file has to survive (both measured in docs/33):
+ * Six ids have no bullet above: `watchdog-start-timeout`,
+ * `manual-cleanup-dialog`, `foreign-shell-pid-kept`, `main-crash-record`, and the
+ * two retention ids `crash-record-retention` and `log-retention-configured`.
+ *
+ * Two environment facts this file has to survive (both measured on this host):
  *
  *   `ELECTRON_RUN_AS_NODE=1` is set globally on this machine. Inherited by the
  *   Electron binary it turns the process into plain Node, `app.whenReady()` never
  *   resolves, and the failure looks like a hang. The smoke script removes it; this
  *   file never sets it on itself, only on the children it spawns.
  *
- *   `forcefullyCrashRenderer()` produced no minidump within 3 s in the route's
+ *   `forcefullyCrashRenderer()` produced no minidump within 3 s in an earlier
  *   probe on this host. It is still what the renderer-recovery check uses, because
- *   the ruling is about the recovery sequence, not about crashpad; the dump size is
- *   printed as an observation and is never part of the judgment.
+ *   the point is the recovery sequence, not crashpad; the dump size is printed as
+ *   an observation and is never part of the judgment.
  *
  * Everything written goes under one temp root: `HARUYUKI_PROBE_TEMP` when the
  * caller supplies one (the smoke script does, so it can remove the whole tree after
@@ -93,8 +97,9 @@ const REQUIRED_IDS = [
 /**
  * Run every check in an order that keeps dependencies explicit.
  *
- * The engine observation from engine-stop-exit-record/main-crash-record feeds the bundle's `engine/stderr-tail.txt`
- * and `env.json`, which is why diagnostic-bundle-tree runs last.
+ * The engine observation from the engine-stop and crash-record checks feeds the
+ * bundle's `engine/stderr-tail.txt` and `env.json`, which is why the bundle check
+ * runs last.
  */
 async function runChecks(): Promise<void> {
   await runSafely("leaked-child-reclaimed", checkV01);
@@ -189,7 +194,8 @@ async function main(): Promise<void> {
 }
 
 /**
- * The child half of A real Electron main process that crashes on purpose.
+ * The child half of the main-crash check: a real Electron main process that
+ * crashes on purpose.
  *
  * It installs the production handler before `whenReady` (the handler's own
  * requirement), waits for ready so `app.exit` is a normal exit path, and throws

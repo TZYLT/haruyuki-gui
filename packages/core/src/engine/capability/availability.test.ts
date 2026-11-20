@@ -1,7 +1,7 @@
 /**
  * The availability tri-state must not collapse into two.
  *
- * Each block below pins one rule from the route (§3.5):
+ * Each block below pins one rule:
  *
  * - version gate by `since`, compared numerically (`0.10.0` > `0.9.9`);
  * - an unprobed engine makes gated capabilities `unknown`, never `unavailable`;

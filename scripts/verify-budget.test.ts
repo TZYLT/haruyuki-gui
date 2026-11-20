@@ -5,8 +5,8 @@
  * segment, and `pnpm verify` itself stays inside its budget. Spawning the whole
  * aggregator here is too slow for a unit test - it runs typecheck, lint and the
  * full suite - so this file measures the cheapest honest proxy: the `fixtures`
- * segment alone, run three times, each under the 5 s the route doc names as the
- * trigger for `R-08` ("fixtures segment > 5 s"). Three runs rather than one
+ * segment alone, run three times, each under the 5 s limit that triggers the
+ * budget check ("fixtures segment > 5 s"). Three runs rather than one
  * because a single sample cannot tell a steady cost from a cold-start outlier.
  *
  * The second half of the budget would be "the segment list is unchanged", counted

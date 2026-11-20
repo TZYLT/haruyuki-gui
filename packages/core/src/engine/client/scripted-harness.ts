@@ -38,14 +38,13 @@
  *
  * ## The one thing this file must not become
  *
- * A second inbound buffer. Frame-before-subscriber is a window `transport.ts` already
- * owns with a single handover queue inside the transport (`B2-D04`, `log-retention-configured`);
- * a queue added here would deliver the same early frame twice once both
- * drained. So {@link wireInbound} installs exactly the two subscriptions the
- * wiring is required to install - `onFrame` to `ingest`, `onClose` to `close` -
- * and nothing else. That wiring is stated here rather than imported because
- * `client/index.ts`  does not exist yet; the drop case tests the contract
- * the wiring has to meet.
+ * A second inbound buffer. Frame-before-subscriber is a window the transport
+ * already owns with a single handover queue; a queue added here would deliver
+ * the same early frame twice once both drained. So {@link wireInbound} installs
+ * exactly the two subscriptions the production wiring is required to install -
+ * `onFrame` to `ingest`, `onClose` to `close` - and nothing else. That wiring is
+ * restated here rather than imported so the drop case can test the contract the
+ * wiring has to meet.
  */
 
 import { readFileSync } from "node:fs";
@@ -231,8 +230,8 @@ export interface ScriptedHarness {
    *
    * Latching is what the production port does: a channel that was once usable
    * keeps the "was ready and dropped" wording forever after,
-   * because that distinction is what tells B3 whether a replay is worth
-   * attempting. A setter that forgot to latch would make every later drop read
+   * because that distinction is what tells the reconnect policy whether a replay
+   * is worth attempting. A setter that forgot to latch would make every later drop read
    * as "never became ready".
    */
   setReady(ready: boolean): void;
@@ -338,9 +337,8 @@ export interface SocketDouble {
  * Written out rather than mocked with `vi.fn` so the cases exercise the same
  * `on` / `once` / `removeListener` contract the real adapter relies on. The type
  * is imported from `../connection` - only the double is local, because
- * `transport.test.ts`'s double is private to a file this work package does not
- * own, and duplicating a *type* is what the no-second-copy rule forbids, not
- * duplicating a stub.
+ * `transport.test.ts`'s double is private to that file, and duplicating a *type*
+ * is what the no-second-copy rule forbids, not duplicating a stub.
  *
  * @returns the socket and the two emitters a scripted case drives
  */

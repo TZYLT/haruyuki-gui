@@ -1,7 +1,7 @@
 /**
  * The two-column fallback used when dockview cannot initialise.
  *
- * This is a capability degradation, not an error page (`59` section 4.8): the
+ * This is a capability degradation, not an error page: the
  * left column lists side pages, the main column is a tab stack, and there is no
  * drag, nesting or popout. It reads the same `LayoutDoc` and renders the same
  * page components, so a user can still reach every page while the dock is

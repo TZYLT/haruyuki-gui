@@ -1,6 +1,6 @@
 /**
  * The two diff assertions that make the frozen contract checkable rather than
- * once and forgotten.
+ * reviewed once and forgotten.
  *
  * Both are about what this item must NOT have changed, and neither can be expressed as
  * a unit test of behaviour: a frozen contract that was quietly edited still compiles,
@@ -123,8 +123,9 @@ describe("the frozen contract is untouched", () => {
 
     // Twelve entries because `HostPortStartup` and `HostPort` are counted together: the
     // three startup members plus the nine of the full port. The contract's own comment
-    // calls the split "`HostPortStartup` v1 stays byte-for-byte unchanged; the six new items are a
-    // pure addition", which is why the two interfaces are asserted as one set.
+    // calls the split a pure addition -- the earlier shape stays byte-for-byte
+    // unchanged and six items are new -- which is why the two interfaces are asserted
+    // as one set.
     expect(members).toHaveLength(12);
 
     for (const member of members) {
@@ -198,7 +199,7 @@ describe("app:// behaviour and the CSP are additive only", () => {
 
   it("only added to the CSP: every D1 directive is still there in order", () => {
     // The `csp.test.ts` file asserts this too, and it is repeated here because the two
-    // tests answer different questions: that one pins the current value, this one is the
+    // tests answer different questions: that one pins the current value, this one is
     // the diff assertion. Keeping both costs one read of a small file.
     const D1_DIRECTIVES: readonly [string, readonly string[]][] = [
       ["default-src", ["'none'"]],
@@ -241,8 +242,7 @@ describe("rendered content never reaches innerHTML", () => {
   it("has zero innerHTML / dangerouslySetInnerHTML / v-html in either package", () => {
     // This was recorded in the work log as verified when nothing verified it -- a grep
     // was run by hand and the result written down, which protects nothing on the next
-    // commit. `html-does-not-execute` asks for an assertion precisely so the state cannot regress
-    // silently.
+    // commit. The assertion exists precisely so the state cannot regress silently.
     //
     // The prohibition is the render half of the media channel's whole design: files are
     // served as `text/plain` so the browser will not interpret them, and that is worth

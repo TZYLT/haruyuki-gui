@@ -18,18 +18,18 @@
  *   no scroll performance, no real font metrics and no clipboard. This script
  *   therefore answers only the three claims that survive without those:
  *
- *     manual-cleanup-dialog  after a container resize, the column/row count is recomputed, and
- *           the bytes already written are still in the buffer
- *     crash-record-retention  what each of the three clears actually clears: the product's `\f`
- *           (which delegates), `ESC[2J` (display only) and `ESC[3J` (scrollback
- *           included)
- *       N terminals coexist: every one echoes its own line and none shows
- *           another's
+ *     - after a container resize, the column/row count is recomputed, and the
+ *       bytes already written are still in the buffer
+ *     - what each of the three clears actually clears: the product's `\f` (which
+ *       delegates), `ESC[2J` (display only) and `ESC[3J` (scrollback included)
+ *     - N terminals coexist: every one echoes its own line and none shows
+ *       another's
  *
  *   Three claims no headless run can make -- smooth scrolling, selection and
  *   copy, and a font change that does not reflow -- are reported as MANUAL, not
- *   as PASS. None of them is among the document's judgements: the first two are
- *   ergonomics, and the third is a follows from how clearing is defined. A script that reported
+ *   as PASS. None of them is a judgement of its own: the first two are
+ *   ergonomics, and the third follows from how clearing is defined. A script that
+ *   reported
  *   "smooth" would be claiming to know something jsdom cannot observe, because
  *   it has no compositor to stutter.
  *
@@ -831,7 +831,7 @@ process.stdout.write("\n--- concurrent terminals\n");
 
 process.stdout.write("\n--- measured ceiling\n");
 
-/** The count the document's own concurrency probe assumes. */
+/** The count an earlier estimate assumed. */
 const DOCUMENT_ASSUMED_CONCURRENCY = 10;
 
 {
@@ -902,12 +902,13 @@ const DOCUMENT_ASSUMED_CONCURRENCY = 10;
   );
 
   // Three numbers on one line on purpose. A reader will compare one of them
-  // against the document, and a run that printed only the one it asserted would
-  // leave the other two indistinguishable from "never measured": the assertion is
-  // 16, the document's own probe assumed 10, and this machine held 1024.
+  // against the other estimates, and a run that printed only the one it asserted
+  // would leave the other two indistinguishable from "never measured": the
+  // assertion is 16, an earlier estimate was 10, and this machine held 1024.
   process.stdout.write(
-    `NOTE   asserts ${CONCURRENT_TERMINALS}; measured ceiling ${ceiling}; ` +
-      `the document's P-8 assumed ${DOCUMENT_ASSUMED_CONCURRENCY}\n`,
+    `NOTE  the concurrency claim asserts ${CONCURRENT_TERMINALS}; ` +
+      `measured ceiling ${ceiling}; ` +
+      `an earlier estimate assumed ${DOCUMENT_ASSUMED_CONCURRENCY}\n`,
   );
 }
 

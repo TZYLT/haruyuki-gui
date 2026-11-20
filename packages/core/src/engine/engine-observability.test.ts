@@ -1,5 +1,5 @@
 /**
- * Tests for the read-only observability surface added for D4
+ * Tests for the read-only observability surface added for D4 (document-level
  * contract v1.1).
  *
  * Three facts are asserted, each with a real child process rather than a mock:

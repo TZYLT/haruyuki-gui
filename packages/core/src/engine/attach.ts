@@ -5,7 +5,7 @@
  *
  * Scope: the facade's `attach` entry, the `AppServerInfo` shape (`./types`) and
  * the rule that the engine's reported version is compared with the one this
- * invariants 1, 2 and 4.
+ * build was tested against.
  *
  * Why this file exists on top of `connection.ts` and `handshake.ts`: the start
  * path owns the lifecycle of a child process it spawned itself, so it has a
@@ -16,8 +16,8 @@
  * tested against.
  *
  * A version mismatch is a warning, not a veto. An engine version that differs
- * expected one is reported through `versionMismatch` and the call still resolves
- * with the full `AppServerInfo`, so the caller can show "combination not
+ * from the expected one is reported through `versionMismatch` and the call still
+ * resolves with the full `AppServerInfo`, so the caller can show "combination not
  * tested" and keep going. Only a real transport/handshake failure rejects, and
  * it rejects with the same `EngineConnectionError` that `connectEngine` and
  * `requestAppServerInfo` raise, untouched: this layer never re-classifies, never
@@ -41,10 +41,10 @@ const ATTACH_SCHEMES: readonly string[] = ["ws:", "wss:"];
 /**
  * Options for {@link attachToExternalServer}.
  *
- * `url` is the engine WebSocket endpoint the operator configured (F-6 shape,
- * `ws://host:port/ws`); `token` is the capability token that server expects,
- * sent only in the Authorization header (section 8 invariant 1). `timeoutMs`
- * bounds the upgrade and the handshake separately, so an unresponsive host fails
+ * `url` is the engine WebSocket endpoint the operator configured
+ * (`ws://host:port/ws`); `token` is the capability token that server expects,
+ * sent only in the Authorization header. `timeoutMs` bounds the upgrade and the
+ * handshake separately, so an unresponsive host fails
  * within roughly `2 * timeoutMs`; when absent the two layers keep their own
  * defaults (10 s upgrade, 5 s handshake). `expectedEngineVersion` is the engine
  * build this GUI was tested against; leaving it out disables the comparison.
@@ -61,7 +61,7 @@ export type AttachOptions = {
  *
  * `expected` is the trimmed expectation the caller supplied, `actual` is the
  * engine's own `letta_code_version` - read from the handshake response, never
- * from a local `runtime-lock` file (section 8 invariant 4).
+ * from a local `runtime-lock` file.
  */
 export type AttachVersionMismatch = {
   expected: string;
@@ -131,7 +131,7 @@ export async function attachToExternalServer(opts: AttachOptions): Promise<Attac
 
 /**
  * One human-readable sentence for the version-mismatch notice, or `""` when
- * to show.
+ * there is nothing to show.
  *
  * The empty string is the "no hint" answer on purpose: a caller that renders
  * `describeAttachMismatch(result)` unconditionally shows a banner only for an

@@ -4,9 +4,9 @@
  * Scope: the nine members of `HostPort` and the unions they return, declared in
  * `packages/core/src/port/host-port.ts`, read on the VSCode side. This module
  * delivers only the test double; the real extension lives in `apps/vscode`.
- * module does not import `vscode`, does not touch `context.secrets` and never
- * opens a dialog, so it runs in a plain `node` process next to the headless port
- * and the desktop double.
+ * Shape only: this module does not import `vscode`, does not touch
+ * `context.secrets` and never opens a dialog, so it runs in a plain `node`
+ * process next to the headless port and the desktop double.
  *
  * What is modelled from the real shell:
  *
@@ -17,9 +17,9 @@
  *   extension host starts the engine as a plain Node child, so the Electron
  *   `ELECTRON_RUN_AS_NODE` flag has no meaning here.
  * - `resolveLocalResource` answers an `asWebviewUri`-shaped URL. The real
- *   `asWebviewUri` is a Webview instance method, so the contract note in
+ *   `asWebviewUri` is a Webview instance method, so one adapter belongs to one
  *   webview and never to a global singleton. The double takes the same shape but
- *   singleton. The double takes the same shape but no real webview.
+ *   no real webview.
  * - `secure*` is an in-memory `Map` standing in for `context.secrets`.
  *   `globalState` would be plaintext and must never hold credentials, which is
  *   why the double does not model one. `STORAGE_UNAVAILABLE` stays in the
@@ -304,8 +304,7 @@ export async function createVscodeHostPort(
       // One queued answer per call. An entry may be a single path or a list, so a
       // `multiple: true` call can return several; a single-value call truncates,
       // the way a real dialog honours the properties it was opened with. An empty
-      // queue is the documented cancellation, which is `[]` and not an error
-      // .
+      // queue is the documented cancellation, which is `[]` and not an error.
       const picked = pickQueue.shift();
 
       if (picked === undefined) {
@@ -334,7 +333,7 @@ export async function createVscodeHostPort(
     },
 
     onShutdown(cb) {
-      // Synchronous registration, by contract.
+      // Synchronous registration, by contract: `onShutdown` answers `void`.
       shutdownCallbacks.push(cb);
     },
 

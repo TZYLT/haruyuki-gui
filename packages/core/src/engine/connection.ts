@@ -2,13 +2,12 @@
  * Engine WebSocket connection: attach the capability token and classify a failed
  * upgrade.
  *
- * Scope source: no recursive-B1 sections 2.2 (F-10..F-12), 3.1 (module split), 3.3 (c)
- * and (f) (error taxonomy), 4.2  and section 8 invariant 1 (the token never
- * enters argv; it travels only in the Authorization header here).
+ * The token never enters argv; it travels only in the Authorization header
+ * here.
  *
  * The engine listens on a system-assigned port and authenticates the upgrade
  * request by comparing the SHA-256 of `Bearer <token>` with the token file using
- * `timingSafeEqual` (F-10). Two measured failure shapes matter (F-11, F-12):
+ * `timingSafeEqual`. Two measured failure shapes matter:
  *
  * - a bad or missing token ends in an `unexpected-response` event with HTTP 401
  *   (403 is treated the same way), not in `close`;
@@ -16,8 +15,8 @@
  *
  * Both are translated here into `EngineConnectionError`, which carries the frozen
  * `EngineErrorCode` so the facade (`engine.ts`) can map it without re-classifying.
- * Origin header is sent: the engine's auth check looks at Authorization only, and
- * an Origin would make the request look like a browser cross-origin upgrade.
+ * No Origin header is sent: the engine's auth check looks at Authorization only,
+ * and an Origin would make the request look like a browser cross-origin upgrade.
  *
  * `ws` ships no type declarations and `@types/ws` is not installed; adding it
  * would mean editing `packages/core/package.json`, which is outside this
@@ -148,7 +147,7 @@ export type ConnectEngineOptions = {
  * classification (`ECONNREFUSED`, `HTTP 401`, ...) when there is one.
  *
  * The facade (`engine.ts`) catches this class and forwards `toEngineError()`
- * so no second classification pass and no translation table are needed.
+ * verbatim, so no second classification pass and no translation table are needed.
  */
 export class EngineConnectionError extends Error {
   /** Frozen classification; also the value the facade exposes as `EngineError.code`. */
@@ -190,15 +189,14 @@ export class EngineConnectionError extends Error {
  *
  * Resolves only when the socket is OPEN. On every failure the attempt-scoped
  * listeners are removed and the upgrade request is torn down, so a rejected
- * attempt cannot keep a handle open. Classification follows no recursive-B1 section
- * 3.3 (f):
+ * attempt cannot keep a handle open. The classification is:
  *
  * - HTTP 401/403 on the upgrade -> `AUTH_FAILED` (detail carries the status);
  * - `error` with `ECONNREFUSED` -> `PORT_NOT_FOUND`;
  * - anything else (other error, handshake timeout, early close, rejected
  *   non-auth status) -> `TIMEOUT`, with the raw code in `wireHint`.
  *
- * @param url engine WebSocket endpoint, e.g. `ws://127.0.0.1:6387/ws` (F-6)
+ * @param url engine WebSocket endpoint, e.g. `ws://127.0.0.1:6387/ws`
  * @param token capability token; sent as `Authorization: Bearer <token>`
  * @param options upgrade budget, 10 s by default
  */

@@ -10,7 +10,7 @@
  *    用过也会绿。
  * 2. **关闭路径合上 transport**：`close()` 之后连接确实关了，不只关内核。
  * 3. **传输接线**：url/token 到达 opener；帧双向通行；相关答复能 settle；未注入
- *    `reader` 时**默认 reader 生效**（S2-1）。
+ *    `reader` 时**默认 reader 生效**。
  * 4. **接线侧的 `endpoint` 观察**：`null` 时退化为 `NOT_CONNECTED`；token 只作为
  *    脱敏词进入通道。
  *
@@ -321,7 +321,7 @@ describe("transport wiring", () => {
   });
 
   it("settles a tracked send through the REAL reader when none is injected", async () => {
-    // The one path every production caller takes (S2-1): no `reader` option, so
+    // The one path every production caller takes: no `reader` option, so
     // the wiring installs `createFrameReader`. Every other case here passes
     // `makeReader()`, which is why the default went untested - and a default that
     // silently decoded nothing would turn every command into a TIMEOUT on the real
@@ -389,7 +389,7 @@ describe("endpoint seam, as the wiring observes it", () => {
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.error.code).toBe("NOT_CONNECTED");
-      // The "never came up" wording, which B3 branches on.
+      // The "never came up" wording, which the reconnect policy branches on.
       expect(result.error.detail).toContain("has not become ready");
     }
   });
@@ -439,11 +439,10 @@ describe("endpoint seam, as the wiring observes it", () => {
 
     // An engine that echoes the credential back **bare**, inside a refusal: the
     // one shape where the token would reach a record without the wiring
-    // configuring it as a secret.  shape rules run either way, and a short
-    // test token (`token-for-ada`) matches none of them - no `Bearer` prefix, no
-    // 32-character run - so only the per-channel `secrets` list can erase it
-    //  §3.6.2 boundary 2, and `ChannelOptions.secrets` on why the list
-    // exists).
+    // configuring it as a secret. The default redaction patterns look for a
+    // `Bearer` prefix or a 32-character run, neither of which this short test
+    // token (`token-for-ada`) has - so only the per-channel `secrets` list can
+    // erase it (`ChannelOptions.secrets` says why the list exists).
     const pending = ada.send({
       ...tracked(AGENTS[0]),
       requestId: "echoes-token",

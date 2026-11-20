@@ -9,7 +9,7 @@
  *
  * The adapter is a **mapping**, not a second theme system: it reads host variables
  * and writes our slots, so components keep referencing `--ui-*` and never learn
- * which shell they are in. That is the property the requirement cares about
+ * which shell they are in. That is the property the requirement cares about:
  * the values change, the component code does not.
  *
  * A slot whose host variable is absent keeps its own value. Falling back to an

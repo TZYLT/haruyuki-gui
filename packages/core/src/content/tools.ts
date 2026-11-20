@@ -164,10 +164,9 @@ export function incompleteForRun(
  * Mark every still-open call `incomplete` at the end of a history page.
  *
  * A page is finished by definition, so a call with no result in it must not
- * keep showing an in-progress card (`71 §4.8`: old content never shows
- * "running"). Calls already in a terminal state are left untouched, and each
- * update keeps the call's own first-seen message so the caller can replace the
- * block in place.
+ * keep showing an in-progress card: old content never shows "running". Calls
+ * already in a terminal state are left untouched, and each update keeps the
+ * call's own first-seen message so the caller can replace the block in place.
  */
 export function incompleteAll(table: ToolTable): readonly ToolBlockUpdate[] {
   const updates: ToolBlockUpdate[] = [];

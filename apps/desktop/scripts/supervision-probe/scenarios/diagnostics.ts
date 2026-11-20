@@ -3,8 +3,8 @@
  *
  * Both are judged on temp directories only. The retention case uses real byte
  * sizes so the 50 MB cap is crossed by actual bytes; the bundle case reads the
- * back, so "the zip contains what the manifest claims" is checked against the zip
- * rather than against the writer's own list.
+ * archive's central directory back, so "the zip contains what the manifest claims"
+ * is checked against the zip rather than against the writer's own list.
  */
 
 import { existsSync, mkdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
@@ -44,7 +44,7 @@ import type { EngineObservation } from "./engine.js";
  */
 async function checkV07(): Promise<void> {
   // The configurable-retention row covers two halves; this check measures the
-  // default half only, so it must not claim the docs id. The scenario keeps its
+  // default 7-day / 50 MB window only, so it reports under its own id instead of
   // claiming the configured-override row that `checkV10V11` judges.
   const id = "log-retention-default";
   const logsDir = path.join(TEMP_ROOT, "v07-logs");
@@ -182,10 +182,10 @@ function crashAt(at: Date, versions: CrashVersions): CrashRecord {
 /**
  * Crash records and minidumps age/size out independently of logs, and the
  * configured `logs.retentionDays` / `logs.maxTotalMb` overrides win over the
- * over the defaults (and the production wrapper is what runs them).
+ * defaults (and the production wrapper is what runs them).
  *
  * Both use temp trees. The crash-record case deliberately leaves the newest record
- * window: it must survive because it is the only evidence, which is RD-17.
+ * older than the window: it must survive because it is the only evidence.
  */
 async function checkV10V11(): Promise<void> {
   const now = new Date();

@@ -3,7 +3,7 @@
  *
  * Frozen contract: the interface and its acceptance criteria -- the watermark,
  * the version guard, approval ordering and one page per cursor. The shape of
- * rule C5-R07 (one page per cursor). The shape of {@link FrameEntry} is frozen;
+ * {@link FrameEntry} is frozen;
  * everything else here is implementation.
  *
  * Why the renderer owns a copy of the rules
@@ -485,7 +485,7 @@ class FrameEntryMachine implements FrameEntry {
       return false;
     }
 
-    // C5-R07: the same cursor twice is the same page twice. Deduplication needs
+    // The same cursor twice is the same page twice. Deduplication needs
     // both halves, so a page that names a watermark but no token is compared on
     // the watermark alone and is not deduplicated -- stated here because the
     // alternative (inventing a token) would make every such page a duplicate of

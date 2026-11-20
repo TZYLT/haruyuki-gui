@@ -1,17 +1,16 @@
 /**
- * The per-conversation draft text store (`send.ts`; docs/36 sections 3.3, 3.4 and
- * 4.3.8; docs/35 section 6.8).
+ * The per-conversation draft text store.
  *
  * What this owns
  *   One JSON file per shell (`layout/drafts-desktop.json` /
  *   `layout/drafts-vscode.json`) mapping a conversation id to a piece of plain
  *   text plus the ISO timestamp that eviction sorts by. The text is all that is
- *   stored: no attachments, no images, no file references -- that is a user
+ *   stored: no attachments, no images, no file references -- that is a product
  *   decision, not an implementation detail to be "improved" later.
  *
  * Immediate writes
  *   `LayoutChannel` does not throttle the draft store: the renderer's input
- *   the renderer's input cadence and its own 1 s debounce belong to E5, and C4's
+ *   cadence and its own 1 s debounce belong to the renderer, and this store's
  *   only job is that a `saveDraft` which resolved is on disk. Every mutation is
  *   therefore written through `atomicWrite` before its ack resolves, and the
  *   whole read-modify-write runs on one serial queue so two concurrent saves
@@ -37,9 +36,9 @@
  *   its own write.
  *
  * Unknown keys
- *   `DraftFile` names the keys C4 understands. A newer renderer may add keys at
- *   the file level; they are copied through verbatim (`Object.defineProperty`
- *   inclusive, so a JSON `__proto__` becomes a field rather than a prototype
+ *   `DraftFile` names the keys this store understands. A newer renderer may add
+ *   keys at the file level; they are copied through verbatim
+ *   (`Object.defineProperty` inclusive, so a JSON `__proto__` becomes a field
  *   rather than a prototype change). Draft entries themselves are rewritten
  *   as exactly `{ text, updatedAt }`, so an entry cannot smuggle extra state
  *   past the "text only" rule.
@@ -47,7 +46,7 @@
  * No shell names here
  *   The caller passes the file path (`draftPath(userData, shell)`), so this
  *   module has no `desktop`/`vscode` constant to get wrong and two stores on two
- *   paths cannot alias each other (invariant I-4).
+ *   paths cannot alias each other.
  */
 
 import { dirname } from "node:path";
@@ -65,10 +64,11 @@ interface DraftEntry {
 }
 
 /**
- * The on-disk shape (docs/35 section 6.8).
+ * The on-disk shape: a version, one entry per conversation, and any file-level
+ * keys a newer build wrote.
  *
- * `drafts` is keyed by the engine's conversation id, which C4 never validates:
- * it is an opaque string, not a foreign key.
+ * `drafts` is keyed by the engine's conversation id, which this store never
+ * validates: it is an opaque string, not a foreign key.
  */
 export type DraftFile = {
   version: 1;
@@ -92,8 +92,8 @@ export const DRAFT_LIMITS = {
  * Diagnostic log code for an eviction.
  *
  * Not a wire error and not a user-visible code: nothing failed, the file simply
- * reached a budget. It lives here rather than in `LayoutErrorCode` because E1/E5
- * have no reason to explain it.
+ * reached a budget. It lives here rather than in `LayoutErrorCode` because
+ * nothing above this layer has a reason to explain it.
  */
 export const DRAFT_EVICTED_LOG = "DRAFT_EVICTED";
 
@@ -160,8 +160,9 @@ function defineKey(target: Record<string, unknown>, key: string, value: unknown)
  * A draft store over one file.
  *
  * The file is read lazily, on the first operation, and the mirror is kept in
- * memory afterwards: E5 reads a draft on every conversation switch, and
- * re-parsing the file for each of those would be work with no new information.
+ * memory afterwards: the renderer reads a draft on every conversation switch,
+ * and re-parsing the file for each of those would be work with no new
+ * information.
  * Every mutation goes through `serialise`, so the sequence "read mirror, mutate,
  * write file, ack" is atomic with respect to other callers.
  */

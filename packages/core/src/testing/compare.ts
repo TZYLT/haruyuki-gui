@@ -1,10 +1,9 @@
 /**
- * compare.ts - compare two observations over the things the bridge promises
- * .
+ * compare.ts - compare two observations over the things the bridge promises.
  *
  * Scope: the `ComparisonReport` and `createComparisonHarness` shapes below. The
- * `createComparisonHarness` shapes), section 5.1 rule 4, section 7 `A3-Q02` and
- * section 8 (`INV-A3-8`: within a channel order is kept, across channels it is
+ * promise being compared is that within a channel order is kept and across
+ * channels it is not guaranteed, so only the per-channel projection can be
  * compared element for element.
  *
  * What is compared:
@@ -19,10 +18,10 @@
  * What is deliberately not compared:
  *
  * - The top-level `frames` list index by index. It is arrival order across all
- *   three channels, and comparing it would assert an order `INV-A3-8` says the
- *   bridge does not guarantee. Its per-channel projection carries the same
- *   information and is compared instead. This is also why no `frames[i]` path
- *   is produced: a diff there would be a cross-channel ordering accusation.
+ *   three channels, and comparing it would assert an order the bridge does not
+ *   guarantee. Its per-channel projection carries the same information and is
+ *   compared instead. This is also why no `frames[i]` path is produced: a diff
+ *   there would be a cross-channel ordering accusation.
  * - `scenario`. Two observations of the same scenario may be labelled
  *   differently by their caller, and the name is metadata, not bridge output.
  *

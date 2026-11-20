@@ -2,11 +2,10 @@
  * Shared fixtures for the engine facade tests.
  *
  * Split out of `engine.test.ts` so that file stays inside the repository's
- * file-size limit  while the facade's cases stay in one
- * readable block. Everything here is scaffolding: a fake engine child, an
- * in-process `app_server_info` stub, the test-only launcher for the real
- * artifact, and the point-by-point cleanup the discipline requires (no recursive
- * section 5.1 rule 3: no recursive delete).
+ * file-size limit while the facade's cases stay in one readable block. Everything
+ * here is scaffolding: a fake engine child, an in-process `app_server_info` stub,
+ * the test-only launcher for the real artifact, and the point-by-point cleanup
+ * this code follows (no recursive delete).
  *
  * The file does not end in `.test.ts` on purpose: vitest collects files by that
  * suffix, so nothing here is ever treated as a suite.
@@ -34,7 +33,7 @@ export const ENGINE_ENTRY = fileURLToPath(
 
 export const ENGINE_AVAILABLE = existsSync(ENGINE_ENTRY);
 
-/** Engine build string the pinned artifact reports (F-4). */
+/** Engine build string the pinned artifact reports. */
 export const ENGINE_VERSION = "0.6.0";
 
 /**
@@ -106,7 +105,7 @@ export async function releaseFixtures(): Promise<void> {
 // --- helpers ---------------------------------------------------------------
 
 /**
- * Test-only launcher: rewrites `process.argv` to the measured F-6 command line
+ * Test-only launcher: rewrites `process.argv` to the measured engine command line
  * and loads the bundle in this same process, so the facade's child IS the engine
  * (one pid, no wrapper to orphan). `spawn.ts` appends `bundlePath` after
  * `argvPrefix`; see the file comment.
@@ -137,7 +136,7 @@ export function realEngineSpec(options: {
       HOME: options.home,
     }),
     // `node <launcher> <engine entry> <pid file>`: bundlePath first, then the
-    // engine arguments, matching the F-6 order.
+    // engine arguments, matching the measured order.
     argvPrefix: [ENGINE_ENTRY, options.pidFile],
     bundlePath: options.launcher,
     cwd: options.work,
@@ -199,7 +198,7 @@ export type HandshakeStub = {
   pushFrame: (frame: unknown) => void;
 };
 
-/** Overrides for the stub's answer; the defaults are the measured F-15 shape. */
+/** Overrides for the stub's answer; the defaults are the measured response shape. */
 export type HandshakeStubOptions = {
   protocolVersion?: number;
   engineVersion?: string;
@@ -207,7 +206,7 @@ export type HandshakeStubOptions = {
   answer?: boolean;
 };
 
-/** In-process engine stub: answers `app_server_info` (F-15) and keeps the client socket. */
+/** In-process engine stub: answers `app_server_info` and keeps the client socket. */
 export async function startHandshakeStub(
   options: HandshakeStubOptions = {},
 ): Promise<HandshakeStub> {

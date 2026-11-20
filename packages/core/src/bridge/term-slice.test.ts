@@ -1,7 +1,7 @@
 /**
  * A terminal stream's last slice is short, and it must still arrive.
  *
- * The criterion is not "slices are not lost" in the abstract -- that is what
+ * The claim is not "slices are not lost" in the abstract -- that is what
  * every other sender test already shows. It is the specific shape a fixed-size
  * slice stream produces: a whole number of full slices followed by one short
  * remainder. A producer that flushes only on a full buffer, or a batching window

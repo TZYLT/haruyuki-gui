@@ -1,15 +1,11 @@
 /**
- * Tests for the reference frame reducer (contract, self-proof for `A3-Q02`).
- *
- * Requirement source: docs/17-A3 sections 4.3 and 6.5; contract source:
- * docs/18-A3 section 3.4.4 and section 7 `A3-Q02`; frame and channel rules:
- * docs/01-3 sections 3.1-3.3.
+ * Tests for the reference frame reducer.
  *
  * The reducer is a comparison aid, so the cases pin exactly the three
  * statements the bridge makes: same-channel order, overwrite-style `state.*`,
  * and bulk pages appended in arrival order. The last case proves the fold does
- * not depend on cross-channel interleaving, which `INV-A3-8` says the bridge
- * does not guarantee.
+ * not depend on cross-channel interleaving, because the bridge guarantees
+ * per-channel order only.
  */
 
 import { describe, expect, it } from "vitest";
@@ -117,7 +113,7 @@ describe("reduce", () => {
     ]);
   });
 
-  it("does not depend on cross-channel interleaving (INV-A3-8)", () => {
+  it("does not depend on cross-channel interleaving", () => {
     const control = [frame("control", 1, "bridge.ready"), frame("control", 2, "ping")];
     const stream = [
       frame("stream", 1, "delta.message", { text: "a" }),

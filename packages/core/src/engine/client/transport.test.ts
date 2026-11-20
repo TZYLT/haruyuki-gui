@@ -1,10 +1,10 @@
 /**
- * Tests for the transport seam, whose main job is closing the accept-tick window.
+ * Tests for the transport seam, whose main job is not losing the first frames a
+ * server writes on accept.
  *
- * Contract:  §2.2 (the defect's mechanism and measured before/after),
- * §2.5 (what the replay server can and cannot answer), §8 `log-retention-configured`, and docs/26
- * §4.1 (a first frame must not be lost). Every case names the deliberate change
- * that turns it red.
+ * Contract: the defect's mechanism and measured before/after, what the replay
+ * server can and cannot answer, and the rule that a first frame must not be lost.
+ * Every case names the deliberate change that turns it red.
  *
  * The accept-tick group talks to a real server over a real socket, because the bug
  * lives in the gap between the socket's `open` event and the moment our promise
@@ -401,8 +401,7 @@ describe("receiving", () => {
   });
 
   it("ignores binary frames", () => {
-    // Red when: binary frames are decoded as UTF-8 and handed on as JSON, which
-    // INV-25 keeps out of the bridge.
+    // Red when: binary frames are decoded as UTF-8 and handed on as JSON.
     const fake = makeFakeSocket();
     const transport = createTransport(fake.socket);
     const seen: string[] = [];

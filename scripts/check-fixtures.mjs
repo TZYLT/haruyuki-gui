@@ -14,8 +14,8 @@
  *      empty today, so a green run means "nothing to contradict".
  *
  *   2. Redaction - a corpus fixture never contains real content. The rule is
- *      A3-Q12: "fixture never contains real content; always replace it with
- *      synthetic text and keep only structure and token counts"). That means no
+ *      "always replace real values with synthetic text and keep only structure
+ *      and token counts". That means no
  *      real absolute path, no user name from the local deny-list, no email
  *      address, no bearer token or 64-hex token-like string, and no
  *      `request_id` outside the synthetic vocabulary.
@@ -28,8 +28,7 @@
  *
  * Why line-oriented
  *   A fixture that fails has to be locatable: `<file>:<line>` is the whole
- *   diagnostic interface, and it only works if one message is one line
- *   , so the corpus INV-A3-1, section 5.1 rule 2).
+ *   diagnostic interface, and it only works if one message is one line.
  *
  * Rule ids (stable; `scripts/check-fixtures.test.ts` asserts each one fires)
  *   shape:
@@ -58,7 +57,7 @@
  * Redaction vocabulary
  *   `redaction: "r0"` means "not redacted yet" and is what the recorder writes
  *   into its gitignored `_research/` output (the recorder records into
- *   records into `_research`, then redacts into the corpus). This gate never
+ *   `_research`, then redaction rewrites it into the corpus). This gate never
  *   scans `_research/`, `docs/` or `node_modules/`, so an r0 fixture may live
  *   under `_research/`; anything below CORPUS_DIRS must declare `r1` or later.
  *
@@ -109,7 +108,7 @@ const PINNED_ENGINE_PATH = "packages/protocol/src/contract/snapshot.json";
 
 /**
  * Roots that synthetic paths may use (the recorder rewrites real locations to
- * rewrites real locations to one of these). A path is synthetic when it equals
+ * one of these). A path is synthetic when it equals
  * a root or sits below it; `C:/workstation` is NOT below `C:/work`.
  */
 const SYNTHETIC_PATH_ROOTS = ["c:/work", "/tmp/x"];
@@ -423,11 +422,10 @@ function checkHeader(relative, header, violations) {
  * Enforce the "r1 or later" marker below the corpus.
  *
  * A wire header must always declare it: the recorder always writes `redaction`
- * (as "r0"), so a wire header without one was edited by hand. The frozen frames
- * header  has no `redaction` field at all - bridge fixtures are
- * hand-written or template-made , so the corpus R-07) - so a missing marker is fine
- * there, while an explicit `r0` is not: it means unredacted content was copied
- * into the corpus.
+ * (as "r0"), so a wire header without one was edited by hand. The frames header
+ * has no `redaction` field at all - bridge fixtures are hand-written or
+ * template-made - so a missing marker is fine there, while an explicit `r0` is
+ * not: it means unredacted content was copied into the corpus.
  *
  * @param {string} relative repo-relative fixture path
  * @param {Record<string, unknown>} header parsed header

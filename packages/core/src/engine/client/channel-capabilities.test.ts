@@ -2,8 +2,7 @@
  * Capability snapshot tests: the three states must not collapse.
  *
  * Split out of `channel.test.ts` on responsibility: this suite is about what the
- * channel knows, not about what it sends. Source: docs/26 section 6.4, 
- * section 3.7, decision `D-04`.
+ * channel knows, not about what it sends.
  *
  * **Why three states and not "a flag map plus an array".** Before the first
  * frame that carries capability information, the engine's capabilities are

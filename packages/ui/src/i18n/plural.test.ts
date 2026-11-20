@@ -5,10 +5,10 @@
  * `zh` uses only `other`, `en` uses `one` and `other`, `ru` uses `one`, `few`,
  * `many` and `other`.
  *
- * The messages are built here rather than read from the catalogue on purpose. A4
- * ships ten components and none of them is a list, so a plural key in the
- * catalogue would have no consumer -- and an unused key is exactly what `I6`
- * rejects. The property under test belongs to ICU and to `Intl.PluralRules`, not
+ * The messages are built here rather than read from the catalogue on purpose. The
+ * package ships ten components and none of them is a list, so a plural key in the
+ * catalogue would have no consumer -- and an unused key is exactly what the
+ * i18n gate rejects. The property under test belongs to ICU and to `Intl.PluralRules`, not
  * to any particular entry, so testing it against locally-built messages is both
  * honest and stricter: it cannot pass because a catalogue entry was edited to
  * match the assertion.

@@ -4,8 +4,9 @@
  * The renderer owns the page implementations; the main process needs only the
  * ids, because C4 has to tell "unknown page" from "invalid document" before a
  * renderer exists. Keeping the list here means a layout written by an older
- * build still resolves its ids on the next start; the values are frozen by
- * the layout contract, so this is a copy of a contract, not a second source of truth.
+ * build still resolves its ids on the next start; the values are frozen in
+ * `@haruyuki/protocol`, so this is a copy of a contract, not a second source of
+ * truth.
  *
  * The default document is the first-run three-column arrangement: navigation
  * on the left, conversation in the main area, file tree on the right. It is

@@ -6,7 +6,7 @@
  *
  * ## 为什么跑在真门面上
  *
- * `endpoint` 是 B2 开第 2..N 条连接**唯一**的数据来源，所以「它何时为 `null`」
+ * `endpoint` 是开第 2..N 条连接**唯一**的数据来源，所以「它何时为 `null`」
  * 有用户可见后果：在尚未确认可用的引擎上开 N 条连接，若握手随后失败，N 条全是
  * 废的，且错误会以「多通道各自失败」的形式出现，掩盖真正的单点原因。
  *
@@ -14,7 +14,7 @@
  * `start`**：url 由子进程 stdout 发现、token 由门面自己生成并写盘。替身会让
  * 「token 到底在不在对象上」变成测我自己传进去的值。
  *
- * ## 边界 2 为什么单独成组
+ * ## token 泄漏面为什么单独成组
  *
  * 「永不进日志、诊断包、崩溃记录」里，崩溃记录最常见的取值方式就是
  * `JSON.stringify`。这条曾经真的破过：字段原来是 TypeScript `private`，运行时
@@ -201,8 +201,9 @@ describe("endpoint: non-null only in ready", () => {
 
   it("never exposes an endpoint during a start that fails in handshaking", async () => {
     // The stub accepts the upgrade and never answers, so the socket reaches
-    // `"open"` while the facade is still `handshaking` - §3.6.2.1 driven end to
-    // end, including the `failed` state that follows.
+    // `"open"` while the facade is still `handshaking` - exactly the window a
+    // `socketState` proxy would get wrong, end to end, including the `failed`
+    // state that follows.
     const samples: Sample[] = [];
     await expect(
       startFakeEngine({

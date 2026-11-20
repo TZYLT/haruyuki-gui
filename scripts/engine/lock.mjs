@@ -11,7 +11,7 @@
  * sort relative posix paths, one line per file (`sha256 + "  " + relative`),
  * join with `\n`, no trailing newline. The generator lives in `.mjs` because it
  * runs before the app is built; the verifier lives in TypeScript. The packaged
- * packaged smoke is the cross-check that the two copies agree.
+ * smoke run is the cross-check that the two copies agree.
  *
  * The runtime block records the Electron ABI that native modules were built
  * for, not the system Node used to run this script. A system Node has a

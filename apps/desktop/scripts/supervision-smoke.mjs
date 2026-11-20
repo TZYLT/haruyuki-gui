@@ -21,10 +21,11 @@
  *   probe drives the product's own modules (supervision, crash capture, protocol,
  *   diagnostics) rather than copies of them.
  *
- *   `vite.renderer.mts` builds the renderer the crash page lives in. renderer-recovery-sequence has to
- *   load the real crash page, not a fixture: its title and its three actions are
- *   part of the judgment, and a stand-in would make that judgment fake. A stale
- *   `dist/renderer` would judge yesterday's page, so the build is not optional.
+ *   `vite.renderer.mts` builds the renderer the crash page lives in. The
+ *   renderer-recovery check has to load the real crash page, not a fixture: its
+ *   title and its three actions are part of the judgment, and a stand-in would
+ *   make that judgment fake. A stale `dist/renderer` would judge yesterday's page,
+ *   so the build is not optional.
  *
  * The environment trap this script exists to survive: this machine sets
  * `ELECTRON_RUN_AS_NODE=1` globally. Inherited, the Electron binary runs as plain
@@ -245,7 +246,7 @@ function killTree(pid) {
  * @returns {{ status: string, id: string, detail: string } | null}
  */
 function parseJudgment(line) {
-  const match = /^(PASS|FAIL|SKIP) (V-\d{2}) (.*)$/.exec(line.trim());
+  const match = /^(PASS|FAIL|SKIP) ([a-z0-9][a-z0-9.-]*) (.*)$/.exec(line.trim());
 
   if (match === null) return null;
 

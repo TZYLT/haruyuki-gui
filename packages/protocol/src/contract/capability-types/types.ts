@@ -78,10 +78,10 @@ type RowOf<C extends CapabilityName> = C extends keyof CapabilityIoTypes
   ? CapabilityIoTypes[C & keyof CapabilityIoTypes]
   : CapabilityIo<unknown, unknown>;
 
-/** The body an E1 `CommandCall<C>` must carry for capability `C`. */
+/** The body a `CommandCall<C>` must carry for capability `C`. */
 export type CapabilityInput<C extends CapabilityName> = RowOf<C>["input"];
 
-/** The `answered.data` an E1 `CommandReply<C>` carries for capability `C`. */
+/** The `answered.data` a `CommandReply<C>` carries for capability `C`. */
 export type CapabilityOutput<C extends CapabilityName> = RowOf<C>["output"];
 
 /**

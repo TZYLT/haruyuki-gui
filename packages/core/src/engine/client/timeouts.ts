@@ -3,11 +3,11 @@
  * is entitled to call it a TIMEOUT.
  *
  * This file documents the four families and their default ceilings, how a ceiling
- * §4.3 (how a ceiling is re-measured) and §4.4 (`timeoutMs` override and its
+ * is re-measured, and the `timeoutMs` override with its 10x cap. The rule it
  * implements: **one exhaustive `Record<CapabilityName, TimeoutFamily>` aligned
  * with all 68 capability rows**, because a family table spread across `if`/`else`
- * because a family table spread across `if`/`else` branches always ends up
- * missing a capability, and a missing capability is not a compile error there.
+ * branches always ends up missing a capability, and a missing capability is not
+ * a compile error there.
  * Here it is: {@link CAPABILITY_TIMEOUT_FAMILY} is written with `satisfies`, so
  * dropping a row or inventing one is a type error at that exact line.
  *
@@ -34,7 +34,7 @@
  * ## The measurements the ceilings come from
  *
  * Paired c2s -> s2c round trips in `fixtures/engine/recordings/` (23 pairs, 7
- * scenarios; `响应.at - 请求.at`):
+ * scenarios; `s2c.at - c2s.at`):
  *
  * - handshake: p50 **24 ms**, max **30 ms** (n = 7). 10 s leaves ~300x.
  * - fast: p50 **1 ms** (`message.send`), max **1574 ms** (`memory.writeFile`).
@@ -51,11 +51,10 @@
  *
  * **Do not read 180 s as a measured value.** It is the number that follows from
  * "we must be able to wait 27x the largest slow-family trip ever recorded"
- * (6489 ms x 27.7). It is filed as a judgement under docs/16 E-92 / 
- * X-08, and  §4.3 names the review point: the first work package that
- * talks to a real engine re-measures, and raises the ceiling to `max x 3` when
- * the measured max exceeds half of it. Nothing measured supports 180 s; nothing
- * measured contradicts it either.
+ * (6489 ms x 27.7). It is a judgement, not a derived value: the first
+ * implementation that talks to a real engine re-measures, and raises the ceiling
+ * to `max x 3` when the measured max exceeds half of it. Nothing measured
+ * supports 180 s; nothing measured contradicts it either.
  *
  * ## Why `dream` and `reflect` are not rows here
  *
@@ -73,7 +72,7 @@
  *
  * This file names capabilities only (`"conversation.switch"`). The engine's wire
  * ids never appear under `client/`: resolving a name to a wire id belongs to
- * id belongs to `./capability-names`, and this module needs no wire id at all.
+ * `./capability-names`, and this module needs no wire id at all.
  */
 
 import type { CapabilityName } from "@haruyuki/protocol";
@@ -90,7 +89,7 @@ import { CAPABILITY_NAMES } from "./capability-names";
  * `ENGINE_CLIENT_ERROR_CODES` in `./errors`.
  *
  * The tuple runs cheapest family first. Nothing in this module depends on the
- * this module depends on the order.
+ * order.
  */
 export const TIMEOUT_FAMILIES = ["handshake", "fast", "normal", "slow"] as const;
 
@@ -143,17 +142,16 @@ export const TIMEOUT_CAP_MULTIPLIER = 10;
  * file does not compile.**
  *
  * `satisfies Record<CapabilityName, TimeoutFamily>` is the whole point of the
- * file (`B2-D06`): the annotation form would let a missing row slide, and the
- * `if`/`else` form the decision record rejects would miss one silently. A new
- * capability in FZ-4 arrives here as a type error, not as a command that
- * silently waits the wrong amount.
+ * file: the annotation form would let a missing row slide, and an `if`/`else`
+ * chain would miss one silently. A new capability in the contract arrives here
+ * as a type error, not as a command that silently waits the wrong amount.
  *
  * Rows are grouped by domain, in the lexicographic order of the generated union,
  * and every group carries the reason for its classification. The tie-break rule
  * used where the corpus has no sample: **go to the more generous family**. A
  * ceiling that is too generous costs a slower TIMEOUT; one that is too tight
  * costs a false TIMEOUT on a command that was working, which is the expensive
- * as the expensive direction.
+ * direction.
  *
  * Two facts worth keeping in mind while reading it:
  *
@@ -349,8 +347,8 @@ export const CAPABILITY_TIMEOUT_FAMILY = {
    * Six local filesystem queries: directory listing, path search, content grep,
    * the persisted cwd map and a depth-bounded subtree. All `fast` - this is the
    * "read-only file" class. `workspace.grep` is the row to watch when the
-   * watch at the E4 re-measurement: it walks a tree, so a very large repository
-   * is the one case where 10 s could be tight.
+   * ceilings are re-measured: it walks a tree, so a very large repository is the
+   * one case where 10 s could be tight.
    */
   "workspace.cwdMap": "fast",
   "workspace.grep": "fast",
@@ -412,7 +410,7 @@ export interface TimeoutFamilySummary {
  * The four families with their ceilings, members and counts, in
  * {@link TIMEOUT_FAMILIES} order.
  *
- * This is the grouped answer the work package asks for: iterating it answers "how
+ * This is the grouped answer the table exists to provide: iterating it answers "how
  * many capabilities per family", "what is each ceiling" and "does it cover 68" in
  * one pass, without a second table to keep in sync.
  */
@@ -499,7 +497,7 @@ export interface ResolvedTimeout {
  *    may legitimately shorten a wait (a picker that wants 2 s) or lengthen it
  *    within the cap; second-guessing either would make the override useless.
  * 3. **Over the cap -> cut to the cap, `clamped: true`, no error.** The rule is
- *    is explicit: the caller passed a defensive parameter and must not see a
+ *    explicit: the caller passed a defensive parameter and must not see a
  *    failure because of it. A rejection here would turn "your value was too large"
  *    into a lost command.
  *

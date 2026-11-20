@@ -1,14 +1,13 @@
 /**
- * Tests for the layout channel (the wiring/contract; docs/36 sections 3.6, 4.3.7, 4.3.13;
- * docs/35 section 6.6).
+ * Tests for the layout channel.
  *
  * Every case runs against an in-memory pipe -- `send` collects frames, the
  * stores are a controllable stub -- which is the transport-neutrality
- * shortcut. The save-window cases use vitest fake timers through the default
- * scheduler, because a real 800 ms sleep in a unit test is a bug of its own; the
- * end-to-end case at the bottom uses a real store, a real draft store and a real
- * temporary directory, because the frame body and the write have to be seen on
- * the production path at least once.
+ * requirement, not a shortcut. The save-window cases use vitest fake timers
+ * through the default scheduler, because a real 800 ms sleep in a unit test is
+ * a bug of its own; the end-to-end case at the bottom uses a real store, a real
+ * draft store and a real temporary directory, because the frame body and the
+ * write have to be seen on the production path at least once.
  *
  * What each block pins down:
  *
@@ -229,8 +228,8 @@ describe("publish", () => {
     expect(frames).toHaveLength(1);
     const frame = frames[0];
     expect(frame).toMatchObject({ v: 1, ch: "bulk", seq: 0, t: "layout.snapshot" });
-    // The C5 sender mints the three page fields; producing them here would fork
-    // the paging contract.
+    // The frame sender mints the three page fields; producing them here would
+    // fork the paging contract.
     expect(frame !== undefined && "page" in frame).toBe(false);
     expect(bodyOf(frame)).toEqual({
       outcome: "ok",
@@ -604,8 +603,8 @@ describe("end to end over a real store", () => {
 /**
  * The three page fields are minted by `createFrameSender`, not by the layout
  * channel, so "one snapshot, `page.more === false`, `items[0]` unchanged" can
- * can only be shown through the real sender. The second case drives the pager
- * past one page to pin the snapshot identity rules: one snapshot keeps one
+ * only be shown through the real sender. The second case drives the pager past
+ * one page to pin the snapshot identity rules: one snapshot keeps one
  * watermark, every page mints its own token, `more` stays true until the last
  * page, and the items tile the snapshot in document order.
  */
@@ -650,7 +649,7 @@ describe("layout.snapshot through the real frame sender", () => {
     expect(body.revision).toBe(7);
     expect(body.items).toHaveLength(1);
     // The page carries the document itself, unchanged: this is the one wire
-    // promise E1 reconstructs from.
+    // promise the renderer reconstructs from.
     expect(body.items[0]).toEqual(fake.store.getDoc());
   });
 

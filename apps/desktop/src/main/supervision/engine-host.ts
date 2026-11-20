@@ -1,15 +1,14 @@
 /**
  * The shell's only engine start/stop point.
  *
- * Ownership source: docs/33-D4 section 4.7 (`RD-02`, master `R-065`). This is a
- * thin process-lifetime seam, not an engine client: it owns spawn, stop, the
- * instance hand-off and the crash callback. Connection semantics, subscriptions,
- * command send, retries and reconnects belong to B2/B3, and this file does not
- * grow them.
+ * This is a thin process-lifetime seam, not an engine client: it owns spawn,
+ * stop, the instance hand-off and the crash callback. Connection semantics,
+ * subscriptions, command send, retries and reconnects belong to `@haruyuki/core`,
+ * and this file does not grow them.
  *
  * Why a separate module at all: `main.ts` must stay a composition root, and
- * B2/E4 must receive the *same* `Engine` instance instead of constructing a
- * second one. One module with one `new Engine()` call site is what makes the
+ * every caller must receive the *same* `Engine` instance instead of constructing
+ * a second one. One module with one `new Engine()` call site is what makes the
  * "single engine host" invariant checkable.
  *
  * Spawn-spec resolution lives in `spawn-spec.ts`; this file is the lifetime

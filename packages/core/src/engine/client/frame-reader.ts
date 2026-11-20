@@ -8,7 +8,7 @@
  * 但收不到任何结果。
  *
  * 接线时发现了这一点：真实栈里**没有任何生产版 `EngineFrameReader`**，
- * 只有测试替身。没有它，B2 整体无法「真的收发」。这个文件补上那一块。
+ * 只有测试替身。没有它，整个引擎客户端无法「真的收发」。这个文件补上那一块。
  *
  * ## 为什么 wire 字段名在这里，而 `client/` 别处没有
  *
@@ -131,9 +131,9 @@ export function createFrameReader(): EngineFrameReader {
       if (verdict === undefined) {
         // Correlated but no verdict: the engine is *asking*, not answering -
         // the engine-initiated frame is the recorded shape. Returning a decode here would
-        // let it settle whichever command happens to share the id, which is the
+        // let it settle whichever command happens to share the id - exactly the
         // "a foreign id must not be mis-matched" case arriving through the back
-        // the back door.
+        // door.
         return undefined;
       }
 

@@ -15,7 +15,7 @@
  *   before ready, exactly one accept, nothing after a verdict, and no state
  *   change on a body that is not a usable ready.
  *
- * The "silent after reject" case is the acceptance criterion itself, so it is
+ * The "silent after reject" case is the contract itself, so it is
  * asserted three times over: the third, fourth and fifth offers all report no
  * action, which is what "the core sends nothing else" means at this layer.
  */

@@ -1,10 +1,8 @@
 /**
  * Tests for the observation and comparison layer.
  *
- * Requirement source: docs/17-A3 section 4.3 ("same bridge frames through both
- * transport doubles must produce the same observation") and section 5.1 pick-path;
- * contract source: docs/18-A3 section 3.4.4 and section 8 (`INV-A3-4`,
- * `INV-A3-8`).
+ * The claim: the same bridge frames through both transport doubles must produce
+ * the same observation, and a structural rejection must be visible in it.
  *
  * Two transports observing one fixture compare equal; a deliberately swapped
  * same-channel pair does not; a different cross-channel interleaving is not a
@@ -124,7 +122,7 @@ describe("compareObservations", () => {
     expect(report.diffs.some((diff) => diff.startsWith("stream[0]"))).toBe(true);
   });
 
-  it("ignores cross-channel interleaving but keeps same-channel order (INV-A3-8)", async () => {
+  it("ignores cross-channel interleaving but keeps same-channel order", async () => {
     const control = [frame("control", 1, "bridge.ready"), frame("control", 2, "ping")];
     const stream = [
       frame("stream", 1, "delta.message", { text: "a" }),

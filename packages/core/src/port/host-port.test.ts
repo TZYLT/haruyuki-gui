@@ -6,10 +6,9 @@
  * `node:fs` would test the mock instead of the host. The engine bundle is an
  * empty `.mjs` file, and no engine process is ever started.
  *
- * Cleanup is point-by-point rather than recursive removal (no recursive section 5.1,
- * rule 3): each file is unlinked and each directory is removed only after its
- * children, so a bug in the fixture can never delete a tree this suite did not
- * create.
+ * Cleanup is point-by-point rather than recursive removal: each file is
+ * unlinked and each directory is removed only after its children, so a bug in
+ * the fixture can never delete a tree this suite did not create.
  */
 
 import { statSync, writeFileSync } from "node:fs";
@@ -120,8 +119,8 @@ describe("getRuntimeSpawnSpec", () => {
     expect(spec.stdio).toBe("pipe");
     expect(spec.windowsHide).toBe(true);
     // POSIX builds a process group so the stop path can take the engine's
-    // the engine's descendants with it. Windows has no such group; there the
-    // stop path forces `taskkill /T /F` instead.
+    // descendants with it. Windows has no such group; there the stop path
+    // forces `taskkill /T /F` instead.
     expect(spec.detached).toBe(process.platform !== "win32");
     // The engine home is the user-data directory, which is also `cwd`: a shell
     // whose four paths come from different platform answers (a desktop app's
@@ -178,7 +177,7 @@ describe("getRuntimeSpawnSpec", () => {
     const result = await port.getRuntimeSpawnSpec();
 
     // The contract freezes an absolute engine JS bundle path. A relative path
-    // resolve against this process's cwd here and against the child's cwd
+    // would resolve against this process's cwd here and against the child's cwd
     // (userData) at spawn time, so it would look valid and then fail with an
     // ENOENT that blames the wrong thing.
     expect(result.ok).toBe(false);

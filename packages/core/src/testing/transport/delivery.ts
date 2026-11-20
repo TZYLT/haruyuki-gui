@@ -2,26 +2,27 @@
  * delivery.ts - the async delivery and rejection rules shared by both transport
  * doubles.
  *
- * Scope sources: docs/18-A3 section 1.2 `R-06` (a harness that only ever sees
- * one ordering cannot tell a real cross-channel race from an artefact, so the
- * two doubles must use different async granularity), section 3.4.4 (the frozen
- * `TransportDouble` shape), section 5.1 rule 4 ("a double moves and copies
- * frames; it never interprets them") and section 8 (`INV-A3-4`: JSON round trip
- * before delivery, malformed frames rejected at post time; `INV-A3-8`: within a
- * channel order is kept, across channels it is not guaranteed; a double must
- * not "helpfully" sort). Requirement side: docs/17-A3 section 4.3 and pick-path.
+ * The rules every double keeps:
+ *
+ * - different async granularity: a harness that only ever sees one ordering
+ *   cannot tell a real cross-channel race from an artefact, so the two doubles
+ *   must not share one;
+ * - JSON round trip before delivery, and a malformed frame rejected at post
+ *   time, so a listener only ever sees what survived serialization;
+ * - within a channel order is kept, across channels it is not guaranteed, so a
+ *   double must not "helpfully" sort;
+ * - a double moves and copies frames; it never interprets them.
  *
  * The frozen interface has no failure channel, so rejection is reported through
  * an option rather than through a new member: `post` stays `void`, the
  * `TransportDouble` shape stays exactly the four frozen members, and the
  * factory accepts an `onReject` callback. `reason` is diagnostic prose, not an
- * enum: the frozen `Observation.rejected.reason` union is not widened here
- * .
+ * enum: the `Observation.rejected.reason` union is not widened here.
  *
  * The frame type is `BridgeFrame`, the corpus envelope already defined in
- * `../fixture`, rather than a second `Frame` declaration. The frozen docs name
- * the type `Frame`; the repo has exactly one definition and reusing it keeps
- * the doubles and the fixture loader from drifting apart.
+ * `../fixture`, rather than a second `Frame` declaration. There is exactly one
+ * definition, and reusing it keeps the doubles and the fixture loader from
+ * drifting apart.
  */
 
 import type { BridgeFrame, FrameChannel } from "../fixture";
@@ -96,7 +97,7 @@ type Serialised = { ok: true; text: string } | { ok: false; reason: string };
  *
  * A single FIFO queue is used per double: frames are delivered in the order
  * `post` was called, which is at least as strong as the per-channel ordering
- * `INV-A3-8` requires. The cross-channel freedom comes from the scheduler
+ * the bridge requires. The cross-channel freedom comes from the scheduler
  * granularity each double chooses, not from reordering frames here: a frame's
  * `seq` and `t` are never read for anything but shape validation.
  */
@@ -344,8 +345,7 @@ function isFaithfulCopy(original: unknown, copy: unknown): boolean {
  *
  * Returns the first structural problem, or `null` when the frame is valid.
  * `t` is only checked for being a non-empty string: its vocabulary belongs to
- * C5, and a transport double must not interpret it , so the corpus-A3 section 5.1
- * rule 4).
+ * the product store, and a transport double must not interpret it.
  */
 function frameProblem(value: unknown): string | null {
   if (!isRecord(value)) {

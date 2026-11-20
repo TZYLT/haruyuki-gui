@@ -287,7 +287,7 @@ function spanTextsOf(output: unknown): readonly string[] {
 }
 
 /**
- * Every value a block carries that JSON cannot hold unchanged (§6.11).
+ * Every value a block carries that JSON cannot hold unchanged.
  *
  * `toStrictEqual` on a round trip catches an `undefined` key only when both the
  * original and the copy are compared; this walk states the rule directly:

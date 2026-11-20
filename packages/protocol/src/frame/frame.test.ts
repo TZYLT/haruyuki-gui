@@ -129,7 +129,7 @@ describe("FRAME_TYPES", () => {
     expect(FRAME_TYPES["term.output"].ch).toBe("stream");
 
     // The layout snapshot is a bulk frame owned by the layout layer. Pinned by
-    // not by pattern: a changed channel or a moved `since` is a contract break,
+    // value, not by pattern: a changed channel or a moved `since` is a contract
     // break, not a rename.
     expect(FRAME_TYPES["layout.snapshot"]).toMatchObject({
       ch: "bulk",
@@ -196,7 +196,7 @@ describe("Frame envelope", () => {
 
   it("narrows a discriminated union on the channel field", () => {
     // A host-injected type, built from a widened value on purpose: `Frame["t"]`
-    // must accept a type this package does not know (C5-Q24), and the gate must
+    // must accept a type this package does not know, and the gate must
     // not see an unregistered literal in this file.
     const injectedType: string = "host.private";
 

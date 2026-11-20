@@ -1,8 +1,7 @@
 /**
  * Tests for the engine connection and app_server_info handshake.
  *
- * Shapes come from no recursive-B1 sections 2.2 (F-10..F-12) and 2.3 (F-15..F-17).
- * The fixtures are inline by design (B1-D01): each case starts its own loopback
+ * The fixtures are inline by design: each case starts its own loopback
  * HTTP server on port 0, so no engine process is spawned, no port is guessed and
  * nothing outside this file is imported. Every server and socket is closed in
  * `afterEach`, so vitest can exit without dangling handles.
@@ -125,7 +124,7 @@ function parseJsonObject(data: Buffer): Record<string, unknown> | null {
   }
 }
 
-/** The exact response shape measured from engine 0.6.0 (F-15). */
+/** The exact response shape measured from engine 0.6.0. */
 function appServerInfoResponse(requestId: unknown): Record<string, unknown> {
   return {
     type: "app_server_info_response",

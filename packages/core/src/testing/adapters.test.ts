@@ -1,10 +1,9 @@
 /**
  * Three-adapter parity: one call sequence, three `HostPort` shapes.
  *
- * Requirement source: docs/01-3 section 2.4 ("the same call sequence against
- * the desktop and VSCode doubles must produce the same observable results -
- * shapes and error codes equal, path content may differ"), docs/17-A3 section
- * 4.2 (A3 ships doubles only) and docs/18-A3 section 6 .
+ * What parity means here: the same call sequence against the headless, desktop
+ * and VSCode doubles must produce the same observable results - shapes and error
+ * codes equal, path content may differ.
  *
  * The claim under test is narrow and honest. The three adapters are NOT expected
  * to be identical: a headless process has no notification channel, a desktop
@@ -21,7 +20,7 @@
  * three shapes, and one importing another would hide a drift instead of
  * exposing it.
  *
- * Cleanup is point-by-point: each file is unlinked and each directory is
+ * Cleanup is point-by-point: each file is
  * unlinked and each directory is removed only after its children.
  */
 
@@ -90,7 +89,7 @@ type AdapterKind = "headless" | "desktop" | "vscode";
 /**
  * The trace the adapters expose for assertions.
  *
- * It is not part of `HostPort`; it is the A3 test-support convention that makes
+ * It is not part of `HostPort`; it is a test-support convention that makes
  * "the core asked for X" observable without a desktop shell. Comparing it across
  * adapters is extra evidence, not a frozen-contract claim.
  */
@@ -401,8 +400,8 @@ describe("headless, desktop and VSCode adapters agree", () => {
         expect(typeof port[member]).toBe("function");
       }
 
-      // Compile-time proof that every adapter is assignable to the v1 startup
-      // subset, which is what lets B1's consumers keep working.
+      // Compile-time proof that every adapter is assignable to the startup
+      // subset, so a consumer of `HostPortStartup` alone keeps working.
       startupPorts.push(port);
     }
 
@@ -455,12 +454,13 @@ function asList(value: string | string[] | undefined): string[] {
 async function runSequence(fixture: Fixture): Promise<SequenceResult> {
   const { port } = fixture;
 
-  // Item 2: the spawn spec.
+  // `getRuntimeSpawnSpec`: the spawn spec.
   const spawn = await port.getRuntimeSpawnSpec();
   const spec = spawn.ok ? spawn.spec : undefined;
   const envHome = spec?.env["HARUYUKI_HOME"];
 
-  // Item 3: the secure store, including overwrite and idempotent delete.
+  // The secure store, through `secureGet` / `secureSet` / `secureDelete`,
+  // including overwrite and idempotent delete.
   const seeded = await port.secureGet("token");
   const missing = await port.secureGet("missing");
   await port.secureSet("added", "v1");
@@ -470,7 +470,7 @@ async function runSequence(fixture: Fixture): Promise<SequenceResult> {
   const afterDelete = await port.secureGet("added");
   const deleteAbsent = await port.secureDelete("absent");
 
-  // Item 4: one accepted URL per scheme, then the whole rejected set.
+  // `openExternal`: one accepted URL per scheme, then the whole rejected set.
   const acceptedHttp = await port.openExternal("http://example.com");
   const acceptedHttps = await port.openExternal("https://example.com/path");
   const rejected: string[] = [];
@@ -479,12 +479,13 @@ async function runSequence(fixture: Fixture): Promise<SequenceResult> {
     rejected.push(externalCode(await port.openExternal(url)));
   }
 
-  // Item 5: two queued answers, then cancellation.
+  // `pickPaths`: two queued answers, then cancellation.
   const firstPick = await port.pickPaths({ kind: "file" });
   const secondPick = await port.pickPaths({ kind: "directory", multiple: true });
   const cancelledPick = await port.pickPaths({ kind: "file" });
 
-  // Item 6: one path inside the allowed root, then every documented escape.
+  // `resolveLocalResource`: one path inside the allowed root, then every
+  // documented escape.
   const insideResource = await port.resolveLocalResource(fixture.insideFile);
   const outsideCodes: string[] = [];
 
@@ -494,7 +495,7 @@ async function runSequence(fixture: Fixture): Promise<SequenceResult> {
     outsideCodes.push(answer.ok ? "OK" : answer.code);
   }
 
-  // Item 8: every level, all of which must resolve.
+  // `notify`: every level, all of which must resolve.
   const notifyLevels: string[] = [];
   let notifyResolved = true;
 
@@ -507,7 +508,7 @@ async function runSequence(fixture: Fixture): Promise<SequenceResult> {
     }
   }
 
-  // Item 9: one dropped file, shaped the way a drop reaches each shell.
+  // `readDroppedFiles`: one dropped file, shaped the way a drop reaches each shell.
   const dropped = await port.readDroppedFiles([
     { name: "dropped.txt", path: fixture.droppedFilePath },
   ]);

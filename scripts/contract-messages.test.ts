@@ -9,7 +9,7 @@
  * committed and a clean clone must stay green.
  *
  * The string fixtures at the bottom drive the pure helpers only, so the contract
- * reuse the same red cases for its gate fixtures without an engine checkout.
+ * gate can reuse the same red cases for its fixtures without an engine checkout.
  * They are plain `describe` suites because they never read `_research`, so they
  * keep running in a clean clone. Nothing here writes to the repository, spawns
  * the engine or touches the network.

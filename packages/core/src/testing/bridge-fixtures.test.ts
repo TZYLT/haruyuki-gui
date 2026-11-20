@@ -1,16 +1,15 @@
 /**
  * The hand-authored bridge-frame corpus and the replay-injection proof.
  *
- * Corpus: `fixtures/bridge/*.jsonl`, one frozen `frames` header line plus one
+ * Corpus: `fixtures/bridge/*.jsonl`, one `frames` header line plus one Frame
  * envelope per line, the format `loadFramesFixture` enforces. The recorder never
  * produces these, so each file is small and says in its `note` what it
  * demonstrates. The injected sequence lives in the companion `.plan.json` next
  * to the fixture, in the `ReplayPlan` shape.
  *
- * Proof . The rule is `V-4`): load each fixture with `loadFramesFixture`, replay it
- * through the replay double (`replayThrough` in `./replay-client`) with the
- * matching plan, and assert that the injection is visible in what the client
- * received:
+ * Proof: load each fixture with `loadFramesFixture`, replay it through the
+ * replay double (`replayThrough` in `./replay-client`) with the matching plan,
+ * and assert that the injection is visible in what the client received:
  *
  *   reorder            the adjacent stream pair arrives swapped;
  *   duplicate          the same seq arrives twice, never renumbered;
@@ -24,8 +23,8 @@
  * `speed` turn frame spacing into observable waits.
  *
  * Same-channel order is promised and cross-channel order is not, so the corpus
- * `INV-A3-8`), so the corpus assertions compare per-channel projections, never
- * the raw cross-channel arrival list.
+ * assertions compare per-channel projections, never the raw cross-channel
+ * arrival list.
  */
 
 import { readFile } from "node:fs/promises";
@@ -110,7 +109,7 @@ function channelFrames(frames: readonly BridgeFrame[], channel: Channel): Bridge
   return frames.filter((frame) => frame.ch === channel);
 }
 
-/** A per-channel projection; the only order the bridge promises (INV-A3-8). */
+/** A per-channel projection; the only order the bridge promises. */
 function perChannel(frames: readonly BridgeFrame[]): Record<Channel, BridgeFrame[]> {
   return {
     control: channelFrames(frames, "control"),
@@ -158,7 +157,7 @@ describe("bridge frame corpus", () => {
     }
   });
 
-  it("replays the three channels with per-channel order and source seq (INV-A3-8)", async () => {
+  it("replays the three channels with per-channel order and source seq", async () => {
     const fixture = await loadBridgeFixture("three-channels.jsonl");
     const result = await replayThrough({ fixture: asWireFixture(fixture) });
     const received = framesOf(result);
@@ -245,7 +244,7 @@ describe("replay injections", () => {
     // on lines 3 and 4 leave the double with no gap between them.
     expect(coalesced.waits).toEqual([100, 100, 100]);
     // Dropping the wait neither reorders nor rewrites the frames. The comparison
-    // is per channel: cross-channel order is not promised (INV-A3-8).
+    // is per channel: cross-channel order is not promised.
     expect(coalescedFrames).toHaveLength(spacedFrames.length);
     expect(perChannel(coalescedFrames)).toEqual(perChannel(spacedFrames));
     expect(perChannel(coalescedFrames)).toEqual(perChannel(fixture.frames));

@@ -1,11 +1,6 @@
 /**
- * Four agents, four connections: the large-image stage (events do not cross) and 
- * (closing one channel does not spread), ``.
- *
- * Source: docs/26 §4.7 (the user-facing "switch to B while A answers" behaviour)
- * and the `` ruling that replaced one-connection-two-subscriptions with one
- * connection per agent;  §2.3 facts 13 and 14 (the two measured probes),
- * §5.1 (the frozen pool surface) and §8 (the large-image stage, , the concurrency claim).
+ * Four agents, four connections: events do not cross between agents, and closing
+ * one channel does not spread.
  *
  * ## Why this suite is the load-bearing one
  *
@@ -13,10 +8,9 @@
  * subscriptions**) specifically because it could not express "evict C": with a
  * single socket, the only way to drop one conversation's subscription is to
  * close the socket everyone shares, and the measured consequence is that A's
- * turn is cancelled too  §2.4 facts 15-18).  is the criterion
- * that says that cannot happen, and the probe behind it is a measurement, not a
- * design claim: **C's connection was closed while A was at 3 of 10 frames, and A
- * received 10 of 10**.
+ * turn is cancelled too. Isolation says that cannot happen, and the probe behind
+ * it is a measurement, not a design claim: **C's connection was closed while A
+ * was at 3 of 10 frames, and A received 10 of 10**.
  *
  * Before the pool existed, the isolation claim had nowhere to live: a shared
  * module-level subscriber set, a shared socket, a shared in-flight table and a
@@ -38,17 +32,17 @@
  *   has no close event: `close()` is idempotent and says nothing
  *   back. So closure is asserted through the three things a consumer can
  *   actually observe - a refused send, a shorter `channels()`, a closed
- *   transport - rather than through a callback the type does not have. This is
- *   reported as a contract observation in the work report, not papered over.
+ *   transport - rather than through a callback the type does not have. That is
+ *   a contract observation, stated here rather than papered over.
  * - **"The outbound dedupe table does not cross."** `dedupe.ts` constructs
  *   nothing inside the client stack today: it is a standalone class with its own
- *   standalone class with its own suite, and no channel or send path holds an
+ *   suite, and no channel or send path holds an
  *   instance. There is therefore no per-channel dedupe instance to isolate, and
  *   a case that built two `OutboundDedupe`s to prove they are independent would
  *   be testing `dedupe.ts`, not the pool. What *is* per channel and *is*
  *   asserted here is the correlation table that the duplicate rule runs on: the
  *   same caller-supplied id is accepted by two different agents and settles
- *   independently (group 4). The missing wiring is reported as a finding.
+ *   independently (group 4). The missing wiring is a known gap.
  *
  * ## Anti-leak discipline
  *
@@ -57,7 +51,8 @@
  * which closes the fleet *before* demanding the clocks are silent (a guard that
  * closed things itself would be vacuous). A "must settle immediately" assertion
  * races one macrotask and throws a self-describing error rather than hanging
- * until vitest's timeout - the failure `snapshot assembly` spent 93 seconds on.
+ * until vitest's timeout - a failure mode that once cost 93 seconds of wall
+ * clock.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -264,7 +259,7 @@ describe("events do not cross between agents", () => {
 /* ------------------------------------------------------------------------- */
 
 describe("closing one channel does not spread", () => {
-  it("lets A, B and D finish while C is closed at 3 of 10 frames (probe-10 shape)", () => {
+  it("lets A, B and D finish while C is closed at 3 of 10 frames", () => {
     // The measured fact this whole design rests on: A is
     // at 3/10 when C's connection closes and still receives 10/10. D is here so
     // the assertion cannot be satisfied by "the two agents that were not named".
@@ -300,7 +295,7 @@ describe("closing one channel does not spread", () => {
     // The connection-level half, which a subscriber-set-only assertion cannot
     // see: a channel that stops delivering but leaves its socket open is a leak,
     // and one that closes a shared socket is the defect this suite exists for.
-    // reaches a neighbour's transport, or does not reach its own.
+    // Red when: close reaches a neighbour's transport, or does not reach its own.
     const fleet = openFleetOfFour();
     expect(openAgentIds(fleet)).toEqual(["a", "b", "c", "d"]);
 
@@ -353,7 +348,7 @@ describe("closing one channel does not spread", () => {
     // event is ignored and no wiring callback runs. That matters here because a
     // close path that reported itself would make "we closed C" and "C dropped"
     // indistinguishable to anything listening (the reconnect decision). Red when:
-    // §5.2.2). Red when: `transport.close()` drops its early `open = false`.
+    // `transport.close()` drops its early `open = false`.
     expect(closed.closes()).toEqual([]);
 
     return expectSettles(refused).then((result) => {
@@ -606,7 +601,7 @@ describe("in-flight requests are isolated", () => {
 
 describe("diagnostics and correlation storage are per channel", () => {
   it("records C's three diagnostics in C's ring and none in A's", () => {
-    // The exact assertion the work package asks for. Red when: the ring is a
+    // The exact assertion isolation needs. Red when: the ring is a
     // module-level singleton, or the channel reports every record it sees to a
     // shared subscriber list.
     const fleet = openFleetOfFour();
@@ -660,7 +655,7 @@ describe("diagnostics and correlation storage are per channel", () => {
 
   it("counts unknown event types per channel, not in one shared tally", () => {
     // The fourth per-channel store: unknown types are counted per type rather
-    // are counted per type rather than stored per frame. A shared tally would
+    // than stored per frame. A shared tally would
     // make "which agent is receiving something this build cannot render" single
     // answerable only for the whole process. Red when: the counts (or the
     // first-arrival diagnostic that summarises them) live at module scope.
@@ -774,7 +769,7 @@ describe("diagnostics and correlation storage are per channel", () => {
 
   it("keeps each channel's readiness separate, so one agent's startup does not gate another", () => {
     // Readiness is per channel, and the wording it picks is what the reconnect
-    // B3 reads to decide whether a replay is worth attempting. Two agents in
+    // layer reads to decide whether a replay is worth attempting. Two agents in
     // different startup states must answer differently, and dropping A must not
     // make D look dropped. Red when: readiness is a shared flag, or one channel's
     // close moves a neighbour's.

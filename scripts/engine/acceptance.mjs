@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 /**
- * acceptance.mjs - real-engine acceptance runs for the B1 engine host.
+ * acceptance.mjs - real-engine acceptance runs for the engine host.
  *
  * Scope: the acceptance subcommands below. Exit codes:
  * 0 pass, 1 fail, 2 engine artifact missing. Not part of `pnpm verify`.
  *
- * Invariants (section 8): the token only reaches the engine through
+ * Invariants: the token only reaches the engine through
  * `--ws-token-file`; `ready` means the `app_server_info` response arrived, not
  * that the socket opened; the port is only parsed from stdout, never guessed;
  * temp trees are removed pointwise, never with a recursive delete.
@@ -38,10 +38,10 @@ const WATCHDOG_PATH = path.join(REPO_ROOT, "packages", "core", "src", "runtime",
 const CORE_PACKAGE_JSON = path.join(REPO_ROOT, "packages", "core", "package.json");
 /** What a developer must run when the engine artifact is absent. */
 const FETCH_HINT = "node scripts/engine/fetch-engine.mjs";
-/** F-6 is the only port-discovery path (F-7, F-8); equal to `WS_URL_LINE` in
+/** The only port-discovery path; equal to `WS_URL_LINE` in
  * port-discovery.ts, so a shape the product parser rejects cannot pass here. */
 const PORT_LINE = /^WebSocket:\s+(ws:\/\/\S+)$/m;
-/** Watchdog self-check marker written to the engine's stderr (section 3.4). */
+/** Watchdog self-check marker written to the engine's stderr. */
 const MARKER_LINE = /^WATCHDOG_OK=(\d+)$/m;
 /** Line the inner harness prints with the engine pid. */
 const HARNESS_PID_LINE = /^HARNESS_ENGINE_PID=(\d+)$/m;

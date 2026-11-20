@@ -1,9 +1,8 @@
 /**
  * Tests for the snapshot normaliser.
  *
- * Requirement source: docs/17-A3 section 5.1 `V-8` (a golden file is byte-equal
- * across two runs and volatile fields are normalised); contract source:
- * docs/18-A3 section 3.4.5 and section 1.2 `R-05`.
+ * The claim: a golden file is byte-equal across two runs, and volatile fields
+ * and machine-specific paths are normalised.
  *
  * The cases pin the four ways a snapshot goes unstable: timestamps and ids,
  * machine-specific paths, object key insertion order, and values JSON cannot

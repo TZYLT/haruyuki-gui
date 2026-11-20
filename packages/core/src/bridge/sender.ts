@@ -116,7 +116,7 @@
  *   and `flush()` has nothing to flush beyond an interrupted pump.
  *
  *   It is wired anyway, for two reasons. The decision must live where the table
- *   is read, otherwise the first `"by-channel"` row (C1's high-frequency status
+ *   is read, otherwise the first `"by-channel"` row (the event merger's high-frequency status
  *   traffic is the expected one) would silently take the immediate path and the
  *   only symptom would be a latency regression nobody attributes to this file.
  *   And the window is not a second queue: it is the one place where a payload is
@@ -141,8 +141,8 @@
  *
  *   After `close`, `send` throws. It is a lifecycle error and deliberately
  *   carries NO code: the four codes are the frozen vocabulary for frame
- *   rejections, and inventing a fifth one would widen a contract this work
- *   package is not allowed to change. Dropping the frame silently was rejected
+ *   rejections, and inventing a fifth one would widen a contract this change
+ *   does not own. Dropping the frame silently was rejected
  *   for the same reason `send` throws on everything else: `send` never fails
  *   quietly.
  *
@@ -167,7 +167,7 @@
  *
  *   `page.token` must differ per page, and that follows from the receiver rather
  *   than from taste. `packages/ui/src/bridge/entry.ts` deduplicates a page on the
- *   key `` `${watermark}:${token}` `` (rule C5-R07), and its comment on the
+ *   key `` `${watermark}:${token}` ``, and its comment on the
  *   watermark rule says the same thing from the other side: pages of one
  *   snapshot share a watermark and "are told apart by their token". Reusing one
  *   token across a snapshot would therefore make the renderer drop every page
@@ -230,7 +230,7 @@ export class UnregisteredFrameTypeError extends Error {
   constructor(t: string) {
     super(
       `unregistered frame type: "${t}"; every emitted "t" needs a FRAME_TYPES row (the table is ` +
-        "append-only), and a row is added by the work package that owns the type, not by a sender",
+        "append-only), and a row is added by the module that owns the type, not by a sender",
     );
     this.name = "UnregisteredFrameTypeError";
     this.t = t;
@@ -263,7 +263,7 @@ export interface FrameSenderOptions {
    *
    * Defaults to the key set of `FRAME_TYPES`. When given, it REPLACES that
    * default rather than extending it: the set is the whole registration story
-   * for this sender, which is what lets a host inject its own table (C5-Q24).
+   * for this sender, which is what lets a host inject its own table.
    * The set is copied, so mutating the caller's set later cannot change which
    * types this sender accepts.
    */
@@ -293,9 +293,9 @@ export interface FrameSenderOptions {
    *
    * Optional, and omitting it keeps the previous behaviour exactly: the sender
    * emits whatever it is given. Passing it is what makes the silence after a
-   * production path rather than only in `./handshake`'s own tests -- the rule
-   * says nothing is sent after a `bridge.reject`, and a rule the sender does not
-   * consult is not a rule.
+   * reject real on the production path rather than only in `./handshake`'s own
+   * tests -- the rule says nothing is sent after a `bridge.reject`, and a rule
+   * the sender does not consult is not a rule.
    *
    * The sender calls {@link HandshakeState.receive} for a `bridge.ready` frame
    * and emits the reply it asks for, then refuses every later `send` once the
@@ -389,9 +389,9 @@ const COALESCING: ReadonlyMap<string, string> = new Map(
  * The pager every snapshot uses.
  *
  * `createPager` returns a pure function with no state, so one instance serves
- * the whole process. The budget is the module default (1 MB), the hard cap of
+ * the whole process. The budget is the module default (1 MB) and is a hard
  * cap; the frozen options have no budget field, so a caller that needs a
- * needs a different split pages the snapshot itself.
+ * different split pages the snapshot itself.
  */
 const PLANNER = createBulkPlanner();
 
@@ -913,7 +913,7 @@ export function createFrameSender(options: FrameSenderOptions): FrameSender {
   function rejectedError(): Error {
     const error = new Error(
       "frame sender is muted: the bridge handshake rejected the peer, and no frame may follow " +
-        "after a reject; nothing was sent, and no further frame will be until a new session",
+        "a reject; nothing was sent, and no further frame will be until a new session",
     );
 
     error.name = "BridgeSenderRejectedError";
@@ -960,7 +960,7 @@ function mintedToken(watermark: number): string {
  * Derive the token for one page of a multi-page snapshot.
  *
  * A shared token per snapshot is not an option: the renderer deduplicates a page
- * on `` `${watermark}:${token}` `` (C5-R07), so one token would make it drop
+ * on `` `${watermark}:${token}` ``, so one token would make it drop
  * every page after the first and the snapshot would arrive one page long.
  *
  * Appending `#<n>` to the caller's token is not an option either. The caller

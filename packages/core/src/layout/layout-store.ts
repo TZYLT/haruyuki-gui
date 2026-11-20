@@ -1,6 +1,7 @@
 /**
- * The layout store: one file in, one authoritative document out
- * , against the sections 3.3, 3.6, 4.3 and work packages the log/the bridge).
+ * The layout store: one file in, one authoritative document out, against the
+ * `LayoutDoc` contract in `@haruyuki/protocol` (layout-store.test.ts and
+ * layout-integration.test.ts pin the behaviour).
  *
  * What this module owns
  *   `load` turns whatever is on disk into a document plus the facts the
@@ -18,7 +19,7 @@
  *      comes back.
  *   2. Version check before structure: a newer document is left untouched and
  *      the store becomes read-only (`unsupported-version`). A missing version
- *      is treated as v1 (the D1 precedent) and is writable.
+ *      is treated as v1 and is writable.
  *   3. Structure: an invalid but parseable document is backed up, its unknown
  *      tabs are scanned defensively (the tree may not even be a tree), and the
  *      default document is extended with a recovery panel holding those tabs.
@@ -28,7 +29,7 @@
  *      by the validator.
  *
  * Why `load` never writes the target
- *   Invariant I-2: a corrupt or newer file must still be there after `load`.
+ *   A corrupt or newer file must still be there after `load`.
  *   The store's only load-time writes are a byte copy into `desktop.corrupt-*`
  *   and pruning older copies; the layout file itself is written only by `save`.
  *
@@ -40,7 +41,7 @@
  *   lose an unknown tab is refused, not written.
  *
  * Failure is a code, never prose
- *   Every branch returns a `LayoutErrorCode` (invariant I-7) and logs only the
+ *   Every branch returns a `LayoutErrorCode` and logs only the file name and
  *   the step -- never document text, never page props.
  */
 
@@ -191,7 +192,7 @@ export function createLayoutStore(options: LayoutStoreOptions): LayoutStore {
    *
    * Returns whether the copy landed. Callers must not promise "backed up" when
    * it did not: `writable: true` is conditional on the backup, because the next
-   * because the next save overwrites the only copy of the damaged file.
+   * save overwrites the only copy of the damaged file.
    */
   async function backUp(): Promise<boolean> {
     const target = backupPathFor(layoutPath, formatTimestamp(clock()));
@@ -329,7 +330,7 @@ export function createLayoutStore(options: LayoutStoreOptions): LayoutStore {
       return settle(validation.doc, "ok", true, numericVersion);
     }
 
-    // Parseable but unusable. Back it up first (I-2), then decide whether the
+    // Parseable but unusable. Back it up first, then decide whether the
     // caller may save over it. Unsupported versions are read-only; every
     // other structural failure is recoverable, because the bytes are backed up.
     const backedUp = await backUp();
@@ -406,10 +407,9 @@ export function createLayoutStore(options: LayoutStoreOptions): LayoutStore {
         : { ok: false, code: mergedValidation.code, detail: mergedValidation.detail };
     }
 
-    // No trailing newline: the 256 KiB budget is measured on the
-    // bytes the validator saw, so the file on disk must be exactly those bytes
-    // (docs/36 4.3.1 "by the actual file bytes"). A newline here would write one
-    // byte more than any document that passed validation.
+    // No trailing newline: the 256 KiB budget is measured on the bytes the
+    // validator saw, so the file on disk must be exactly those bytes. A newline
+    // here would write one byte more than any document that passed validation.
     const text = JSON.stringify(mergedValidation.doc);
 
     try {
@@ -520,7 +520,7 @@ function recoverUnknownTabs(
   // A recovery panel must not make an otherwise valid fallback invalid. If it
   // somehow does, the default document still loads; the backup keeps the
   // original bytes either way. The drop is still reported: unknown panels must
-  // forbids clearing unknown panels silently, and a caller that sees an empty
+  // never be cleared silently, and a caller that sees an empty
   // unknownPageIds must be able to tell "none found" from "dropped".
   if (validation.ok) {
     return validation.doc;

@@ -8,7 +8,7 @@
  *
  * The error boundary retries by remounting the page: a page that threw during
  * render usually threw from state that a plain re-render would reproduce, and
- * the retry has to keep the same props (`59` section 4.6). Remounting is
+ * the retry has to keep the same props. Remounting is
  * therefore expressed as a changing React key over the same element, not as a
  * different element.
  */

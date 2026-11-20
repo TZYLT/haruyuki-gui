@@ -1,9 +1,10 @@
 /**
- * `W8-VERIFY` third script: is the manifest honest about what shipped?
+ * Third verify script: is the manifest honest about what shipped?
  *
- * This judges `main-crash-record` through Another test and `` together, because they are all
- * claims about the same two files. Reading them in one place is what lets the
- * cross-checks actually compare different sources - separate scripts would
+ * This judges the platform states, the builtIn values, the cross-document
+ * agreement, the recomputed digests and the packaged icon together, because they
+ * are all claims about the same two files. Reading them in one place is what lets
+ * the cross-checks actually compare different sources - separate scripts would
  * each rebuild the expectation from the same input and always agree.
  *
  *   node apps/desktop/scripts/verify-manifest.mjs

@@ -3,11 +3,11 @@
  * artifact. Validation lives in `lib/map-checks.mjs`; this module owns
  * bytes, ordering and the read-side checks around them.
  *
- * Pipeline (route doc 08 section 3.1):
+ * Pipeline:
  *
  *   snapshot.json + capabilities.json
  *     -> collectViolations() from lib/map-checks.mjs
- *     -> emitMap() renders the frozen export shape (07 section 4.3)
+ *     -> emitMap() renders the frozen export shape
  *     -> checkMap() compares the bytes with the committed artifact
  *
  * The artifact is the only definition of the wire vocabulary: it exports
@@ -38,7 +38,7 @@
  *   schema is `contract-stale`, a malformed capability table is `contract-map`,
  *   and a failed parity invariant is `contract-cover`. A missing or hand-edited
  *   artifact is a `contract-stale` violation, because that is the drift this gate
- *   must catch. `generateMap` refuses to emit code while an error is
+ *   exists to catch. `generateMap` refuses to emit code while an error is
  *   outstanding, so a red table can never be frozen into the artifact.
  *
  * Nothing here writes to disk. `--write` belongs to the CLI layer (Lead) and the

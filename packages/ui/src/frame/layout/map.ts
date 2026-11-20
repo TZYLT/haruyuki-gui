@@ -1,7 +1,7 @@
 /**
  * The bridge between the layout document and dockview's serialized grid.
  *
- * C4 owns the document; dockview owns the pixels. This module is the only place
+ * The layout store owns the document; dockview owns the pixels. This module is the only place
  * that knows both shapes, so a dockview upgrade or a document field changes
  * here rather than in the frame host or the store.
  *
@@ -13,7 +13,7 @@
  *
  * Hidden tabs are not sent to dockview: a hidden tab is a closed unknown page
  * that must survive a save, not a tab the user can see. They are merged back
- * from the previous document, including an empty panel node, because C4 refuses
+ * from the previous document, including an empty panel node, because the layout store refuses
  * to drop a panel the user closed rather than deleted.
  */
 

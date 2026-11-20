@@ -5,7 +5,7 @@
  * authoritative document to the renderer on it, and the renderer writes back a
  * whole document through the preload `invoke` channel. There is no
  * `layout.change`/`layout.ack`/`layout.request` in v1; an unregistered `t` is
- * refused by the C5 sender, so a later producer hits that wall instead of
+ * refused by the sender, so a later producer hits that wall instead of
  * silently emitting a contract nobody signed.
  */
 
@@ -18,7 +18,7 @@ export const LAYOUT_SNAPSHOT_FRAME = "layout.snapshot" as const;
  * How the last load ended, as the renderer needs to explain it.
  *
  * `migrated` is part of the v1 wire vocabulary but **no v1 build produces it**:
- * the only older version is "no version field", which loads as v1 unchanged
+ * the only older version is "no version field", which loads as v1 unchanged.
  * It stays in the union so a future migration does not need a
  * protocol change; renderers must accept it and treat it like `ok`.
  */
@@ -45,10 +45,10 @@ export type LayoutStatus = {
 /**
  * One `layout.snapshot` body.
  *
- * `items` is an array because the C5 pager slices an array body; v1 always
+ * `items` is an array because the pager slices an array body; v1 always
  * carries exactly one document and the renderer takes `items[0]`. `page` is
  * added by the sender (`watermark` identifies the snapshot, `token` identifies
- * the page, `more` is false on the last page); C4 never fills those fields.
+ * the page, `more` is false on the last page); the layout layer never fills those fields.
  */
 export type LayoutSnapshotBody = LayoutStatus & {
   /** Monotonic document revision; 0 before the first successful save. */

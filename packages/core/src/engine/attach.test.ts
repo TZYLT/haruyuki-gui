@@ -1,11 +1,9 @@
 /**
  * Tests for attaching to an external engine server.
  *
- * Shapes come from no recursive-B1 sections 3.3 (d) and (f), 4.2 , 6.1 
- * and section 8. The fixtures are inline by design (B1-D01): every case starts
- * its own loopback HTTP server on port 0, so no engine process is spawned, no
- * token file is written and nothing outside this file is imported (`fixtures/`
- * included).
+ * The fixtures are inline by design: every case starts its own loopback HTTP
+ * server on port 0, so no engine process is spawned, no token file is written and
+ * nothing outside this file is imported (`fixtures/` included).
  *
  * The four behaviours under test:
  * - a matching handshake resolves with the reported info and no mismatch;
@@ -170,7 +168,7 @@ function parseJsonObject(data: Buffer): Record<string, unknown> | null {
   }
 }
 
-/** The exact response shape measured from engine 0.6.0 (F-15). */
+/** The exact response shape measured from engine 0.6.0. */
 function appServerInfoResponse(requestId: unknown): Record<string, unknown> {
   return {
     type: "app_server_info_response",

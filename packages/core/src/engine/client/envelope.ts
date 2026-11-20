@@ -2,9 +2,6 @@
  * Envelope passthrough: turn one inbound frame into the four fields a consumer
  * may read, and never invent one.
  *
- 
- 
- *
  * The whole contract is one sentence: **the four fields pass through verbatim,
  * and a missing field is absent rather than `undefined`**. Why that is worth a
  * module:
@@ -22,7 +19,7 @@
  *   `emitted_at` parsed into a number, no `idempotency_key` deduplicated. Converting
  *   a timestamp would invent a timezone rule the engine never stated, and treating
  *   `event_seq` as our ordering authority would be wrong (ordering belongs to
- *   C1, which is the only layer that sees the full sequence).
+ *   the event merger, which is the only layer that sees the full sequence).
  *
  * The one thing this module does know is *which* four fields exist, and it takes
  * that from the frozen type rather than restating it: the key list is declared

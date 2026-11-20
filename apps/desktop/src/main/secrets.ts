@@ -241,7 +241,7 @@ function isAbsent(error: unknown): boolean {
  * Refusal is all-or-nothing: a document with one bad entry is a document whose
  * shape this build does not understand, and skipping the bad entry would turn
  * "unreadable" into `NOT_FOUND` for that key - the exact confusion the red
- * red. A reader that guesses is worse than a reader that says it cannot.
+ * condition names. A reader that guesses is worse than a reader that says it cannot.
  *
  * @param text the file's contents
  */

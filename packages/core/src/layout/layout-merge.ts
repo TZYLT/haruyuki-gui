@@ -1,6 +1,7 @@
 /**
- * Unknown-tab preservation on save , against the sections 4.3.3-4.3.5 and
- * 4.3.9; docs/35 section 4.3, invariant INV-19).
+ * Unknown-tab preservation on save, against the `LayoutDoc` contract in
+ * `@haruyuki/protocol` (`collectUnknownTabs` and `mergeUnknownTabs` are the
+ * public entry points; layout-merge.test.ts pins the behaviour).
  *
  * The problem this module solves
  *   The renderer only knows the pages it can render, so when it round-trips a
@@ -26,7 +27,7 @@
  * Why the whole document is JSON-cloned
  *   `mergeUnknownTabs` must not mutate either argument: the caller keeps the
  *   current authoritative document until the save succeeds. The clone is also
- *   what preserves unknown keys at every level (invariant I-3): nothing is
+ *   what preserves unknown keys at every level: nothing is
  *   rebuilt from known fields, only the tabs array of the target panel is
  *   touched. The document is JSON by contract (the validator refuses anything
  *   else), so a JSON round trip is the exact copy the store is going to write.

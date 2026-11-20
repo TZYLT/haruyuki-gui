@@ -533,7 +533,7 @@ export async function roundOne(options, spawn = run) {
 
   // electron@45 has no postinstall; the binary downloads on first require().
   // lock.mjs spawns electron.exe to read process.versions, so a fresh worktree
-  // has no dist/ until something requires it. Doing it here keeps the promise
+  // has no dist/ until something requires it. Doing it here keeps the promise of
   // one command: nobody has to remember a fourth script.
   //
   // Skip when dist/ is already populated: the download is 234 MB and the
@@ -594,8 +594,8 @@ export async function scanArtifacts(releaseDir) {
     // `win-unpacked/` holds the files a user downloads, assembled. It is not
     // itself a download, so it stays out of the artifact list - but it does
     // have to be reported, because the artifact claim is about the tree as much
-    // A listing that silently dropped it would make that criterion unjudgeable
-    // from the manifest, which is the same defect this item exists to remove.
+    // as the zip. A listing that silently dropped it would make that claim
+    // unjudgeable from the manifest, which is the same defect this code removes.
     if (relative.startsWith("win-unpacked/") || relative.startsWith("linux-unpacked/")) continue;
     // Files that are this pipeline's own output rather than its product. They
     // describe a build; they are never part of one. A second run in the same
@@ -614,8 +614,8 @@ export async function scanArtifacts(releaseDir) {
  * The unpacked trees, which are assembled output rather than downloads.
  *
  * Kept separate from the artifact list instead of dropped: the claim is about
- * "win-unpacked plus a zip", so a manifest that does not mention the tree
- * cannot be used to judge it.
+ * "win-unpacked plus a zip", so a manifest that does not mention the tree cannot
+ * be used to judge it.
  *
  * @param {string} releaseDir
  * @returns {Promise<string[]>} tree directory names that exist

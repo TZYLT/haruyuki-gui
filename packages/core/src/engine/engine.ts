@@ -1,20 +1,18 @@
 /**
  * Engine facade: the single state machine over one hosted engine process.
  *
- * Shape source: no recursive-B1 sections 3.1 (module split: `engine.ts` is "the only
- * state machine"), 3.2 (the log owns this file), 3.3 (c) (frozen `Engine` surface),
- * 3.3 (e) (state diagram), 3.3 (f) (error classification), 4.2 (work package) and
- * section 8 (invariants).
+ * This file is the only state machine in the engine: every other module owns one
+ * collaborator, and the transitions between them live here.
  *
  * Rules this file exists to enforce:
  *
  * - `ready` means "socket open AND app_server_info answered". A socket that
- *   merely opened is never ready (section 8, rule 2). An untested engine build or
+ *   merely opened is never ready. An untested engine build or wire protocol does
  *   NOT gate `ready`: an unrecognised build is a warning, so it lands in
- *   warning, so it lands in `degradations` instead (see `./degradations`).
+ *   `degradations` instead (see `./degradations`).
  * - `failed` is terminal. A failed engine refuses a second `start` instead of
- *   reconnecting; reconnection belongs to B3 (section 8, rule 5).
- * - Token CONTENT never enters argv (rule 1). `start` writes the token file and
+ *   reconnecting; reconnection belongs to the reconnect layer.
+ * - Token CONTENT never enters argv. `start` writes the token file and
  *   appends only its PATH to `argvPrefix`, which is the element immediately after
  *   the `--ws-token-file` option the host port already put there.
  * - Every transition writes the internal field first and only then notifies the
@@ -37,14 +35,13 @@
  * Process start goes through `startEngineProcess` (`spawn.ts`). How the child
  * argv is composed is that module's contract: `[spec.bundlePath,
  * ...spec.argvPrefix]`. The headless host port describes the engine with
- * and the engine options in `argvPrefix`, which is the F-6 shape
+ * `bundlePath = haruyuki.js` and the engine options in `argvPrefix`, which yields
  * `node haruyuki.js server ...`.
  *
- * `attach` is implemented inline on purpose (decisions D-10 and D-17): `attach.ts`
- *  was written in the same wave, and its `attachToExternalServer` is a
- * PROBE - it closes the socket after the handshake - while the facade has to hand
- * a live socket back. The two therefore stay separate, and this file never
- * imports `attach.ts`.
+ * `attach` is implemented inline on purpose: `attach.ts` was written in the same
+ * wave, and its `attachToExternalServer` is a PROBE - it closes the socket after
+ * the handshake - while the facade has to hand a live socket back. The two
+ * therefore stay separate, and this file never imports `attach.ts`.
  */
 
 import { ChildWatch } from "./child-watch";
@@ -210,7 +207,7 @@ export class Engine {
 
   /**
    * The endpoint of this engine, or `null` while it is not usable. The facade needs
-   * B2 needs `url` + `token` for the second and later connections of a multi-agent
+   * `url` + `token` for the second and later connections of a multi-agent session,
    * and the endpoint has to be exposed because `url` is a local in `start`.
    *
    * Non-null **only** in `ready`, and this state test is the whole gate. The field
@@ -218,11 +215,11 @@ export class Engine {
    * not cleared on every socket close: were it populated only in `ready` and
    * cleared everywhere else, this test and a `socketState`-based one would answer
    * identically, no test could tell them apart, and the state guard would be
-   * decoration. `socketState` flips to `"open"` while the handshake answer is still
-   * unknown, so reaching the token through it would open N connections on an engine
+   * decoration. `socketState` flips to `"open"` while the handshake answer is
+   * still unknown, so reaching the token through it would open N connections on an
    * engine that may yet fail. It carries the plaintext token, so it must never be
-   * must never be logged, put in a diagnostic or attached to a crash record
-   * (boundary 2) - also why the field is `#private`: a TypeScript `private` is
+   * logged, put in a diagnostic or attached to a crash record - also why the field
+   * is `#private`: a TypeScript `private` is
    * erased at runtime, leaving the token on the object a crash reporter serialises.
    */
   get endpoint(): { readonly url: string; readonly token: string } | null {
@@ -253,9 +250,8 @@ export class Engine {
    * Safety and compatibility checks that did not hold, in the order they were
    * discovered; empty when everything held.
    *
-   * These are warnings by decision, never failures: docs/13 V-7 and B1-Q09 keep
-   * the engine usable with an untested build, R-5 keeps it usable with a degraded
-   * ACL, and R-3 keeps it usable without a working watchdog. What the host must
+   * These are warnings by decision, never failures: an untested build, a degraded
+   * ACL and a missing watchdog all keep the engine usable. What the host must
    * not do is lose the fact silently, so every one of them lands here.
    *
    * Read it after `start` / `attach` resolves; a failed start reports the fault
@@ -356,7 +352,7 @@ export class Engine {
       // keeps it unreachable, so storing it here changes nothing a caller can
       // observe, but storing it only on success would make that gate untestable -
       // every non-ready state would hold `null` anyway, so the mutation that
-      // (`currentState` -> `socketState`) would stay green.
+      // swaps `currentState` for `socketState` would stay green.
       this.#readyEndpoint = Object.freeze({ url, token });
       this.transition("handshaking");
 
@@ -410,7 +406,7 @@ export class Engine {
       const info = await requestAppServerInfo(socket, DEFAULT_HANDSHAKE_TIMEOUT_MS);
 
       // A different build is a warning, not a veto: an untested combination keeps
-      // manual URL + token flow usable with an untested combination, and the
+      // the manual URL + token flow usable, and the
       // mismatch is reported through `degradations` instead of ending the facade
       // in the terminal `failed` state.
       this.noteVersionMismatches(info, options.expectedEngineVersion);
@@ -592,10 +588,9 @@ export class Engine {
   /**
    * Record an untested engine build or wire protocol as a degradation.
    *
-   * Neither is a failure: docs/13 B1-Q09 and Q49 decide that an untested
-   * combination still connects, and V-7 states the same for an external server.
-   * `PROTOCOL_MISMATCH` stays reserved for "the handshake never matched", which is
-   * what the classification table in no recursive section 3.3 (f) assigns to it.
+   * Neither is a failure: an untested combination still connects, including
+   * against an external server. `PROTOCOL_MISMATCH` stays reserved for "the
+   * handshake never matched", and nothing else is classified that way.
    */
   private noteVersionMismatches(info: AppServerInfo, expected: string | undefined): void {
     this.degradationList.push(...versionDegradations(info, expected));
@@ -604,9 +599,9 @@ export class Engine {
   /**
    * Terminal failure path of `start` / `attach`.
    *
-   * The state change and the error event are emitted before the cleanup, exactly
-   * as the work package orders them: a subscriber that reacts to `failed` can
-   * still see the token file and the child for one tick.
+   * The state change and the error event are emitted before the cleanup, in that
+   * order: a subscriber that reacts to `failed` can still see the token file and
+   * the child for one tick.
    */
   private async failStart(reason: unknown): Promise<never> {
     const mapped = toEngineError(reason);

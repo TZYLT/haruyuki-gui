@@ -3,9 +3,7 @@
  *
  * The fixture stands in for the real engine process, so it is exercised over a
  * real loopback WebSocket instead of through the connection/handshake modules
- * (that would be the integration under test in  and would risk a cycle).
- * Shapes come from the frame shapes below are pinned to that wire 6.1
- * (V-5, V-6, diagnostic-bundle-tree).
+ * (importing them would risk a cycle).
  *
  * `ws` ships no type declarations, so both the fixture's module surface and the
  * client socket are described structurally below and loaded through
@@ -172,7 +170,7 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** Resolve with the HTTP status of a rejected upgrade (F-11 shape). */
+/** Resolve with the HTTP status of a rejected upgrade. */
 function expectUpgradeRejected(url: string, headers: Record<string, string>): Promise<number> {
   return new Promise((resolve, reject) => {
     const socket = new WebSocket(url, { headers });

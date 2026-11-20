@@ -11,7 +11,7 @@
  * `channel-test-support.ts` builds a channel over *symbolic* ports (`makeReader`,
  * `makeWriter`): it can say "the channel wrote this request", but not "the
  * bytes went out of this socket and no other". Isolation is a statement about
- * statements about **connections**, so the rig has to reach one layer further
+ * **connections**, so the rig has to reach one layer further
  * down: each agent gets its own fake socket, its own real `EngineTransport`, its
  * own real kernel and the real send path (`buildFrame`), all placed behind the
  * real pool.
@@ -41,14 +41,14 @@
  * kernel's to close. In production that half has to be owned by whoever built
  * both - the wiring - and it is the only arrangement in which
  * `closeChannel(agentId)` also releases that agent's connection (a channel that
- * "关掉这条通道"; a channel that closes and leaves its socket open is a leak).
+ * closes and leaves its socket open is a leak).
  *
  * So the factory here returns a handle that delegates to the kernel and, on
  * `close()`, closes the kernel and then that agent's transport. The handle also
  * re-exports `isClosed`, which `pool.ts` duck-types (`ClosableChannel`) to keep
  * `channels()` truthful and to replace a self-closed entry - a wrapper that
- * dropped it would make the pool hand out zombies. Both facts are reported as
- * contract observations in §5 of the work report rather than silently absorbed.
+ * dropped it would make the pool hand out zombies. Both facts are stated here as
+ * contract observations rather than silently absorbed.
  *
  * Two consequences the cases rely on, both stated so they cannot be mistaken
  * for test convenience:
@@ -173,7 +173,7 @@ export const UNMODELLED_TYPE = "future.engine.never.sent";
  *
  * The reader functions are live reads rather than snapshots on purpose. A case
  * that asserted on `Array` fields captured at construction would be asserting
- * on the harness rather than on the channel, and the "A kept receiving after C
+ * on the harness rather than on the channel, and "A kept receiving after C
  * closed" is exactly a comparison of *later* reads.
  */
 export interface FleetAgent {
@@ -212,7 +212,7 @@ export interface FleetAgent {
    *
    * Per agent rather than per fleet, which is the whole point: readiness is the
    * third per-channel store (`NOT_CONNECTED` has to say whether the engine ever
-   * whether the engine ever came up), and a shared one would make one agent's
+   * came up), and a shared one would make one agent's
    * startup state decide another's sends. Latching mirrors the production port:
    * a channel that was once usable keeps the "was ready and dropped" wording
    * forever, which is what tells B3 whether a replay is worth attempting.
@@ -498,7 +498,7 @@ export function sendOn(agent: FleetAgent, requestId?: string): Promise<CommandRe
  * `channels()` reports, so a case that asserts on that order is asserting the
  * pool's documented behaviour rather than an accident of the harness. Each agent
  * is opened for its own conversation id, which is the shape we want: one
- * describes: one connection per agent, a conversation as its request scope.
+ * connection per agent, a conversation as its request scope.
  *
  * Lives here for the same reason {@link emitRun} does - it is how a fleet is set
  * up, not what a case asserts - and because the four-agent setup is repeated by
@@ -557,7 +557,7 @@ export function emitRun(fleet: FleetHarness, agentId: string, count: number, fro
  * teardown does: the invariant is "closing releases everything", and a guard
  * that closed things itself would be vacuous. What must not survive is a timer,
  * because a timer that outlives `close()` holds a promise that can never settle
- * and the *next* test pays for it as an unexplained timeout - the failure mode
+ * and the *next* test pays for it as an unexplained timeout - a failure mode
  * that once burnt 93 seconds.
  *
  * Transports are closed after the pool, and without error, so a fleet whose

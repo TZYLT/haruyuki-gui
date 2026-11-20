@@ -2,8 +2,8 @@
  * Degradation checks for the engine facade.
  *
  * The checks below cover the facade's observable surface, the watchdog
- * 3.4 (the watchdog self-check) and 7 (R-3/R-5). The `EngineDegradation` type
- * itself lives in `./types`.
+ * self-check and the token-file ACL. The `EngineDegradation` type itself lives
+ * in `./types`.
  *
  * Why this is its own module: the facade has to *report* four things it cannot
  * fix - an untested engine build, an untested wire protocol, a token file whose
@@ -12,9 +12,8 @@
  * out of `engine.ts` keeps the state machine readable and keeps the version /
  * marker rules in one place, testable without spawning anything.
  *
- * None of these is a failure. docs/13 V-7, B1-Q09 and Q49 decide that an
- * untested combination still connects; R-5 decides that a degraded ACL keeps the
- * engine usable; R-3 decides that a missing watchdog falls back to parent-side
+ * None of these is a failure. An untested combination still connects; a degraded
+ * ACL keeps the engine usable; a missing watchdog falls back to parent-side
  * cleanup. What the host must not do is lose the fact silently.
  */
 
@@ -24,10 +23,9 @@ import type { TokenFile } from "./token";
 /**
  * Wire protocol revision this build was tested against.
  *
- * The engine has answered `protocol_version: 1` since 0.6.0 (docs/01-2 section
- * 3.2, docs/13 section 1.2). A different value is not a veto - docs/13 B1-Q09
- * and Q49 require "warn, then connect anyway" - so this constant only feeds the
- * `protocol-version` degradation.
+ * The engine has answered `protocol_version: 1` since 0.6.0. A different value
+ * is not a veto - the rule is "warn, then connect anyway" - so this constant
+ * only feeds the `protocol-version` degradation.
  */
 export const EXPECTED_PROTOCOL_VERSION = 1;
 
@@ -46,9 +44,9 @@ export const WATCHDOG_MARKER_GRACE_MS = 250;
 /**
  * True when the spawn spec preloads the watchdog, so a marker is expected.
  *
- * The headless host port composes `NODE_OPTIONS=--require "<abs>/watchdog.cjs"`
+ * The headless host port composes `NODE_OPTIONS=--require "<abs>/watchdog.cjs"`.
  * A spec without it is a caller that deliberately runs without orphan
- * without orphan protection, and must not be reported as degraded.
+ * protection, and must not be reported as degraded.
  */
 export function expectsWatchdog(spec: EngineSpawnSpec): boolean {
   return spec.env.NODE_OPTIONS?.includes("watchdog.cjs") === true;
@@ -57,7 +55,7 @@ export function expectsWatchdog(spec: EngineSpawnSpec): boolean {
 /**
  * Turn a degraded token-file ACL into a reportable entry.
  *
- * `writeTokenFile` degrades rather than throwing (R-5), which is right - a usable
+ * `writeTokenFile` degrades rather than throwing, which is right - a usable
  * engine beats no engine - but it also means the file may keep the directory's
  * inherited permissions, and on Windows that can be "Everyone can read". The
  * facade cannot fix that, so it must not lose it either.
@@ -78,10 +76,9 @@ export function tokenAclDegradation(tokenFile: TokenFile): EngineDegradation | n
 /**
  * Record an untested engine build or wire protocol.
  *
- * Neither is a failure: docs/13 B1-Q09 and Q49 decide that an untested
- * combination still connects, and V-7 states the same for an external server.
- * `PROTOCOL_MISMATCH` stays reserved for "the handshake never matched", which is
- * what the classification table in no recursive section 3.3 (f) assigns to it.
+ * Neither is a failure: an untested combination still connects, and the same
+ * holds for an external server. `PROTOCOL_MISMATCH` stays reserved for "the
+ * handshake never matched".
  *
  * Order is stable (protocol first, then build) so a log line is diffable.
  */
@@ -113,8 +110,8 @@ export function versionDegradations(
 /**
  * The watchdog never proved it was loaded.
  *
- * R-3: orphan protection then falls back to the parent process, which only covers
- * a parent that is still alive to run its own cleanup.
+ * Orphan protection then falls back to the parent process, which only covers a
+ * parent that is still alive to run its own cleanup.
  */
 export function watchdogDegradation(): EngineDegradation {
   return {

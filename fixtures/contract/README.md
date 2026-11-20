@@ -1,4 +1,4 @@
-# Contract gate fixtures (W-10)
+# Contract gate fixtures
 
 Inputs for `scripts/contract-gate.test.ts`, which drives
 `scripts/check-contract.mjs` as a child process. Nothing here is imported by
@@ -11,7 +11,7 @@ data stays exactly as written.
 
 ## `expected-commands.txt`
 
-The pinned V-1 human checklist: the 124 wire command ids of the committed
+The pinned human checklist: the 124 wire command ids of the committed
 snapshot (`packages/protocol/src/contract/snapshot.json`), one per line,
 lexicographic order, three `#` header lines. Regenerate only when the pinned
 engine version changes; `scripts/contract-gate.test.ts` asserts the list still

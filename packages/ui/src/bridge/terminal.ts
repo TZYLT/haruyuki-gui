@@ -2,9 +2,8 @@
  * The renderer's terminal router: where `term.output` text is written, and where
  * its acknowledgement is batched.
  *
- * Requirement source: doc 38 section 6.3 (terminal bytes never enter React
- * state; a sink owns the DOM node and the writing) and section 10.2 (the
- * acknowledgement is batched, not one ack per slice).
+ * Terminal bytes never enter React state: a sink owns the DOM node and the
+ * writing. The acknowledgement is batched, not one ack per slice.
  *
  * Why this module has no imports at all
  *   `@haruyuki/ui` may not value-import `@haruyuki/protocol` (rule R7), and the
@@ -14,7 +13,7 @@
  *   place a host wires them together; duplicating an interface of primitives is
  *   cheaper than making the renderer load the protocol package at runtime. There
  *   is deliberately no React import either: the sink is an imperative target (a
- *   terminal emulator, a DOM text node), and the point of section 6.3 is that a
+ *   terminal emulator, a DOM text node), and the point is that a
  *   megabyte of terminal text never becomes a React state update.
  *
  * Why `done` exists at all
@@ -58,7 +57,7 @@ export interface TerminalSink {
 }
 
 /**
- * One `term.output` slice (doc 38 section 6.2), as the sender produced it.
+ * One `term.output` slice as the sender produced it.
  *
  * Same shape as the protocol's own definition; declared here because the
  * renderer may not load that package (see the file comment).

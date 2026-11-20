@@ -1,14 +1,13 @@
 /**
  * Tests for the layout store: the load ladder and the save path.
  *
- * The acceptance criteria in docs/35 section 5.1 are what these cases encode,
- * so each block names the V-* it covers:
+ * Each block below states the behaviour it pins:
  *
  *   - the default fixture loads as `ok`
  *   - the complex fixture round-trips without losing unknown tabs or extras
  *   - the corrupt fixture falls back to the default, keeps its unknown tab in a
- *         in a recovery panel, backs the original bytes up, and does not touch
- *         the file during `load`
+ *     recovery panel, backs the original bytes up, and does not touch the file
+ *     during `load`
  *   - an unknown tab the renderer dropped is merged back, never silently lost
  *   - a newer version is read-only and `save` refuses instead of downgrading
  *   - a failed rename leaves the old file readable and the revision unchanged
@@ -630,7 +629,7 @@ function createFakeFs(
   return { fs, files };
 }
 
-describe("a failed backup (W3 R-03)", () => {
+describe("a failed backup", () => {
   it("does not promise writability when the copy did not land", async () => {
     const { fs } = createFakeFs({ [targetPath()]: "{ definitely not json" }, { copy: true });
     const codes: string[] = [];
@@ -665,7 +664,7 @@ describe("a failed backup (W3 R-03)", () => {
   });
 });
 
-describe("a successful save clears the load-time verdict (W3 R-13)", () => {
+describe("a successful save clears the load-time verdict", () => {
   it("reports outcome ok after the damaged file has been replaced", async () => {
     const corrupt = await readFixture("corrupt.json");
     const store = makeStore({
@@ -685,7 +684,7 @@ describe("a successful save clears the load-time verdict (W3 R-13)", () => {
   });
 });
 
-describe("unknown panels that cannot be recovered (W3 R-05)", () => {
+describe("unknown panels that cannot be recovered", () => {
   it("logs the number it had to drop instead of returning an empty list", async () => {
     // 256 panels is the documented ceiling, so a 256-panel fallback plus one
     // recovery panel no longer validates: the tabs cannot be kept.

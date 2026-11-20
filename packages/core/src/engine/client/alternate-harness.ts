@@ -46,8 +46,7 @@
  * use, and every clock and channel is registered with the shared leak detector.
  * A scenario that leaves a timer behind therefore fails in `afterEach` with a
  * self-describing message instead of turning into an unrelated thirty-second
- * timeout - the failure mode `snapshot assembly` paid ninety-three seconds of gate budget to
- * learn.
+ * timeout - a failure mode that once cost ninety-three seconds of gate budget.
  */
 
 import { expect } from "vitest";
@@ -125,9 +124,9 @@ export type ResultView = {
  * `data` is carried on success: it is the answer, and two pools that answered
  * differently are not equivalent. `detail` is carried on failure because the
  * *wording* is contract at one point - there are two `NOT_CONNECTED` states -
- * `NOT_CONNECTED` states - and a comparison that dropped it could not tell
- * "never came up" from "was ready and dropped". `raw` is not carried: it is the
- * untouched frame, identical for both by construction.
+ * and a comparison that dropped it could not tell "never came up" from "was
+ * ready and dropped". `raw` is not carried: it is the untouched frame,
+ * identical for both by construction.
  *
  * @param result the result a caller received
  * @returns the comparable view
@@ -376,7 +375,7 @@ export function makeDual(): Dual {
  *
  * `get` names its handle so a later `sendOn` can use *that* object. This is what
  * makes "a stale handle after a close" expressible, which is the third assertion
- * assertion.
+ * the comparison runs.
  */
 export type Step =
   | {
@@ -599,7 +598,7 @@ export async function runScript(script: readonly Step[], world: World): Promise<
  * @param pool the pool under test
  * @returns the observations the caller made, for the test to assert on
  */
-export async function v16Template(pool: ChannelPool): Promise<{
+export async function templateAssertions(pool: ChannelPool): Promise<{
   readonly stale: CommandResult;
   readonly fresh: CommandResult;
   readonly staleDetail: string;
@@ -646,7 +645,8 @@ export async function v16Template(pool: ChannelPool): Promise<{
  *
  * A bare `await` on a promise nothing will settle does not fail - it waits for
  * vitest's `testTimeout` and reports a timeout naming neither the promise nor the
- * cause (The same 93-second lesson). Racing one macrotask converts that into an
+ * cause (a stalled promise once cost 93 seconds of gate budget). Racing one
+ * macrotask converts that into an
  * immediate failure that says which promise stalled. Every step before an
  * `await` step has already delivered the answer, closed the channel or fired the
  * timer, so a promise still pending here is a real defect.

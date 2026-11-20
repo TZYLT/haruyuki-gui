@@ -1,6 +1,6 @@
 /**
  * The package contract: the capability verdict must be reachable from the
- * the package root, not only from a deep path.
+ * package root, not only from a deep path.
  *
  * That is the whole claim, and it is the one thing a deep-import test cannot
  * prove: the row was in `availability.ts` all along, and the review shipped it

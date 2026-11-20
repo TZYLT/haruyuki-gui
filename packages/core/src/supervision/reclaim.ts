@@ -2,14 +2,15 @@
  * Stale-engine decision and reclaim.
  *
  * The rule is intentionally narrow: a live PID alone is never proof, because
- * live PID alone is never proof, because PIDs are reused. The shell may reclaim
- * only when two independent facts agree, or when the one available identity fact
- * agrees AND the engine token file still exists. Anything less is `ambiguous`,
+ * PIDs are reused. The shell may reclaim only when two independent facts agree,
+ * or when the one available identity fact agrees AND the engine token file
+ * still exists. Anything less is `ambiguous`, which is kept for a human and
  * never killed.
  *
- * `ProcessEvidence.portListening` is not read here. B1 does not expose the
- * engine's port, so D4 writes `port: null` and `portListening: false` and the
- * decision deliberately has no port branch (RD-07).
+ * `ProcessEvidence.portListening` is not read here. The shell does not expose
+ * the engine's port, so the marker's `port` is always `null` and
+ * `portListening` is always `false`; the decision deliberately has no port
+ * branch.
  *
  * The decision function is pure and exported so it can be table-tested without
  * spawning anything. Killing lives beside it because both answers share the same
@@ -21,10 +22,10 @@ import { execFile } from "node:child_process";
 
 import type { EngineMarker, ProcessEvidence, ReclaimDecision } from "./types";
 
-/** Route section 5.4 tolerance: spawn-to-ready plus clock granularity is below this. */
+/** Decision tolerance: spawn-to-ready plus clock granularity is below this. */
 export const DEFAULT_TIME_TOLERANCE_MS = 120_000;
 
-/** Total budget for one reclaim; route section 5.4 allows 2 s. */
+/** Total budget for one reclaim; a reclaim must finish within 2 s. */
 const KILL_TOTAL_TIMEOUT_MS = 2_000;
 
 /** Poll interval while waiting for a process to disappear. */
@@ -45,12 +46,12 @@ export type ReclaimEvaluation = {
  *
  * `ok: false` means the process is still believed to be running after the
  * platform command failed; it deliberately does not expose a retryable code,
- * because route R-5 says a failed reclaim is reported and not retried in a loop.
+ * because a failed reclaim is reported and not retried in a loop.
  */
 export type KillResult = { readonly ok: true } | { readonly ok: false; readonly reason: string };
 
 /**
- * Route section 5.4, verbatim in behaviour.
+ * The reclaim decision rule.
  *
  * `toleranceMs` is the absolute distance allowed between the marker write time
  * and the OS creation time. Both timestamps are ISO strings; an unparseable one
@@ -168,8 +169,8 @@ export function isProcessAlive(pid: number): boolean {
  *
  * Never throws. A process that is already gone is a success: the caller's goal
  * is "not running", and the race between evidence collection and the kill is
- * expected. The function does not delete the marker or the token file; route
- * section 5.4 gives marker lifecycle to P4.
+ * expected. The function does not delete the marker or the token file; the
+ * marker lifecycle belongs to the caller.
  */
 export async function killStaleEngine(marker: EngineMarker): Promise<KillResult> {
   const pid = marker.pid;

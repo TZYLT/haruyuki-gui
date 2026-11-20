@@ -1,15 +1,15 @@
 /**
  * The injectable filesystem for the layout store.
  *
- * C4 must not touch `node:fs` directly: the headless shell (A3) and the tests
- * need to inject failures, and the store has to survive a rename that dies
- * halfway. So this module defines the eight-operation surface the store uses,
- * a `node:fs/promises` adapter, and the three helpers that carry the durability
+ * The layout store must not touch `node:fs` directly: the headless shell and
+ * the tests need to inject failures, and the store has to survive a rename
+ * that dies halfway. So this module defines the eight-operation surface the
+ * store uses, a `node:fs/promises` adapter, and the three helpers that carry
  * the durability rules:
  *
  *   atomicWrite   write a temporary sibling, then rename over the target, so a
  *                 reader never sees half a JSON document and a failed write
- *                 leaves the old file intact (invariant I-6).
+ *                 leaves the old file intact.
  *   backupFile    copy a file before it is overwritten; missing source is a
  *                 `false`, not an exception, because a backup is diagnostic.
  *   pruneBackups  keep the newest `keep` corruption copies. Best effort: a

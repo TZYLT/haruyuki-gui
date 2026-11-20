@@ -1,9 +1,8 @@
 /**
  * Engine error classification: every failure funnels into the five frozen codes.
  *
- * Shape source: no recursive-B1 sections 3.1 (module split), 3.2 (the log owns this
- * file), 3.3 (c) (`EngineError`), 3.3 (f) (the classification table) and 4.2
- * (work package).
+ * The five codes and the `EngineError` shape are frozen in `./types`; this file
+ * maps the start path's thrown shapes onto them.
  *
  * The layering rule behind this file: the lower layers already own their local
  * classification, so this module never re-inspects a message string to guess a
@@ -12,8 +11,8 @@
  * - `EngineConnectionError` -> its own `toEngineError()`, wire hint included;
  * - `PortNotFoundError` -> `PORT_NOT_FOUND` with the parser's detail;
  * - a spawn-side failure (ENOENT / EACCES / EPERM, or a future
- *   `EngineSpawnError`) -> `SPAWN_FAILED`, because section 3.3 (f) classes
- *   "spawn threw" as `start` 前置;
+ *   `EngineSpawnError`) -> `SPAWN_FAILED`: a spawn throw is a prerequisite
+ *   failure of `start`;
  * - an already-classified `EngineError` -> itself, so the facade can classify in
  *   layers without the code drifting (mapping is idempotent);
  * - anything else -> `TIMEOUT`, the documented fallback, with the original
@@ -66,8 +65,8 @@ const MAX_HINT_CHARS = 200;
  * Translate any thrown value into the frozen {@link EngineError} shape.
  *
  * The five codes are a closed set, so this function is total: every input,
- * total: every input, including a string or `null` thrown from user code, comes
- * back as one `EngineError`. The original text is preserved in `detail` (clipped
+ * including a string or `null` thrown from user code, comes back as one
+ * `EngineError`. The original text is preserved in `detail` (clipped
  * to one readable length) because the host has no other channel into the cause.
  *
  * @param error whatever a start or attach step threw

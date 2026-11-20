@@ -1,3 +1,3 @@
-{"kind":"frames","schemaVersion":1,"bridgeVersion":1,"clock":"virtual","note":"version mismatch: bridge.ready body declares bridgeVersion \"2\" (frozen string form) while the header is 1, so core answers bridge.reject and the file deliberately ends there (V-5)."}
+{"kind":"frames","schemaVersion":1,"bridgeVersion":1,"clock":"virtual","note":"version mismatch: bridge.ready body declares bridgeVersion \"2\" (frozen string form) while the header is 1, so core answers bridge.reject and the file deliberately ends there."}
 {"v":1,"ch":"control","seq":1,"t":"bridge.ready","body":{"appVersion":"0.1.0","bridgeVersion":"2"}}
 {"v":1,"ch":"control","seq":2,"t":"bridge.reject","body":{"code":"BRIDGE_VERSION_MISMATCH","expected":"1","actual":"2"}}

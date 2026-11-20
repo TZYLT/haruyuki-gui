@@ -267,7 +267,7 @@ describe("the slow family", () => {
   it("contains the slash row that carries the dream and reflect commands", () => {
     // Red if: `slash.exec` is moved out of the slow family. `dream` and `reflect`
     // are not capabilities of the 68-row contract, so this row is where
-    // §4.2's `dream`/`reflect` actually live; moving it to `normal` would give
+    // `dream`/`reflect` actually live; moving it to `normal` would give
     // them a 30 s ceiling.
     expect(capabilitiesInFamily("slow")).toContain("slash.exec");
     expect(timeoutFamilyOf("slash.exec")).toBe("slow");
@@ -407,7 +407,7 @@ describe("resolveTimeout: the caller's override", () => {
 describe("resolveTimeout: the 10x cap", () => {
   it("caps the multiplier at 10x the family ceiling", () => {
     // Red if: TIMEOUT_CAP_MULTIPLIER changes. The cap is a judgement
-    // §4.4) and a change is a design change, so it is pinned. One capability per
+    // and a change is a design change, so it is pinned. One capability per
     // family is enough: `maxTimeoutMs` takes a capability, and the per-family
     // ceiling is what it multiplies.
     expect(TIMEOUT_CAP_MULTIPLIER).toBe(10);
@@ -510,7 +510,7 @@ describe("resolveTimeout: unusable values", () => {
 
 /* wire vocabulary containment                                         */
 
-describe("wire vocabulary containment, this module", () => {
+describe("wire vocabulary containment", () => {
   it("contains no wire id literal in timeouts.ts", () => {
     // Red if: a wire id such as the runtime-start command is written into the
     // module. Capability names are the only sanctioned spelling under `client/`.

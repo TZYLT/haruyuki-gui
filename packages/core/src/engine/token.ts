@@ -1,11 +1,10 @@
 /**
  * Engine capability token: generation, atomic write, exact ACL and single-point removal.
  *
- * Scope source: no recursive section 3.1 (module split), 3.2 ( owns this file),
- * 4.2 (work package) and section 8 invariant 1. The engine only accepts a
- * `--ws-token-file <path>` argument, so this module deliberately hands the
- * caller a PATH and never returns a spawn argument list. That is what keeps the
- * secret out of `process.argv`, where any local process could read it .
+ * The engine only accepts a `--ws-token-file <path>` argument, so this module
+ * deliberately hands the caller a PATH and never returns a spawn argument list.
+ * That is what keeps the secret out of `process.argv`, where any local process
+ * could read it.
  *
  * Two failure classes are treated differently on purpose:
  *
@@ -13,9 +12,8 @@
  *   would reject every socket handshake, so the start path must stop here.
  * - A failure to HARDEN the file (chmod / icacls) is not fatal. The token still
  *   works, only its on-disk protection is weaker, so the call succeeds and
- *   reports `acl: "degraded"` with a raw diagnostic for the host to register
- *   (no recursive section 7, risk R-5: Windows ACL failure on localized or spaced
- *   paths).
+ *   reports `acl: "degraded"` with a raw diagnostic for the host to register.
+ *   The case this covers is a Windows ACL failure on localized or spaced paths.
  */
 
 import { execFile } from "node:child_process";

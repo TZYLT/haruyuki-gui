@@ -39,10 +39,10 @@ export interface BootOutcome {
 /**
  * Sweep, then clear a stale engine out of the way, then report what was kept.
  *
- * Order matters and is unchanged: retention before supervision
+ * Order matters and is unchanged: retention before supervision, so a stale engine
  * is gone, or listed, before the user can ask about it. A failed sweep is a log
- * can ask about it. A failed sweep is a log line and never aborts the boot; the
- * supervision failures are logged inside and never abort it either.
+ * line and never aborts the boot; the supervision failures are logged inside and
+ * never abort it either.
  *
  * @param facts the root's paths and logging
  * @returns the settings to run under and the candidates the menu lists

@@ -1,10 +1,9 @@
 /**
  * ipc.ts - the Electron-shaped transport double.
  *
- * Scope sources: docs/18-A3 sections 1.2 `R-10` (model the platform API shape,
- * do not add a frozen seam), 3.4.4 (the frozen `TransportDouble`) and 7 `R-06`
- * (the two doubles must not share one async granularity). Requirement side:
- * docs/17-A3 section 4.3, acceptance pick-path.
+ * Scope: model the platform API shape and do not add a seam of its own, on the
+ * `TransportDouble` interface in `./delivery`, with the async granularity the
+ * two doubles must not share.
  *
  * Shape only. This module does not import `electron`, does not touch a
  * `webContents` and runs in a plain `node` process: the platform object is

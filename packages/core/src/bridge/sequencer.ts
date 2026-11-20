@@ -1,11 +1,11 @@
 /**
- * sequencer.ts - the single global issuer of frame sequence numbers (C5).
+ * sequencer.ts - the single global issuer of frame sequence numbers.
  *
  * Contract source: the `seq` field of the frame envelope
  * (packages/protocol/src/frame/frame.ts), documented there as "Global
- * monotonic counter, assigned by the core's single sequencer", together with
+ * monotonic counter, assigned by the core's single sequencer". Arrival order is
  * guaranteed within one channel only, so drops, duplicates and reorders are
- * only, so drops, duplicates and reorders are legal across channels.
+ * legal across channels.
  *
  * Why one counter for the whole process, and not one per sender
  *   The renderer has to answer one question about every frame it receives: is

@@ -6,7 +6,7 @@
  *   its own. The missing piece is that the router, the sink and the emulator form a
  *   loop: a slice arrives, the emulator paints it, its completion callback fires,
  *   and the router acknowledges the bytes. Drop any one link and the first
- *   link is dropped: the first megabytes render perfectly, then the credit window
+ *   megabytes render perfectly, then the credit window
  *   starves and output stops with no error on either side.
  *
  *   So the central case below drives the real `createTerminalRouter` with a real

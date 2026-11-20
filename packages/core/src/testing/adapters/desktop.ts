@@ -2,7 +2,7 @@
  * Desktop host-port double: the `HostPort` shape an Electron shell provides.
  *
  * Scope: the nine members of `HostPort` and the unions they return, declared in
- * 4.2 (A3 delivers a test double, D2 delivers the real shell). The nine members
+ * `packages/core/src/port/host-port.ts`, with the semantics that file documents.
  * This module delivers only the test double; the real Electron shell lives in
  * `apps/desktop`.
  *
@@ -17,8 +17,7 @@
  * - `paths` come from the caller, the way `app.getPath` supplies them.
  * - `getRuntimeSpawnSpec` uses the running binary as `exePath` - in Electron
  *   that is `electron.exe` - and passes `ELECTRON_RUN_AS_NODE=1`, the flag the
- *   desktop shell must set or the child starts a second full Electron app
- *   : "nobody picked item 2b).
+ *   desktop shell must set or the child starts a second full Electron app.
  * - `resolveLocalResource` answers a custom-protocol URL, the desktop
  *   counterpart of `asWebviewUri`.
  * - `secure*` is an in-memory `Map` standing in for the OS keychain. A Map
@@ -64,9 +63,10 @@ const DESKTOP_CAPABILITIES: HostPortStartup["capabilities"] = Object.freeze({
 });
 
 /**
- * Engine argv before the bundle path (docs/13 section 4.2 / no recursive section
- * 2.2). `--ws-token-file` is the option name; the token path and value are the
- * engine facade's business, never the host's.
+ * Engine argv before the bundle path: the same prefix the headless port passes
+ * (`ENGINE_ARGV_PREFIX` in `packages/core/src/port/headless-host-port.ts`).
+ * `--ws-token-file` is the option name; the token path and value are the engine
+ * facade's business, never the host's.
  */
 const ENGINE_ARGV_PREFIX = [
   "server",
@@ -83,9 +83,8 @@ const ENGINE_HOME_ENV = "HARUYUKI_HOME";
 /**
  * The Electron flag that turns the child back into a plain Node process.
  *
- * Missing it starts a second Electron application : "nobody picked item
- * 2b), which is the failure this double exists to make visible in the spawn
- * spec.
+ * Missing it starts a second Electron application, which is the failure this
+ * double exists to make visible in the spawn spec.
  */
 const ELECTRON_RUN_AS_NODE_ENV = "ELECTRON_RUN_AS_NODE";
 
@@ -303,8 +302,7 @@ export async function createDesktopHostPort(
       // One queued answer per call. An entry may be a single path or a list, so a
       // `multiple: true` call can return several; a single-value call truncates,
       // the way a real dialog honours the properties it was opened with. An empty
-      // queue is the documented cancellation, which is `[]` and not an error
-      // .
+      // queue is the documented cancellation, which is `[]` and not an error.
       const picked = pickQueue.shift();
 
       if (picked === undefined) {
@@ -333,7 +331,7 @@ export async function createDesktopHostPort(
     },
 
     onShutdown(cb) {
-      // Synchronous registration, by contract.
+      // Synchronous registration, by contract: `onShutdown` answers `void`.
       shutdownCallbacks.push(cb);
     },
 

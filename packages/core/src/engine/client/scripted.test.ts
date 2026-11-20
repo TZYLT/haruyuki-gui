@@ -7,10 +7,10 @@
  * twice, bytes that are not JSON, a type this build does not model, frames that
  * arrive before the channel is ready, and a connection that dies mid-stream.
  *
- * ## What is being asserted, and on whose authority
+ * ## What is being asserted
  *
- * | case | assertion | authority |
- * |---|---|---|
+ * | case | assertion |
+ * |---|---|
  * | order | delivery order IS arrival order; `event_seq` is passed through untouched |
  * | duplicates | both copies are delivered, in arrival order; nothing is suppressed |
  * | malformed | no throw, no close, next frame flows, one `malformed` record |
@@ -92,8 +92,8 @@ describe("out-of-order arrival", () => {
     //
     // The four envelope fields are passed through verbatim, and duplicate
     // detection and reordering belong to C1, which is the only layer that sees
-    // layer that sees the whole sequence. A channel that reordered here would be
-    // answering a question it cannot answer: it has one stream and no authority.
+    // the whole sequence. A channel that reordered here would be answering a
+    // question it cannot answer: it has one stream and no authority.
     const h = makeScripted();
     const script = [
       { seq: 1, marker: "delta-one" },
@@ -150,8 +150,9 @@ describe("out-of-order arrival", () => {
     // whole inbound path rather than one function.
     //
     // Frames are written before the wiring subscribes on purpose: the transport
-    // captures them in its handover queue , so this also pins that the
-    // queue is FIFO. Losing them here would be accept-tick again.
+    // captures them in its handover queue, so this also pins that the queue is
+    // FIFO. Losing them here would repeat the lost-early-frame defect that
+    // `transport.test.ts` guards against.
     const h = makeScripted();
     const double = makeSocketDouble();
     const transport = trackTransport(createTransport(double.socket));
@@ -176,10 +177,9 @@ describe("out-of-order arrival", () => {
     // therefore asserted: the first subscriber's count, and that a second sees
     // **nothing** from the queue.
     //
-    // This is the seam whose other half `transport.test.ts` already pins
-    // ; here it is asserted through the wiring the client actually uses,
-    // because "one owner for the early-frame window" is a claim about the two
-    // layers together.
+    // This is the seam whose other half `transport.test.ts` already pins; here
+    // it is asserted through the wiring the client actually uses, because "one
+    // owner for the early-frame window" is a claim about the two layers together.
     const h = makeScripted();
     const double = makeSocketDouble();
     const transport = trackTransport(createTransport(double.socket));
@@ -318,7 +318,7 @@ describe("malformed frames", () => {
     // Red when: the parse is unguarded, or the failure is promoted to a close.
     // One unreadable frame must not take the connection down; "the connection
     // dropped" stays a separate, visible event that only a real drop may
-    // event that only a real drop may produce.
+    // produce.
     const h = makeScripted();
 
     expect(() => {
@@ -425,7 +425,7 @@ describe("malformed frames", () => {
     // cases (`42`, `null`, `[]`, a bare string) slip through to the reader. A
     // reader that indexes fields would then throw on `null` and take the channel
     // with it. The list is the four malformed shapes the parser must survive plus
-    // outside them.
+    // two that are one step outside them.
     const h = makeScripted();
     const unrunnable = ["", "not json at all", '{"type":', "42", "[]", "null", '"a string"'];
 
@@ -541,7 +541,7 @@ describe("frames before readiness", () => {
     // three answers, in order of preference:
     //   1. deliver on arrival      - what the channel does; the consumer is
     //                                already subscribed and C1 gives it the only
-    //                                only ordering authority there is;
+    //                                ordering authority there is;
     //   2. buffer until ready     - needs a release point, and the transport's
     //                                handover queue is already the one
     //                                owner of "frames that arrived early". A
@@ -549,8 +549,8 @@ describe("frames before readiness", () => {
     //                                delivered twice once both drain;
     //   3. drop and report        - loses data the engine really sent, which
     //                                the no-rollback rule forbids for displayed
-    //                                which B3 cannot recover (these were not lost
-    //                                to a disconnect).
+    //                                content and which the reconnect layer cannot
+    //                                recover (these were not lost to a disconnect).
     // So the test pins (1), and the assertion that the frames are *still* there,
     // exactly once, after readiness flips is what rules out (2).
     const h = makeScripted({ ready: false });
@@ -629,7 +629,7 @@ describe("disconnect mid-stream", () => {
     // instead of once, stops settling in-flight requests, or leaves `ingest`
     // accepting frames. This is the mid-stream drop read from the dropped side:
     // the *neighbour* keeps finishing (that is `multichannel.test.ts`'s), and
-    // connection has to say plainly that it is gone and that nothing it already
+    // this connection has to say plainly that it is gone and that nothing it
     // already delivered was rolled back.
     const h = makeScripted();
     const double = makeSocketDouble();
@@ -726,7 +726,7 @@ describe("disconnect mid-stream", () => {
     // so nothing fails visibly - but the timer stays scheduled, and it is the
     // *next* test that pays for it with a thirty-second timeout. This is the
     // leaked-timer defect class, asserted directly instead of waiting for the
-    // for the leak detector to notice.
+    // leak detector to notice.
     const h = makeScripted();
     const double = makeSocketDouble();
     const transport = trackTransport(createTransport(double.socket));

@@ -6,7 +6,8 @@
  *   src/types/**\/*.ts        the type index
  *   src/types/protocol_v2.ts  `WsProtocolMessage` / `WsProtocolCommand`
  *
- * Output, shaped like `extract-commands.mjs` so snapshot assembly consumes both identically:
+ * Output, shaped like `extract-commands.mjs` so snapshot assembly consumes both
+ * identically:
  *   {
  *     messages: [{ wire, type, home, fields, shapeFingerprint, health }],
  *     counts:   { unionMembers, wireMessages },
@@ -27,7 +28,7 @@
  *   - Fields follow the command-record convention: top-level properties only, sorted by
  *     name, raw type text, `optional` always present, `nested` / `readonly`
  *     only when true. `inbound` and `fieldLevel` are deliberately absent;
- *     adds them.
+ *     snapshot assembly adds them.
  *   - `file_ops` is dual direction: the same wire literal lives in
  *     `WsProtocolCommand` (c2s) and in `WsProtocolMessage` (s2c). Both
  *     directions are derived from declaration evidence, never assumed, and the
@@ -486,7 +487,7 @@ function buildUnresolvedMessageRecord(member) {
  * s2c evidence: the wire literal is one of the extracted message records.
  * Neither direction is hard-coded (F-07 is a fact to re-derive, not to copy).
  * Command-side member problems belong to `extract-commands.mjs`, so a scratch
- * swallows them; only the union itself is reported here.
+ * health accumulator swallows them; only the union itself is reported here.
  *
  * @param {object} index type index
  * @param {MessageRecord[]} messages extracted message records
@@ -545,8 +546,9 @@ function resolveFileOps(index, messages, health) {
 /**
  * Extract the message union and `file_ops` from one engine tree.
  *
- * `index` is optional so snapshot assembly can reuse one index for commands, messages and
- * parity instead of parsing `src/types` three times. The inbound OR chain is
+ * `index` is optional so snapshot assembly can reuse one index for commands,
+ * messages and parity instead of parsing `src/types` three times. The inbound OR
+ * chain is
  * delegated to `lib/inbound.mjs` and merged back, so this module stays the one
  * entry point snapshot assembly calls.
  *

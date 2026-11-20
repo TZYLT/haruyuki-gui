@@ -37,7 +37,7 @@ export type ChangeBase = {
   readonly subagentId: string | null;
   /** `runtime.conversation_id`; falls back to the merger's default. */
   readonly conversationId: string;
-  /** Arrival time (the B2 frame's `at`, not the engine's `emitted_at`). */
+  /** Arrival time (the event frame's `at`, not the engine's `emitted_at`). */
   readonly at: number;
 };
 

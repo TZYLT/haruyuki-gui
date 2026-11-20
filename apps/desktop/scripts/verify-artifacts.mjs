@@ -1,11 +1,11 @@
 /**
- * `W8-VERIFY` second script: did packaging produce what a user downloads?
+ * Second verify script: did packaging produce what a user downloads?
  *
  * This judge is deliberately separate from the round-one judge. Round one proves
- * judge. Round one proves the runtime tree and its lock exist; that is a
- * different claim from "there is an archive and an unpacked tree", and one
- * green does not imply the other. Collapsing them is the defect this item
- * exists to remove, so the two have two judges and two exit codes.
+ * the runtime tree and its lock exist; that is a different claim from "there is an
+ * archive and an unpacked tree", and one green does not imply the other.
+ * Collapsing them is the defect this item exists to remove, so the two have two
+ * judges and two exit codes.
  *
  *   node apps/desktop/scripts/verify-artifacts.mjs
  *

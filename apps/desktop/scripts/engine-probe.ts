@@ -213,7 +213,7 @@ async function main(): Promise<void> {
 
     // `stopGraceful`, not `stop`: the facade's name for the orderly path, and the one that
     // returns a promise. `kill` is the terminal alternative and is not what is being
-    // for -- the assertion is that a graceful stop works.
+    // judged here -- the point is that a graceful stop works.
     await engine.stopGraceful();
 
     const stopMs = Date.now() - stopAt;

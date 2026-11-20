@@ -16,7 +16,7 @@
  *
  * Everything here is producer side. The receiver lives in the renderer
  * (`packages/ui/src/bridge/entry.ts`) and cannot be shared: the renderer may
- * only type-import this package (rule R6), so the two halves agree by contract
+ * only type-import this package, so the two halves agree by contract
  * rather than by importing one implementation.
  */
 

@@ -21,7 +21,7 @@
  *                     array of strings, and nothing else.
  *
  * What is exposed is `window.haruyuki`, with exactly three members. Nothing from
- * freezes. Nothing from Electron is exposed alongside it: `ipcRenderer` alone
+ * Electron is exposed alongside it: `ipcRenderer` alone
  * would turn the allowlist into decoration, because a renderer holding it can
  * call any channel at all.
  */

@@ -30,7 +30,7 @@ import { Alert } from "../components/Alert.js";
 import type { AlertTone } from "../components/Alert.js";
 import { Button } from "../components/Button.js";
 
-/** The four situations `59` section 4.4 and 4.6 name. */
+/** The four situations that get a banner. */
 export type BannerScene = "layout" | "hiddenTabs" | "unknownPages" | "engineOffline";
 
 /**

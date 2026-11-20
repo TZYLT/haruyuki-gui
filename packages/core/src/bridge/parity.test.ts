@@ -5,13 +5,12 @@
  * Why this lives in `packages/core` and not in `scripts/`
  *   `scripts/` cannot resolve the workspace packages: `vitest` reports "Cannot
  *   find package '@haruyuki/core'" and `tsc -p scripts` reports TS2307, because
- *   there is no `scripts/node_modules` and no root link for the scoped names
+ *   there is no `scripts/node_modules` and no root link for the scoped names.
  *   `apps/*` is not collected by the test runner either. So the
  *   test has to live inside a package, and it has to live in the package that
  *   owns both sides of the comparison -- the sender under test and the doubles
- *   it is posted through. Putting it in `packages/ui` would have needed the R6
- *   test exemption to reach `core`, for a test that never exercises the
- *   renderer.
+ *   it is posted through. Putting it in `packages/ui` would have needed a test
+ *   exemption to reach `core`, for a test that never exercises the renderer.
  *
  * What "parity" means here
  *   Not "the two doubles agree with each other in summary", which

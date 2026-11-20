@@ -1,6 +1,5 @@
 /**
- * Tests for the per-conversation draft store (`send.ts`; docs/36 section 7
- * renderer-recovery-sequence/main-crash-record/-; docs/35 section 6.8).
+ * Tests for the per-conversation draft store.
  *
  * The store is exercised against a real `mkdtemp` directory and the real
  * `createNodeLayoutFs` for everything the contract says about files: the missing
@@ -8,7 +7,7 @@
  * shell keys. Two things are deliberately tested against an in-memory `LayoutFs`
  * instead: a write failure (a real filesystem cannot be made to fail on demand)
  * and the 10 MiB serialised-size eviction (the same ~11 MiB of text without
- * rewriting 20 MB of disk). That split is the point of the injectable `LayoutFs`
+ * rewriting 20 MB of disk). That split is exactly why `LayoutFs` is injectable,
  * not a shortcut around the real adapter.
  *
  * The clock is injected wherever a test depends on `updatedAt` order, because
@@ -443,7 +442,7 @@ describe("createDraftStore", () => {
   });
 });
 
-describe("a draft file with no version field (W3 R-06)", () => {
+describe("a draft file with no version field", () => {
   it("loads as v1, the same reading the layout store gives the same situation", async () => {
     const memory = createMemoryFs({
       [draftsPath]: JSON.stringify({
@@ -481,7 +480,7 @@ describe("a draft file with no version field (W3 R-06)", () => {
   });
 });
 
-describe("a failed draft backup (W3 R-03)", () => {
+describe("a failed draft backup", () => {
   it("keeps the store read-only instead of overwriting the only copy", async () => {
     const memory = createMemoryFs({ [draftsPath]: "{ this is not json" });
     memory.failCopies(true);

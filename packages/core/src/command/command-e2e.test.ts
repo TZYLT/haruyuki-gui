@@ -1,5 +1,5 @@
 /**
- * W-15's merged seam, with the engine replaced by a fake port.
+ * The command dispatcher's merged seam, with the engine replaced by a fake port.
  *
  * The fake is the **engine side** only: a `Channel.send` that answers the
  * command, and an `EngineEventFrame` that stands in for a terminal output. The
@@ -18,7 +18,7 @@ import { createEventMerger } from "../merge/event-merger.js";
 import { createCommandDispatcher } from "./dispatch.js";
 import type { CommandCall, CommandReply } from "./types.js";
 
-describe("W-15 command + frame seam", () => {
+describe("command + frame seam", () => {
   it("returns answered for a response capability", async () => {
     const send = vi.fn(async (_request: unknown) => ({
       ok: true as const,

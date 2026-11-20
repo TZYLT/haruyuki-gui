@@ -2,31 +2,30 @@
  * Corpus budget and version alignment.
  *
  * The fixture corpus is data, not code: `fixtures/**` is exempt from the file
- * size, boundary and ownership gates , so the corpus section 5.1 rule 1), so its size
- * and its version pin need an in-repo guard that runs in the ordinary test
- * segment. This file is that guard, and it is deliberately independent of
- * `pnpm fixtures:check`: the gate treats engine drift as an advisory `WARN`
- * , so the corpus `R-09`), while the corpus this task pins must agree with
- * `packages/protocol/src/contract/snapshot.json` or the test fails.
+ * size, boundary and ownership gates, so its size and its version pin need an
+ * in-repo guard that runs in the ordinary test segment. This file is that
+ * guard, and it is deliberately independent of `pnpm fixtures:check`: the gate
+ * treats engine drift as an advisory `WARN`, while the corpus pinned here must
+ * agree with `packages/protocol/src/contract/snapshot.json` or the test fails.
  *
  * The budget enforced below: one recording is at most 2 MB and 400 lines, and
- * most 2 MB and 400 lines, and the whole recording corpus is at most 4 MB. A
- * megabyte is 1024 * 1024 bytes here; the numbers are ceilings, not targets
- * (the recorded corpus is a few hundred kilobytes today).
+ * the whole recording corpus is at most 4 MB. A megabyte is 1024 * 1024 bytes
+ * here; the numbers are ceilings, not targets (the recorded corpus is a few
+ * hundred kilobytes today).
  *
  * What "absent pin" means: `snapshot.json` always carries an `engine` object in
- * this repository. If that pin were removed, silently returning would make
+ * this repository. If that pin were removed, silently returning would leave the
  * alignment check unenforced while the test stayed green, so the reader is told
  * explicitly that alignment cannot be judged. That is the one failure mode this
  * test must never swallow.
  *
  * Redaction: `scripts/check-fixtures.mjs` already rejects a missing or pre-`r1`
- * the gate runs in the `fixtures` segment which can be ordered before or after
- * the test segment; this file is the in-repo guard that CI ordering cannot skip.
- * Wire files must declare `r1` or later. Bridge-frame files have no `redaction`
+ * marker, but that gate runs in the `fixtures` segment, which can be ordered
+ * before or after the test segment; this file is the in-repo guard that CI
+ * ordering cannot skip. Wire files must declare `r1` or later. Bridge-frame
  * files have no `redaction` field in their header (see `FramesFixtureHeader`)
- * absent marker is legal there; an explicit `r0` is not, and would mean
- * unredacted content was copied in.
+ * and are hand-written, so an absent marker is legal there; an explicit `r0` is
+ * not, and would mean unredacted content was copied in.
  */
 
 import { readFile, readdir } from "node:fs/promises";
@@ -112,7 +111,10 @@ function countLines(text: string): number {
   return lines;
 }
 
-/** True when a header marker is `r1` or a later revision (the gate's rule). */
+/**
+ * True when a header marker is `r1` or a later revision (the rule
+ * `scripts/check-fixtures.mjs` applies).
+ */
 function isRedactedMarker(value: unknown): boolean {
   if (typeof value !== "string") {
     return false;
@@ -254,7 +256,7 @@ describe("fixture corpus budget", () => {
 
     expect(
       drift,
-      "a wire header must carry the engine pair the contract snapshot pins " +
+      "a wire header must carry the engine pair the contract snapshot pins; " +
         "re-record or re-pin deliberately, never drift",
     ).toEqual([]);
   });

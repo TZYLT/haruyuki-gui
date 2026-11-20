@@ -1,5 +1,5 @@
 /**
- * Tests for the bulk pager (C5).
+ * Tests for the bulk pager.
  *
  * The cases below are grouped around the four claims the implementation makes,
  * because each of them is a place where a "reasonable" pager would be wrong:

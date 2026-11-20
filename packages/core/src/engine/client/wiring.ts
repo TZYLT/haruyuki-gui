@@ -1,11 +1,6 @@
 /**
  * 接线层：把 transport、channel、pool、去重表接到 B1 的 `Engine` 门面上。
  *
- 
- 
- * 路径同时合上 transport"）、§3.6.2（`endpoint` 是开第 2..N 条连接的唯一来源），
- 
- *
  * ## 这一层为什么存在
  *
  * `channel.ts` 不碰 socket（它只认 `write` 端口），`transport.ts` 不碰命令（它
@@ -17,12 +12,13 @@
  *
  * 1. **去重表按通道隔离**：`OutboundDedupe` 曾经从未在
  *    真实栈里被构造。这里**每个通道持有一个实例**，不是模块级单例——单例会让两个
- *    agent 的同名 `request_id` 互相顶掉，那是 `` 要消灭的串台换到出站侧。
- * 2. **关闭路径合上 transport**（ §5.1）：冻结的 `Channel` 面上没有关闭事件，
+ *    agent 的同名 `request_id` 互相顶掉，那是「一 agent 一条连接」要消灭的串台
+ *    换到出站侧。
+ * 2. **关闭路径合上 transport**：冻结的 `Channel` 面上没有关闭事件，
  *    也没有 transport 的引用；`close()` 归内核，socket 归建了两者的人。少了这一半，
  *    `closeChannel(agentId)` 会留下一条活着的连接，也就是泄漏。
  * 3. **`getChannel` 是同步的，连接是异步的**：工厂必须在返回内核之后**继续**把连接
- *    建起来（`pool.ts` §5.1 裁定的同步签名），所以这里返回的通道一开始不 ready，
+ *    建起来（`pool.ts` 约定的同步签名），所以这里返回的通道一开始不 ready，
  *    连上之后才 ready——期间的 `send` 得到 `NOT_CONNECTED` 的"还没起来"措辞。
  * 4. **token 只作为脱敏词进入通道**：通道不需要端点，只需要知道"这些字永远不许进
  *    诊断"。`secrets` 就是它唯一该知道的那一半。
@@ -31,8 +27,8 @@
  *
  * - **零 wire id**：本文件不写任何帧字段名、命令名或
  *   事件名。它按能力名工作，而能力名→wire 的解析在 `send.ts` 里。
- * - **不自己 `new Engine`、不调用 `start`/`attach`**：门面由壳的 `engine-host` 起
- *   （master `seq 127`），这里只**读**它的 `endpoint`。
+ * - **不自己 `new Engine`、不调用 `start`/`attach`**：门面由壳的 `engine-host`
+ *   起，这里只**读**它的 `endpoint`。
  * - **不存端点**：`endpointOf` 每次现读，通道只拿到一次性传给工厂的那一份，用完
  *   就随闭包丢掉。
  */
@@ -72,7 +68,7 @@ import type {
  *
  * One member, not three. `state` is deliberately **not** read here: the facade
  * already gates `endpoint` on `ready`, and a second gate on this side would be a
- * gate on this side would be a second source of truth about readiness - exactly
+ * second source of truth about readiness - exactly the mistake that would have
  * come from proxying `socketState`.
  */
 export interface EndpointSource {
@@ -104,7 +100,7 @@ export type TransportOpener = (
  *
  * A **symbol**, so the three facts below stay off every surface that matters:
  * `Object.keys(channel)`, `JSON.stringify(channel)` and any accidental spread
- * cannot see them, which is the same reason the token never appears there
+ * cannot see them, which is the same reason the token never appears there. The
  * frozen `Channel` surface does not grow a
  * member for a test's convenience; the wiring attaches the handle instead.
  */
@@ -218,7 +214,7 @@ export interface WiringOptions {
  *
  * Only the classes that actually carry a correlation id are minted for. The five
  * wire-untracked capabilities must not enter any table (two keystrokes of the
- * the same key are two keystrokes, and a table entry would eat one), so they fall
+ * same key are two keystrokes, and a table entry would eat one), so they fall
  * out of this function with `undefined` and never reach {@link OutboundDedupe.claim}.
  *
  * @param request the caller's request
@@ -257,7 +253,7 @@ function correlationIdOf(request: CommandRequest, mint: () => string): string | 
  * The connection is started **after** the kernel exists (so `write` has something
  * to write through) and **without awaiting** it (the pool's `getChannel` is
  * synchronous by design). A failure to connect closes this one channel and
- * channel and nothing else.
+ * nothing else.
  *
  * The endpoint comes from `context.endpoint`, which the pool resolved from
  * `endpointOf` once per creation. It is used and dropped: this factory keeps the
@@ -438,8 +434,8 @@ export function createWiredChannelFactory(
       capabilities: () => engine.capabilities(),
       close: () => {
         // The half the frozen surface cannot express: the kernel first, so no
-        // first, so no frame is ingested into a closing channel, then the
-        // connection. Skipping the second line leaves the socket open - the leak
+        // frame is ingested into a closing channel, then the connection. Skipping
+        // the second line leaves the socket open - the leak that
         // `multichannel.test.ts` measures.
         engine.close();
         transport?.close();

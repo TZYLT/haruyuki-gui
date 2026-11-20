@@ -1,11 +1,6 @@
 /**
  * The send path: one typed request in, one wire frame out.
  *
- 
- 
- * 2.7c (the one reply frame that is not `<command>_response`) and 2.7d (the five
- 
- *
  * This module is a **pure function over data**. It owns no table, no timer, no
  * socket and no memory of past sends: everything stateful about a command lives in
  * `channel.ts`, which decides which class a send belongs to and mints the id. What
@@ -13,7 +8,7 @@
  * whether an id travels, and whether anything may be waited on afterwards.
  *
  * The boundary this module exists to hold: **a caller states a capability name
- * states a capability name and a body; the send path builds the rest.** A body
+ * and a body; the send path builds the rest.** A body
  * that tries to set a field the send path owns is refused, not merged and not
  * silently overwritten, because the forbidden thing is not "a bad value" but "a
  * caller assembling part of the envelope".
@@ -30,9 +25,10 @@
  *    `tracksInFlightWith`, whose `response` class already counts a correlated
  *    acknowledgement under whatever name it arrives. The reply name is carried
  *    in the result for the layers that read frames; it is optional here because
- *    the capability table's table does not register one yet (see `SendDeps.replyWireOf`).
- * 2. **The id decides the wait, so the decision takes two arguments**
- *     §2.7d). For the five capabilities whose wire declares `request_id`
+ *    the capability table does not register one yet (see
+ *    `SendDeps.replyWireOf`).
+ * 2. **The id decides the wait, so the decision takes two arguments.**
+ *    For the five capabilities whose wire declares `request_id`
  *    as optional, an omitted id means the engine sends no reply at all
  *    (`message-router.ts:342,366,380`). `tracksInFlightWith(name, idSent)` is the
  *    only correct question; `tracksInFlight(name)` answers "yes" for a command
@@ -58,7 +54,7 @@
  * (a field the peer does not read), so they stay off the wire and are still
  * *reserved* on the body side, because a caller putting one there would be doing
  * the client's envelope work. That tension with `RuntimeEnvelope` is stated here,
- * over.
+ * not papered over.
  */
 
 import type { CapabilityName } from "@haruyuki/protocol";
@@ -81,8 +77,8 @@ import type { CommandRequest, RuntimeScope } from "./types";
  *
  * `type` and `request_id` are the two the wire actually carries for a command.
  * The remaining three are the envelope fields the client owns; they are not
- * are not emitted (see the module header) but they are still refused, because a
- * caller writing one into a body is doing envelope work through the one channel
+ * emitted (see the module header) but they are still refused, because a caller
+ * writing one into a body is doing envelope work through the back door this
  * module closes.
  */
 const ENVELOPE_OWNED_KEYS = [
@@ -160,7 +156,7 @@ export type OutgoingFrame = {
    * Whether the caller's `timeoutMs` was cut to the 10x cap.
    *
    * Exposed rather than acted on: a defensive parameter must not cost the caller
-   * parameter must not cost the caller their command, so the cap is a fact to
+   * their command, so the cap is a fact to
    * report, not a failure to return.
    */
   readonly clamped: boolean;
@@ -171,9 +167,9 @@ export type OutgoingFrame = {
    * `undefined` does not mean "no reply is coming" - that question is answered by
    * {@link OutgoingFrame.tracksInFlight}. It means "this build has no registered
    * name for it", which is the state of the capability table today: `replyWire`
-   * part of `CapabilityEntry`. Nothing below reads this field back, so leaving it
+   * is not part of `CapabilityEntry`. Nothing below reads this field back, so
    * leaving it unknown cannot mis-time a send; it is carried so the frame reader
-   * diagnostics can name the expected answer once the registration lands.
+   * and diagnostics can name the expected answer once the registration lands.
    */
   readonly replyWire: string | undefined;
 };
@@ -187,9 +183,10 @@ export type OutgoingFrame = {
  * applied", "the reply name came from the registry") should be able to state the
  * input instead of hunting for a capability that produces it.
  *
- * Neither port may become a source of truth. `resolveTimeoutOf` replaces ,
- * it does not replace the decision to call ; and a `replyWireOf` that returns
- * nothing changes no bit of the frame - see the module header on trap 1.
+ * Neither port may become a source of truth. `resolveTimeoutOf` replaces the
+ * resolver in tests, it does not replace the decision to resolve a timeout; and
+ * a `replyWireOf` that returns nothing changes no bit of the frame - see the
+ * module header on trap 1.
  */
 export interface SendDeps {
   /**
@@ -203,7 +200,7 @@ export interface SendDeps {
   readonly replyWireOf?: (name: CapabilityName) => string | undefined;
   /**
    * Resolves one request's budget. Defaults to `resolveTimeout` (`timeouts.ts`),
-   * family table and the 10x clamp keep one home.
+   * so the family table and the 10x clamp keep one home.
    */
   readonly resolveTimeoutOf?: (name: CapabilityName, requestedMs?: number) => ResolvedTimeout;
 }
@@ -216,9 +213,10 @@ export interface SendDeps {
  * caller **must** decide arrives on the request: which capability, which body,
  * which scope, which explicit id and which timeout override.
  *
- * Invalid input throws rather than producing a wrong frame. That is the one
- * exception docs/26 §6.1 allows for `send` ("不抛异常（入参非法除外）"), and the
- * cases are all cases where the alternative is a frame that reaches the engine
+ * Invalid input throws rather than producing a wrong frame. `send` never rejects
+ * otherwise; this is its one documented exception ("does not throw, except for
+ * an invalid argument"), and the cases are all cases where the alternative is a
+ * frame that reaches the engine
  * as something nobody asked for: an unknown capability (no wire id, so the frame
  * would have no `type` at all), a non-object body (no named fields to merge), a
  * body that sets an envelope field, a scoped capability with no scope, or a
@@ -383,8 +381,7 @@ function refuseEnvelopeKeys(
 
   throw new TypeError(
     `${name}: body must not set ${taken.join(", ")}. Those fields are built by the send path ` +
-      "from the request itself (docs/26 D-06, diagnostic-bundle-tree), so a body that sets one is assembling part " +
-      "of the envelope",
+      "from the request itself, so a body that sets one is assembling part of the envelope",
   );
 }
 
@@ -429,7 +426,7 @@ function requestIdOf(
   }
 
   // The caller's explicit id wins over the mint ("except for an explicit
-  // mint is a convenience, the parameter is a decision.
+  // argument"): the mint is a convenience, the parameter is a decision.
   const supplied = nonEmptyId(request.requestId) ?? nonEmptyId(mintedId);
 
   if (supplied !== undefined) {

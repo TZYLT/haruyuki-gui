@@ -164,8 +164,7 @@ describe("signed fixtures", () => {
     const { doc: validated, unknownPageIds } = accept(fixture, KNOWN_PAGE_IDS);
 
     expect(validated).toEqual(fixture);
-    // `vendor.closed` is hidden; it is still unknown and still listed (docs/36
-    // section 4.3.9, the warning contract).
+    // `vendor.closed` is hidden; it is still unknown and still listed.
     expect(unknownPageIds).toEqual(["vendor.future", "vendor.closed"]);
   });
 
@@ -174,7 +173,7 @@ describe("signed fixtures", () => {
     const topRight = findPanel(validated.root, "top-right");
 
     // An empty panel is legal, and carrying no `activeTabId` is the right
-    // `activeTabId` is the right shape for it: there is nothing to select.
+    // shape for it: there is nothing to select.
     expect(topRight.tabs).toEqual([]);
     expect("activeTabId" in asRecord(topRight)).toBe(false);
 
@@ -357,7 +356,7 @@ describe("limits", () => {
 
   /**
    * The four numbers are requirements, not implementation choices. They are
-   * choices. They are pinned by literal so that lowering a constant fails here
+   * pinned by literal so that lowering a constant fails here
    * instead of quietly lowering the product's promise.
    */
   it("carries the four documented limits", () => {
@@ -529,7 +528,7 @@ describe("active selection soft repair", () => {
   });
 });
 
-describe("soft repairs leave a trace (W3 R-12)", () => {
+describe("soft repairs leave a trace", () => {
   it("logs LAYOUT_REPAIRED when a dangling activePanelId is rewritten", () => {
     const value = simpleDoc();
 
@@ -538,7 +537,7 @@ describe("soft repairs leave a trace (W3 R-12)", () => {
     const entries: Array<{ code: string; detail: Record<string, unknown> | undefined }> = [];
 
     // A soft repair changes a selection the user can see, so it is logged
-    // see, so it is logged instead of happening silently.
+    // instead of happening silently.
     validateLayoutDoc(value, KNOWN_PAGE_IDS, (code, detail) => {
       entries.push({ code, detail });
     });

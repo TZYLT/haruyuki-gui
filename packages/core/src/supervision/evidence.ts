@@ -1,9 +1,10 @@
 /**
  * Process evidence collection for a PID recorded by an earlier shell run.
  *
- * Evidence source: docs/33-D4 section 3.3 (measured commands and timings) and
- * section 4.4 (field semantics). The goal is to answer "is this PID still the
- * engine that marker describes?" without ever relying on the PID alone.
+ * Evidence source: the measured platform commands and timings, together with
+ * the field semantics of `ProcessEvidence`. The goal is to answer "is this PID
+ * still the engine that marker describes?" without ever relying on the PID
+ * alone.
  *
  * This file owns the public contract and the decision wiring. The measured
  * platform commands and their parsers live in `identity.ts`: the Windows
@@ -14,8 +15,9 @@
  * Commands are executed directly (never through a shell): the PID is numeric by
  * construction and no argument is user-controlled text.
  *
- * `portListening` is always `false`: B1 exposes no engine port, so D4 writes
- * `port: null` and does not scan ports (RD-07). It is not part of the decision.
+ * `portListening` is always `false`: the shell exposes no engine port, so the
+ * evidence writes `port: null` and does not scan ports. It is not part of the
+ * decision.
  */
 
 import { execFile } from "node:child_process";
@@ -106,7 +108,7 @@ function finalizeEvidence(
     alive: facts.alive,
     imagePath: facts.imagePath,
     createdAt: facts.createdAt,
-    // Correlation only: there is no way to read a foreign process's token, and
+    // Correlation only: there is no way to read a foreign process's token, so
     // `runToken` is never evidence on its own.
     runToken: marker.runToken,
     tokenFileExists: facts.tokenFileExists,

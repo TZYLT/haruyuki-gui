@@ -7,7 +7,7 @@
  *   agent gets, what `channels()` says, what a close rebuilds, arguments, clocks.
  * - `pool-failure.test.ts` - the reason the pool exists at all: one agent's
  *   connection failing must not disturb its neighbours, and a connection that
- *   a connection that cannot be built must still yield a channel.
+ *   cannot be built must still yield a channel.
  * - this file - what both need: the fake-clock pool harness, the channel double,
  *   and teardown.
  *

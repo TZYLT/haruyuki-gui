@@ -3,7 +3,7 @@
  *
  * Scope: the two line formats a fixture can have - the `wire` format, validated
  * by `fixtures/engine/replay.mjs`, and the `frames` format, checked in this
- * for the same shapes as a data snapshot.
+ * module - plus the types below that the rest of the suite consumes.
  *
  * `fixtures/engine/replay.mjs` owns wire validation - the header, `dir`, `at`,
  * `msg` and the 1-based line number in every error - so this module delegates to

@@ -3,8 +3,8 @@
  *
  * The truth table is the contract: a live PID alone is never confident, one
  * identity fact needs the token file as a second fact, and both identity facts
- * must agree. `portListening` is asserted to be irrelevant because D4 cannot
- * observe the port (RD-07).
+ * must agree. `portListening` is asserted to be irrelevant because the shell
+ * cannot observe the port.
  *
  * The kill cases use a real `node -e` child spawned by this test and its
  * recorded PID; no existing process is ever targeted.

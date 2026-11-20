@@ -7,8 +7,8 @@
  *
  *   counts            115 / 124 / 136 / 124 / 0 / 14 / 12
  *   fieldLevel        whatever `detail: true` currently registers (table B keeps
- *                     table B to the same file while this pack is in flight, so
- *                     the expectation is computed from the file, never 39)
+ *                     growing in the same file, so the expectation is computed
+ *                     from the file, never 39)
  *   file_ops          one command record with two directions and one message
  *   health            one coarse message line, not degraded, deduplicated
  *
@@ -183,8 +183,9 @@ function parseDetailWires(text) {
 /**
  * Build the snapshot twice from identical capabilities bytes.
  *
- * `send.ts` owns the same file and may append table B at any moment; an unstable read
- * would make the determinism case flaky for a reason that is not a snapshot assembly defect.
+ * The capabilities table is edited elsewhere and may gain table B at any moment;
+ * an unstable read would make the determinism case flaky for a reason that is not
+ * a snapshot-assembly defect.
  * The loop retries while the file text changes, then falls back to one frozen
  * copy so both builds share their input. The temp copy is removed as a single
  * file; the temp directory is left to the OS temp area.

@@ -131,13 +131,13 @@ export interface DroppedFileReport {
 export const BRIDGE_VERSION = "1" as const;
 
 /**
- * The channel names D3 registers, in one place so the preload allowlist, the
- * main-process handlers and the renderer's subscriptions cannot drift apart.
+ * The channel names the bridge registers, in one place so the preload allowlist,
+ * the main-process handlers and the renderer's subscriptions cannot drift apart.
  *
  * The frame envelope and the three frame channels (`control`, `stream`, `bulk`)
  * are frozen. These names are IPC pipes, not frame types: a frame's `ch` says
- * a frame's `ch` says which semantic channel it belongs to, while these names
- * say which `ipcRenderer` channel carries the serialized string.
+ * which semantic channel it belongs to, while these names say which
+ * `ipcRenderer` channel carries the serialized string.
  */
 export const BRIDGE_CHANNEL_NAMES = Object.freeze({
   frameSubmit: "bridge:control.frame.submit",
@@ -157,14 +157,13 @@ export const BRIDGE_CHANNEL_NAMES = Object.freeze({
 /**
  * The channels the main process answers.
  *
- * D1 registers one, because the shell had no real IPC yet. `ping` stays: it is
- * the channel that makes the allow *and* deny paths exercisable -- with an empty
- * list every call would be refused and the accept path would be untested code.
- * D2 appends the dropped-file report (the preload's `File` conversion). D4
- * appends the three diagnostics commands (`33` section 4.3), registered by
- * `main/diagnostics/ipc.ts`. D3 appends its seven (frame submit/deliver, layout
- * save, terminal ack/notice), registered by `main/bridge/register.ts`. Channels
- * grow; the contract freezes the three members, not this list.
+ * `ping` is the first and stays: it is the channel that makes the allow *and*
+ * deny paths exercisable -- with an empty list every call would be refused and
+ * the accept path would be untested code. Then come the three diagnostics
+ * commands, registered by `main/diagnostics/ipc.ts`; the dropped-file report
+ * (the preload's `File` conversion); and the seven bridge channels (frame
+ * submit/deliver, layout save, terminal ack/notice), registered by
+ * `main/bridge/register.ts`. Channels grow; the three members do not.
  *
  * Frozen at runtime as well as in the type, because the same array is handed to
  * the renderer through the bridge and read as a diagnostic: a renderer that
@@ -175,10 +174,10 @@ export const CHANNEL_ALLOWLIST: readonly string[] = Object.freeze([
   DIAGNOSTICS_CHANNELS.export,
   DIAGNOSTICS_CHANNELS.relaunch,
   DIAGNOSTICS_CHANNELS.quit,
-  // D2's one addition. The drop listener runs inside the preload (a `File` cannot be
-  // read from the main process at all), so this channel carries an already-converted
+  // The dropped-file report. The drop listener runs inside the preload (a `File`
+  // cannot be read from the main process at all), so this channel carries an
   // already-converted `{name, path}[]` rather than files. The bridge is frozen at
-  // *members*; channels grow, members do not.
+  // three *members*; channels grow, members do not.
   DROPPED_FILES_CHANNEL,
   BRIDGE_CHANNEL_NAMES.frameSubmit,
   BRIDGE_CHANNEL_NAMES.frameDeliver.control,

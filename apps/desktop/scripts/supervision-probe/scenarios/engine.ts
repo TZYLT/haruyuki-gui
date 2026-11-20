@@ -1,9 +1,9 @@
 /**
  * A real engine child, started through the shell's own host, killed while ready,
- * while ready, then started once more and stopped normally.
+ * then started once more and stopped normally.
  *
- * The crash half proves `lastExit`/`stderrTail` and the engine `CrashRecord` (with
- * the `?crash=engine` route); the normal half proves that an orderly stop is not a
+ * The crash half proves `lastExit`/`stderrTail`, the engine `CrashRecord` and the
+ * `?crash=engine` route; the normal half proves that an orderly stop is not a
  * crash and reports whatever the OS exposed, or `null`.
  */
 
@@ -53,9 +53,9 @@ interface EngineObservation {
 
 /**
  * Start the real engine through the shell's host, kill it while ready, and
- * ready, and observe the exit, the stderr tail, the CrashRecord and the crash
- * query. Then start it once more and stop it normally, reporting `lastExit`
- * exactly as the OS exposed it (or null).
+ * observe the exit, the stderr tail, the CrashRecord and the crash query. Then
+ * start it once more and stop it normally, reporting `lastExit` exactly as the OS
+ * exposed it (or null).
  *
  * @returns what was observed while the engine was ready, or null when it never
  * started (both ids still get a FAIL line)
@@ -170,7 +170,11 @@ async function checkEngine(): Promise<EngineObservation | null> {
           `query=${query}${pageUrl === null ? " pageUrl=renderer-unavailable" : ` url=${new URL(pageUrl).search}`}`,
       );
     } else {
-      record("engine-crash-record", "FAIL", crashProblems.join("; ") || "unknown engine crash failure");
+      record(
+        "engine-crash-record",
+        "FAIL",
+        crashProblems.join("; ") || "unknown engine crash failure",
+      );
     }
 
     // A normal stop is a different path: the caller asked for it, so the crash
@@ -191,7 +195,11 @@ async function checkEngine(): Promise<EngineObservation | null> {
     });
 
     if (!normalStarted.ok) {
-      recordOnce("engine-stop-exit-record", "FAIL", `the second engine start failed: ${normalStarted.reason}`);
+      recordOnce(
+        "engine-stop-exit-record",
+        "FAIL",
+        `the second engine start failed: ${normalStarted.reason}`,
+      );
       return observation;
     }
 
@@ -209,9 +217,17 @@ async function checkEngine(): Promise<EngineObservation | null> {
     if (crashProblems.length > 0) {
       recordOnce("engine-stop-exit-record", "FAIL", crashProblems.join("; "));
     } else if (!stop.stopped) {
-      recordOnce("engine-stop-exit-record", "FAIL", `the engine did not stop: ${stop.reason ?? "unknown"}`);
+      recordOnce(
+        "engine-stop-exit-record",
+        "FAIL",
+        `the engine did not stop: ${stop.reason ?? "unknown"}`,
+      );
     } else if (!Array.isArray(normalTail)) {
-      recordOnce("engine-stop-exit-record", "FAIL", "stderrTail is not readable after a normal stop");
+      recordOnce(
+        "engine-stop-exit-record",
+        "FAIL",
+        "stderrTail is not readable after a normal stop",
+      );
     } else {
       recordOnce(
         "engine-stop-exit-record",

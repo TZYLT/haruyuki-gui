@@ -2,12 +2,10 @@
  * observation.ts - post a frame stream through one transport double and record
  * what arrived.
  *
- * Scope sources: docs/18-A3 section 3.4.4 (the frozen `Observation` and
- * `TransportDouble` shapes), section 5.1 rule 4 ("a double moves frames; the
- * harness records them") and section 7 `R-06` (the two doubles use different
- * async granularity) plus section 8 (`INV-A3-4`, `INV-A3-8`). Frame rules:
- * docs/01-3 section 3.3. Requirement side: docs/17-A3 sections 4.3 and 5.1
- * .
+ * Scope: the `Observation` and `TransportDouble` shapes the comparison harness
+ * compares. Two rules shape this module: a double moves frames and the harness
+ * records them, and the two doubles use different async granularity, so a
+ * cross-channel race cannot be mistaken for an artefact of the harness.
  *
  * The frozen `Observation.rejected` entry is `{ raw, reason: "not-json" }`.
  * That shape can describe raw text that failed to parse, but it cannot honestly
@@ -16,7 +14,7 @@
  * `onReject` option (see `transport/delivery.ts`), so this module keeps the
  * frozen `rejected` list for text that really is not JSON and adds one optional
  * field, `transportRejections`, for everything the double refused. The addition
- * is reported for the route doc; it is not a widening of the frozen list.
+ * is a separate optional field; it is not a widening of the frozen list.
  *
  * A rejected frame is never dropped silently. A double built by
  * {@link createObservedDouble} reports every rejection; a double built
@@ -119,7 +117,7 @@ export function createObservedDouble(
  * delivery queues to drain, unsubscribes and returns. It never calls `close`.
  *
  * Arrival order is what the double chose. The observation records it as it is
- * (INV-A3-8 does not promise cross-channel order); comparison is the layer that
+ * (the bridge does not promise cross-channel order); comparison is the layer that
  * avoids asserting an order the bridge never promises.
  *
  * @param double Transport double, ideally from {@link createObservedDouble}.

@@ -4,7 +4,7 @@
  * The schema is deliberately small and transport-neutral: it is what the
  * renderer stores, what core validates, and what the VSCode shell must be able
  * to read without a second schema. Unknown keys at every level are preserved by
- * the validator; this file only names the keys C4 itself understands.
+ * the validator; this file only names the keys the core validator understands.
  */
 
 /** The only document version v1 reads or writes. */
@@ -58,11 +58,11 @@ export type LayoutPanel = {
   extras?: Record<string, unknown>;
 };
 
-/** One tab. `pageId` is opaque to C4; the caller's registry decides known/unknown. */
+/** One tab. `pageId` is opaque to the layout layer; the caller's registry decides known/unknown. */
 export type LayoutTab = {
   tabId: string;
   pageId: string;
-  /** Page-owned props; C4 preserves them and never interprets them. */
+  /** Page-owned props; the layout layer preserves them and never interprets them. */
   props?: Record<string, unknown>;
   /** An unknown panel that the user closed: not rendered, still present. */
   hidden?: boolean;

@@ -149,7 +149,7 @@ describe("waitForWsUrl", () => {
     stream.destroy();
 
     // Compile-time: the local code is a member of the frozen taxonomy, so the
-    // can map it onto EngineErrorCode without a cast or a translation table.
+    // facade can map it onto EngineErrorCode without a cast or a translation table.
     const mapped: EngineErrorCode = error.code;
     expect(mapped).toBe("PORT_NOT_FOUND");
 

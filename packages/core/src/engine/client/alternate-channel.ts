@@ -1,21 +1,18 @@
 /**
- * The second `ChannelPool` implementation: the  counterpart of
- * `pool.ts`.
+ * The second `ChannelPool` implementation, a counterpart of `pool.ts`.
  *
- * Shape source: `` section 5.1 (the frozen `ChannelPool` signature),
- * section 3.1 (the layer split), section 6.2 (`the bridge`) and the  claim in
- * `docs/26` section 5.1: **swapping the pool implementation changes one layer
- * and nothing above it**. The alternate implementation is this file a *comparison artifact* only
- * - it lives under `client/`, next to the suite that runs it, and is exported
- * from no barrel. Production keeps {@link EngineChannelPool}.
+ * The frozen `ChannelPool` signature is the contract, and the claim this file
+ * exists to test is: **swapping the pool implementation changes one layer and
+ * nothing above it**. This file is a *comparison artifact* only - it lives under
+ * `client/`, next to the suite that runs it, and is exported from no barrel.
+ * Production keeps {@link EngineChannelPool}.
  *
- * `` is the reason this is not the "one connection, many subscriptions"
- * pool the design note originally sketched: the user ruling replaced that idea
- * with "one connection per agent", so the alternate must be *that same shape*
- * with different machinery inside. The public surface is the frozen
- * {@link ChannelPool} interface and nothing else; every difference below is
- * invisible to a caller, which is exactly what  claims and what the
- * differential suite exists to measure.
+ * This is not the "one connection, many subscriptions" pool an early sketch
+ * proposed: the intended shape is "one connection per agent", so the alternate
+ * must be *that same shape* with different machinery inside. The public surface
+ * is the frozen {@link ChannelPool} interface and nothing else; every difference
+ * below is invisible to a caller, which is exactly the claim the differential
+ * suite exists to measure.
  *
  * ## The four deliberate differences from `pool.ts`
  *
@@ -549,9 +546,9 @@ export class AlternateChannelPool implements ChannelPool {
    * with no endpoint yet is not enrolled.** It gets a fresh stand-in, and the
    * stand-in is not remembered, so `channels()` stays empty and the next call
    * re-resolves. The endpoint is non-null only while the engine is ready, so "no
-   * ready, so "no endpoint" is a few hundred milliseconds of normal startup, not
-   * a property of the agent; enrolling it would turn that interval into a
-   * lifetime sentence that the caller cannot distinguish from a dead transport.
+   * endpoint" is a few hundred milliseconds of normal startup, not a property of
+   * the agent; enrolling it would turn that interval into a lifetime sentence
+   * that the caller cannot distinguish from a dead transport.
    * The production pool had this defect and this file copied it - which is the
    * case the comment at the top of `alternate-channel.test.ts` records, because a
    * differential suite is structurally unable to catch two implementations that
@@ -686,11 +683,11 @@ export class AlternateChannelPool implements ChannelPool {
    * provisional, so the next call re-resolves and can connect.
    *
    * That asymmetry is the whole point. The endpoint is non-null only while the
-   * while the engine is ready, and the engine is handshaking at startup, so "no
-   * endpoint yet" describes a few hundred milliseconds of normal operation, not a
-   * property of the agent. Caching the stand-in turns that interval into a
-   * lifetime sentence: the agent answers `NOT_CONNECTED` until something closes
-   * it, and the caller has no way to tell that from a genuinely dead transport.
+   * engine is ready, and the engine is handshaking at startup, so "no endpoint
+   * yet" describes a few hundred milliseconds of normal operation, not a property
+   * of the agent. Caching the stand-in turns that interval into a lifetime
+   * sentence: the agent answers `NOT_CONNECTED` until something closes it, and the
+   * caller has no way to tell that from a genuinely dead transport.
    * The production pool had exactly this defect, and this implementation copied
    * it - see the note at the top of `alternate-channel.test.ts` on why a
    * differential suite could not catch it.
@@ -851,9 +848,9 @@ export class AlternateChannelPool implements ChannelPool {
    * Builds one channel, degrading to a not-connected one on a runtime failure.
    *
    * The catch is the endpoint seam's promise: whatever the resolver returns -
-   * the resolver returns - nothing yet, a wrongly shaped value, or a throw - the
-   * caller still gets a `Channel`, and it answers `NOT_CONNECTED` with the "has
-   * not become ready" wording a reconnect policy can tell apart from "dropped".
+   * nothing yet, a wrongly shaped value, or a throw - the caller still gets a
+   * `Channel`, and it answers `NOT_CONNECTED` with the "has not become ready"
+   * wording a reconnect policy can tell apart from "dropped".
    *
    * @param entry the slot being built
    * @returns the built channel, or a degraded stand-in
@@ -887,8 +884,8 @@ export class AlternateChannelPool implements ChannelPool {
    *
    * A throw from the resolver or the factory is treated as "this agent cannot be
    * opened right now" rather than propagated: the endpoint seam changes nothing
-   * endpoint seam changes nothing for the caller, so whatever the resolver does,
-   * the pool still hands out a `Channel`.
+   * for the caller, so whatever the resolver does, the pool still hands out a
+   * `Channel`.
    *
    * @param entry the slot to build for
    * @returns the built channel, or `undefined` when there is nothing to build yet

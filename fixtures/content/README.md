@@ -43,7 +43,7 @@ Rules for a new case:
   spelled out so a block snapshot can be read without running the code;
 - keep values synthetic: no real path, address, host name, token or text.
 
-The test file also enforces the cross-corpus invariants: the V-01 classes are
+The test file also enforces the cross-corpus invariants: the message classes are
 each proved by a required fixture file, no prose block or notice span carries
 the agent-only XML, an unknown message type always surfaces as an `unknown`
 block, a call with no final return never claims success, ids stay unique, every

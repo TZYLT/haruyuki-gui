@@ -1,9 +1,5 @@
 /**
- * Replay - the replay corpus rebuilds the recorded event sequence .
- *
- * Scope sources: docs/26 section 5.1 (Replay: order, type and count all unchanged),
- *  section 2.5 (the replayer's four measured limits), section 2.10 (the
- * corpus facts) and section 6.4 (the `test` budget).
+ * The replay corpus rebuilds the recorded event sequence.
  *
  * ## What this suite is evidence *for*
  *
@@ -40,8 +36,9 @@
  *   multiset stays unchanged - that pair is exactly what a `toHaveLength`-only
  *   assertion cannot see, so the case is the proof that the order assertion is
  *   doing the work.
- * - **Types without wire literals.**  scans this whole directory, so the
- *   engine's type names must not be written down here.) A type reaches this file
+ * - **Types without wire literals.** (This whole directory is scanned for wire
+ *   ids, so the engine's type names must not be written down here.) A type reaches
+ *   this file
  *   as `frame.eventType`, read off the corpus; the assertions compare *sequences
  *   of strings*, which needs no spelling. "19 distinct kinds" is checked as a
  *   count and as a set equality against the corpus, never as a list of literals.
@@ -404,9 +401,9 @@ describe("the rebuilt sequence matches the recording", () => {
 
   it("keeps a single subscriber's frame count equal to the plan's", async () => {
     // Red when: delivery is silent to the only subscriber (the "not lost" half of
-    // half), or when the channel holds a frame back waiting for a correlation -
+    // the delivery guarantee), or when the channel holds a frame back waiting for
     // a correlation - replay never answers a command, so every recorded frame must
-    // recorded frame must arrive as an event.
+    // arrive as an event.
     //
     // One subscriber, one connection on purpose: a second *subscriber* would need
     // a second channel and therefore a second socket, and the replayer serves one
@@ -438,7 +435,7 @@ describe("the rebuilt sequence matches the recording", () => {
     // subscriber, or a second subscriber's registration changes the first one's
     // view. One connection, several subscribers: that distinction is the point,
     // since the replayer cannot serve a second socket but a channel can fan out
-    // 27) but a channel can fan out freely.
+    // freely.
     const turn = richestTurn(await corpus());
     const session = await startReplaySession({ connect: false, turn });
     const second: string[] = [];
@@ -517,7 +514,7 @@ describe("pacing comes from the recording and costs no wall clock", () => {
     // Red when: the harness starts passing `"instant"`. With that default the plan
     // requests nothing, so the pacing case above would become a tautology while
     // still passing. That mistake has been measured before, which is why this case
-    // exactly this mistake).
+    // exists.
     const turn = richestTurn(await corpus());
     const replay = await loadReplayModule();
     const paced = replay.buildReplaySteps(turn.fixture, { speed: 1 });
@@ -710,7 +707,7 @@ describe("the assertions above can fail (planted order changes)", () => {
 
   it("refuses a reorder that would swap two frames of the same type", () => {
     // The equivalent-mutant trap: a planted change that cannot alter the asserted
-    // alter the asserted sequence proves nothing. Two adjacent frames of one type
+    // sequence proves nothing. Two adjacent frames of one type
     // are indistinguishable in the type sequence, so the helper must *skip* such a
     // pair and pick a differing one - and must refuse outright when no differing
     // pair exists.
@@ -800,7 +797,7 @@ describe("sessions leave nothing behind", () => {
 
     // `connect` is idempotent too: calling it twice must not open a second socket.
     // The replayer serves one live connection, so a second socket would receive
-    // second socket would receive nothing - the frames would silently stop. The
+    // nothing - the frames would silently stop. The
     // attempt counter is what makes the guard observable; `isConnected` alone stays
     // true even when a second socket was opened behind it.
     await session.connect();
@@ -850,12 +847,10 @@ describe("sessions leave nothing behind", () => {
     // so every subscriber attached later receives the frames the first one already
     // took. This is the path the instant clock exercises and no ordinary test can:
     // because the clock never waits, part of the recording is pushed during the
-    // upgrade and is waiting when `openTransport` resolves . The pool itself 2.5
-    // fact 23).
+    // upgrade and is waiting when `openTransport` resolves.
     //
     // The rule is `splice`, deliberately the single mechanism - see
-    // `openTransport`'s own comment and docs/28 `E-130`/`R-084`: two guards over one
-    // mistake hide each other.
+    // `openTransport`'s own comment: two guards over one mistake hide each other.
     const turn = richestTurn(await corpus());
     const session = await startReplaySession({ turn });
     const late: string[] = [];

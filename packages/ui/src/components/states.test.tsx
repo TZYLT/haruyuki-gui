@@ -128,7 +128,7 @@ describe("EmptyState", () => {
   });
 
   it("takes no decision about when to appear", () => {
-    // A4-Q22: the component draws, the page decides. There is no items prop and no
+    // The component draws, the page decides. There is no items prop and no
     // length check to accidentally encode a policy here.
     const props = Object.keys({ title: 1, description: 1, action: 1, icon: 1 } as const);
 

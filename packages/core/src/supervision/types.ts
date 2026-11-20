@@ -3,7 +3,7 @@
  *
  * Shape source: the on-disk records -- `RuntimeMarker`, `EngineMarker`,
  * `ProcessEvidence` and `StaleEngineRecord`. These are on-disk contracts, not
- * on-disk contracts, not just in-memory types: the writer and the reader run in
+ * just in-memory types: the writer and the reader run in
  * different processes, possibly different builds, so field names and semantics
  * cannot drift silently. Readers ignore unknown fields, which is what makes the
  * "fields may only grow" rule workable.
@@ -46,9 +46,9 @@ export interface EngineMarker {
   /** Random token that correlates a marker with one shell run; local only. */
   runToken: string;
   watchdog: "active" | "inactive" | "unknown";
-  /** B1 token file path; local only, never part of a diagnostics archive. */
+  /** Token file path; local only, never part of a diagnostics archive. */
   tokenFile: string | null;
-  /** Engine port; always `null` in D4 because B1 exposes no port (RD-07). */
+  /** Engine port; always `null` because the shell exposes no port. */
   port: number | null;
 }
 
@@ -60,7 +60,7 @@ export interface EngineMarker {
  * the executable path; the token file is a third, weaker fact used only when one
  * of the two identity facts is unavailable. `runToken` correlates the evidence
  * with the marker but is never proof. `portListening` is always `false` and is
- * always `false` in D4 and is not part of the decision (RD-07).
+ * not part of the decision.
  */
 export interface ProcessEvidence {
   pid: number;

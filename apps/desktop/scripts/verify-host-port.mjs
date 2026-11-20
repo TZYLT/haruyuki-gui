@@ -11,7 +11,7 @@
  * What this script deliberately does not check, and why:
  *
  *   Notification *visibility* needs an installed Start Menu entry, which belongs to
- *   packaging (requirement T-3). Constructing one is all a machine can answer here.
+ *   packaging. Constructing one is all a machine can answer here.
  *
  *   The file dialog is never shown: waiting for a human to dismiss it is how a probe
  *   hangs. Reachability is the half that can be checked.

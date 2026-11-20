@@ -3,8 +3,7 @@
  *
  * This module is the policy layer. `@haruyuki/core/supervision` owns the marker
  * file format, the process-evidence collection and the two-condition decision;
- * this file only chooses what a shell start-up does with those answers
- * (docs/33-D4 sections 4.4, 5.2 and 5.4).
+ * this file only chooses what a shell start-up does with those answers.
  *
  * The order matters and is the requirement's, not an implementation preference:
  *

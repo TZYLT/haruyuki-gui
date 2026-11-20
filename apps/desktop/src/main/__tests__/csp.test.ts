@@ -15,9 +15,9 @@ describe("CSP", () => {
 
   it("changed only by addition: every D1 directive is still there, and unchanged", () => {
     // This is the assertion that makes "only add, never remove" checkable rather
-    // than a promise. The requirement allows D2 to add a scheme to three
+    // than a promise. The requirement allows a scheme to be added to three
     // directives and forbids changing any existing value; the frozen contract stays
-    // compatible precisely because `D1`'s semantics are unchanged).
+    // compatible precisely because the existing semantics are unchanged.
     //
     // Adding a source to `img-src` does change that directive's value, which is
     // why the distinction has to be written down: "only add" means the *previous

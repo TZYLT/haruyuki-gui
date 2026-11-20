@@ -366,9 +366,9 @@ export interface ReflectionSettingsSnapshot {
   readonly everyUserMessages?: number;
   readonly deleteSessionOnSuccess?: boolean;
   readonly timeoutMinutes?: number;
-  /** @deprecated Retired by F-03 (§7.7): retained for wire compatibility. */
+  /** @deprecated No longer used by the reflection settings; retained for wire compatibility. */
   readonly merge: ReflectionMergeMode;
-  /** @deprecated Retired by F-03 (§7.7): retained for wire compatibility. */
+  /** @deprecated No longer used by the reflection settings; retained for wire compatibility. */
   readonly merge_instructions: string;
 }
 

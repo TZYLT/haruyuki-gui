@@ -634,7 +634,7 @@ describe("clock injection", () => {
 describe("frozen surface", () => {
   it("returns the frozen Channel type, not a pool-specific one", () => {
     // Red when: the return type drifts to `EngineChannel`, which would make comparing
-    // implementation impossible.
+    // two implementations impossible.
     const h = makePool();
     const channel: Channel = h.pool.getChannel("a");
 

@@ -6,9 +6,10 @@
  * stack can write commands and see events but never receive a result.
  *
  * Every case names the deliberate change that turns it red. The correlation and
- * verdict field names live in `frame-reader.ts` (a pick-path exemption); the tests
- * reach them through the reader rather than restating them, so a rename breaks
- * this file by showing wrong results instead of by a string mismatch.
+ * verdict field names live in `frame-reader.ts` (they are envelope fields, not
+ * wire vocabulary); the tests reach them through the reader rather than restating
+ * them, so a rename breaks this file by showing wrong results instead of by a
+ * string mismatch.
  */
 
 import { readdirSync, readFileSync } from "node:fs";
@@ -57,8 +58,9 @@ describe("recognising a reply", () => {
   });
 
   it("reads a refusal as a failure carrying the engine's reason", () => {
-    // Red when: a refusal is reported as success, or the reason is dropped. B3
-    // reads the reason when deciding whether a retry is worth attempting.
+    // Red when: a refusal is reported as success, or the reason is dropped. A
+    // retry policy reads the reason when deciding whether a retry is worth
+    // attempting.
     const decoded = reader.responseOf(
       reply({
         [CORRELATION_KEY]: "req-2",
@@ -135,7 +137,8 @@ describe("a correlated frame with no verdict is not an answer", () => {
     // Red when: a bare correlation id is enough to call something a reply. The
     // engine also *sends* requests that carry an id (the engine-initiated frame is the
     // one recorded), and decoding one of those would settle whichever in-flight
-    // command happened to share the id - a foreign answer, the V-2 defect.
+    // command happened to share the id - a foreign answer, which must never be
+    // mistaken for this request.
     expect(reader.responseOf(reply({ [CORRELATION_KEY]: "req-5" }))).toBeUndefined();
   });
 

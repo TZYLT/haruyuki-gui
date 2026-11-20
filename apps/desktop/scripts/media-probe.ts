@@ -6,12 +6,12 @@
  * three questions it answers cannot be answered any other way:
  *
  *   - a `.txt` served as `text/plain` arrives as a plain-text document, not a
- *          rendered one -- i.e. `nosniff` holds through the custom scheme.
+ *     rendered one -- i.e. `nosniff` holds through the custom scheme.
  *   - an `.html` served as `text/plain` does not execute its script. This is the
- *          the security claim the whole channel rests on, and it is measured here
- *          rather than argued from the table.
+ *     security claim the whole channel rests on, and it is measured here rather
+ *     than argued from the table.
  *   - a 27 MB image streams without stalling the main process, measured as the
- *          worst gap in this process's own timer.
+ *     worst gap in this process's own timer.
  *
  * One constraint shapes the whole file, and it is measured rather than assumed: a
  * second `BrowserWindow` in the same process fails to load this scheme, so there

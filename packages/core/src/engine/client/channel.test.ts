@@ -1,15 +1,9 @@
 /**
- * Tests for the channel kernel .
- *
- * Contract: docs/26 sections 6.1, 6.2, 6.4, 6.5;  sections 3.1, 3.2, 3.7,
- * 4, 5.1, and the implementation decisions `B2-D05` (one timer per request),
- * `B2-D07` (unknown events counted, not stored) and `B2-D10` (256 slots, refuse
- * rather than queue).
+ * Tests for the channel kernel.
  *
  * Every group here names the single deliberate change that turns it red; a test
  * that cannot answer "which edit breaks me?" is a test that does not hold the
- * line. The mutations actually run against this file are listed in the work
- * report, not here.
+ * line.
  *
  * Where the rest went: this file holds the channel's own state machines. The
  * three-state capability snapshot, the envelope passthrough and the diagnostic
@@ -24,8 +18,7 @@
  * exactly the seam where the send path plugs the engine's field names in.
  *
  * Time is never real here: every timeout test drives a fake clock, because a
- * single real `fast`-family wait would cost the gate ten seconds 
- * section 6.4).
+ * single real `fast`-family wait would cost the gate ten seconds.
  */
 
 import { afterEach, describe, expect, it } from "vitest";
@@ -72,7 +65,7 @@ afterEach(() => {
 describe("command classification", () => {
   it("classifies the 2 silent and 5 untracked capabilities as the shared table does", () => {
     // Red when: the capability table (which this kernel defaults to) moves a
-    // between classes, or when the kernel stops reading the table.
+    // capability between classes, or when the kernel stops reading the table.
     for (const name of SILENT) {
       expect(completionOf(name)).toBe("silent");
     }
@@ -95,7 +88,7 @@ describe("command classification", () => {
 
   it("never puts the 2 silent capabilities in the table, so they cannot time out", async () => {
     // Red when: `file.watch` / `file.unwatch` enter the table. Advancing the clock
-    // past every family budget would then produce a false TIMEOUT - the bug
+    // past every family budget would then produce a false TIMEOUT - the bug this
     // rule exists to prevent.
     const h = makeHarness();
     for (const capability of SILENT) {
@@ -391,7 +384,7 @@ describe("the entry leaves the table on every settle path", () => {
 
     expect(() => h.channel.ingest(responseFrame("late", { data: "too late" }))).not.toThrow();
     // The stranger frame is not dropped either: an unmatched response is treated
-    // unmatched response as an event, because it may be a push we misread.
+    // as an event, because it may be a push we misread.
     expect(h.events).toHaveLength(1);
     expect(h.channel.inFlightCount()).toBe(0);
     // One timeout record, not two: the late frame is not a second failure.
@@ -464,7 +457,7 @@ describe("timeouts", () => {
   it("accepts an injected budget resolver and uses its number verbatim", () => {
     // Red when: the kernel keeps a private copy of the family table instead of
     // asking the injected resolver - the two would drift the moment the timeout
-    // revised.
+    // table is revised.
     const budget: ResolvedBudget = { ms: 1_234, clamped: false };
     const h = makeHarness({ resolveTimeoutMs: () => budget });
     void h.channel.send({ capability: TRACKED, body: {}, requestId: "custom" });
@@ -480,7 +473,7 @@ describe("timeouts", () => {
 
 describe("readiness", () => {
   it("distinguishes never-ready from ready-then-dropped", async () => {
-    // Red when: both cases share one detail string. B3 uses the wording to decide
+    // Red when: both cases share one detail string. The reconnect layer uses the
     // wording to decide whether a send is worth replaying at all.
     const neverReady = makeHarness({
       readiness: (): ChannelReadiness => ({ ready: false, everReady: false }),
@@ -682,8 +675,8 @@ describe("unknown events", () => {
     // Red when: the object guard is dropped. The default reader is total over
     // `unknown`, so its own `typeof` check hides a missing guard (that is why this
     // case uses a reader that is *not* total - the realistic shape, since a
-    // reader will index fields). A frame that is not an object must be rejected by
-    // the channel, because a reader that throws on it would take the channel down
+    // response reader will index fields). A frame that is not an object must be
+    // rejected by the channel, because a reader that throws on it would take the
     // channel down on a malformed frame, and the next frame must still flow.
     let calls = 0;
     const h = makeHarness({

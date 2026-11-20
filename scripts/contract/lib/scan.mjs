@@ -52,8 +52,9 @@
  *       SDK base is unmergeable by design) and a cycle is `unparsed` plus
  *       `degraded`; neither is silent.
  *
- *   The same merge runs for declarations the protocol unions never emit; snapshot assembly
- *   decides which of those lines reach the snapshot (only the records it emits).
+ *   The same merge runs for declarations the protocol unions never emit; snapshot
+ *   assembly decides which of those lines reach the snapshot (only the records it
+ *   emits).
  *
 
  * Seam for command extraction and message / inbound extraction:

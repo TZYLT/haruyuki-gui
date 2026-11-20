@@ -4,8 +4,8 @@
  * The real engine (haruyuki 0.6.0) prints two lines on stdout and then speaks a
  * small WebSocket handshake; the frame shapes below are pinned to that wire
  * protocol. This fixture reproduces only what the connection, handshake and
- * connection, handshake and state-machine packages need, and lets a test inject
- * one broken shape at a time:
+ * state-machine packages need, and lets a test inject one broken shape at a
+ * time:
  *
  *   ok                handshake succeeds: success true, protocol_version 1,
  *                     letta_code_version "0.6.0", backend "local"

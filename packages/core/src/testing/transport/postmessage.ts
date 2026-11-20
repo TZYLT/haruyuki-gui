@@ -1,10 +1,9 @@
 /**
  * postmessage.ts - the webview-shaped transport double.
  *
- * Scope sources: docs/18-A3 sections 1.2 `R-10` (model `postMessage` / `message`
- * events, do not add a frozen seam), 3.4.4 (the frozen `TransportDouble`) and 7
- * `R-06` (different async granularity from the `ipc` double). Requirement side:
- * docs/17-A3 section 4.3, acceptance pick-path.
+ * Scope: model `postMessage` / `message` events and do not add a seam of its
+ * own, on the `TransportDouble` interface in `./delivery`. Its async granularity
+ * must differ from the `ipc` double's.
  *
  * Shape only. This module does not use `window`, `MessageEvent` or any DOM
  * global: the platform object is modelled on `setTimeout`, so the double runs in

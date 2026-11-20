@@ -1,25 +1,23 @@
 /**
  * Semantic table for the nine-item `HostPort` contract: every item exercised
- * implementation.
+ * against the headless implementation.
  *
- * Shape source: docs/18-A3 section 3.4.1 (the frozen nine-item contract), read
- * against the per-item headless semantics of docs/17-A3 section 4.1 and the
- * cross-shell semantics of docs/01-3 section 2.2. Where a sentence in those
- * documents describes a failure mode, this file has a case that fires it - the
- * point of `V-1` is that every documented failure mode is reachable and returns
+ * The contract is declared in `host-port.ts`, and `headless-host-port.ts` is
+ * the implementation under test. Every failure mode the contract names has a
+ * case here that fires it - the point is that each one is reachable and returns
  * the frozen code, not that the happy path works.
  *
  * Deliberately not a copy of the neighbouring suites:
  *
- * - `host-port.test.ts` (B1) pins the startup subset's own decisions.
+ * - `host-port.test.ts` pins the startup subset's own decisions.
  * - `headless-host-port.test.ts` is the smoke pass over the six new items.
  * - `contract.test.ts` runs one implementation-independent body over the
  *   startup subset.
  *
- * This file is the semantic table: one case per documented failure mode per
- * item, plus the shape claims the contract cannot express at runtime alone.
+ * This file is the semantic table: one case per failure mode per item, plus
+ * the shape claims the contract cannot express at runtime alone. The
  * three-adapter parity suite (`testing/adapters.test.ts`) is a different claim
- * different claim and lives elsewhere.
+ * and lives elsewhere.
  *
  * `STORAGE_UNAVAILABLE` needs a word. It is part of the frozen `secureGet` /
  * `secureSet` unions, and an in-memory headless store cannot produce it, so
@@ -28,8 +26,8 @@
  * the contract and no reachable headless path ever answers it.
  *
  * Cleanup is point-by-point: each file is unlinked and each directory is
- * unlinked and each directory is removed only after its children, so a fixture
- * bug can never delete a tree this suite did not create.
+ * removed only after its children, so a fixture bug can never delete a tree
+ * this suite did not create.
  */
 
 import { readFileSync, statSync, writeFileSync } from "node:fs";
@@ -59,10 +57,10 @@ afterEach(async () => {
   tempRoots.clear();
 });
 
-/** The four capability names item 0 freezes; an extra key is a contract breach. */
+/** The four capability names `HostPortStartup` freezes; an extra key is a contract breach. */
 const CAPABILITY_KEYS = ["canNotify", "canReadDroppedFiles", "canPopout", "canFloatingWindow"];
 
-/** The four directory roots item 1 freezes. */
+/** The four directory roots `HostPortStartup` freezes. */
 const PATH_KEYS = ["userData", "logs", "cache", "temp"] as const;
 
 /** The eight frozen `EngineSpawnSpec` fields. */
@@ -88,8 +86,9 @@ const ENGINE_ARGV_PREFIX = [
 ] as const;
 
 /**
- * URLs item 4 must reject. `mailto:` and `file:` are the two a "helpful" parser
- * would be tempted to accept; they are rejected with everything else.
+ * URLs `openExternal` must reject. `mailto:` and `file:` are the two a
+ * "helpful" parser would be tempted to accept; they are rejected with
+ * everything else.
  */
 const REJECTED_URLS = [
   "mailto:dev@example.com",
@@ -171,10 +170,10 @@ const FROZEN_STARTUP_SHAPE: [
 ] = [true, true, true, true];
 
 describe("nine-item host port contract semantic table: headless host port", () => {
-  it("item 0 - capabilities: the four documented flags, all false", async () => {
+  it("capabilities: the four documented flags, all false", async () => {
     const { port } = await createFixture();
 
-    // Item 0's documented failure mode is a consumer reading a missing field as
+    // The documented failure mode is a consumer reading a missing field as
     // `false`. The headless answer gives all four explicitly, which is the
     // stronger state: there is no missing field left to work around.
     expect(Object.keys(port.capabilities).sort()).toEqual([...CAPABILITY_KEYS].sort());
@@ -184,7 +183,7 @@ describe("nine-item host port contract semantic table: headless host port", () =
     }
   });
 
-  it("item 1 - paths: four absolute roots created under the injected engine home", async () => {
+  it("paths: four absolute roots created under the injected engine home", async () => {
     const { engineHome, port } = await createFixture();
 
     expect(Object.keys(port.paths).sort()).toEqual([...PATH_KEYS].sort());
@@ -198,7 +197,7 @@ describe("nine-item host port contract semantic table: headless host port", () =
     }
   });
 
-  it("item 1 - paths: a root that cannot be created fails startup instead of degrading", async () => {
+  it("paths: a root that cannot be created fails startup instead of degrading", async () => {
     const root = await makeRoot();
     const engineHomeIsAFile = path.join(root, "engine-home-is-a-file");
 
@@ -216,7 +215,7 @@ describe("nine-item host port contract semantic table: headless host port", () =
     ).rejects.toThrow();
   });
 
-  it("item 2 - getRuntimeSpawnSpec: the eight frozen fields and the headless values", async () => {
+  it("getRuntimeSpawnSpec: the eight frozen fields and the headless values", async () => {
     const { bundlePath, engineHome, port } = await createFixture();
     const result = await port.getRuntimeSpawnSpec();
 
@@ -253,7 +252,7 @@ describe("nine-item host port contract semantic table: headless host port", () =
     expect(spec.env["NODE_OPTIONS"]).toMatch(/^--require ".*watchdog\.cjs"$/);
   });
 
-  it("item 2 - getRuntimeSpawnSpec: a missing bundle is a refusal value, not a throw", async () => {
+  it("getRuntimeSpawnSpec: a missing bundle is a refusal value, not a throw", async () => {
     const { bundlePath, port } = await createFixture({ bundleExists: false });
     const result = await port.getRuntimeSpawnSpec();
 
@@ -270,7 +269,7 @@ describe("nine-item host port contract semantic table: headless host port", () =
     expect(result.reason).toContain(bundlePath);
   });
 
-  it("item 2 - getRuntimeSpawnSpec: a relative bundle is refused as well", async () => {
+  it("getRuntimeSpawnSpec: a relative bundle is refused as well", async () => {
     const { port } = await createFixture({ relativeBundle: true });
     const result = await port.getRuntimeSpawnSpec();
 
@@ -283,7 +282,7 @@ describe("nine-item host port contract semantic table: headless host port", () =
     expect(result.reason).toContain("absolute");
   });
 
-  it("item 3 - secure store: in-process persistence with the frozen codes", async () => {
+  it("secure store: in-process persistence with the frozen codes", async () => {
     const { port } = await createFixture({ secureSeed: { token: "seeded-value" } });
 
     expect(await port.secureGet("token")).toEqual({ ok: true, value: "seeded-value" });
@@ -311,7 +310,7 @@ describe("nine-item host port contract semantic table: headless host port", () =
     expect(await port.secureDelete("never-existed")).toEqual({ ok: true });
   });
 
-  it("item 3 - secure store: STORAGE_UNAVAILABLE is documented, and never fires", async () => {
+  it("secure store: STORAGE_UNAVAILABLE is documented, and never fires", async () => {
     // Documented: both unions in the frozen contract carry the code. Two quoted
     // occurrences - one per union - is the contract text as frozen.
     expect(HOST_PORT_SOURCE.match(/"STORAGE_UNAVAILABLE"/g) ?? []).toHaveLength(2);
@@ -341,7 +340,7 @@ describe("nine-item host port contract semantic table: headless host port", () =
     }
   });
 
-  it("item 4 - openExternal: http and https only, everything else REJECTED_SCHEME", async () => {
+  it("openExternal: http and https only, everything else REJECTED_SCHEME", async () => {
     const { port } = await createFixture();
 
     expect(await port.openExternal("https://example.com/a")).toEqual({ ok: true });
@@ -356,7 +355,7 @@ describe("nine-item host port contract semantic table: headless host port", () =
     expect(port.calls.openExternal).toEqual(["https://example.com/a", "http://example.com"]);
   });
 
-  it("item 5 - pickPaths: one queued answer per call, cancellation is []", async () => {
+  it("pickPaths: one queued answer per call, cancellation is []", async () => {
     const answers = [
       path.join(tmpdir(), "haruyuki-pick-1.txt"),
       path.join(tmpdir(), "haruyuki-pick-2.txt"),
@@ -376,7 +375,7 @@ describe("nine-item host port contract semantic table: headless host port", () =
     expect(port.calls.pickPaths).toBe(3);
   });
 
-  it("item 6 - resolveLocalResource: a path inside a root becomes a file URL", async () => {
+  it("resolveLocalResource: a path inside a root becomes a file URL", async () => {
     const { engineHome, port } = await createFixture();
     const inside = path.join(engineHome, "userData", "state.json");
 
@@ -392,7 +391,7 @@ describe("nine-item host port contract semantic table: headless host port", () =
     });
   });
 
-  it("item 6 - resolveLocalResource: OUT_OF_ROOT for every documented escape", async () => {
+  it("resolveLocalResource: OUT_OF_ROOT for every documented escape", async () => {
     const { root, engineHome, port } = await createFixture();
 
     const refused = [
@@ -425,7 +424,7 @@ describe("nine-item host port contract semantic table: headless host port", () =
     }
   });
 
-  it("item 7 - onShutdown: synchronous registration, dispose runs it once", async () => {
+  it("onShutdown: synchronous registration, dispose runs it once", async () => {
     const { port } = await createFixture();
     const order: string[] = [];
 
@@ -449,7 +448,7 @@ describe("nine-item host port contract semantic table: headless host port", () =
     expect(order).toEqual(["first", "second"]);
   });
 
-  it("item 8 - notify: silent success for all three levels when canNotify is false", async () => {
+  it("notify: silent success for all three levels when canNotify is false", async () => {
     const { port } = await createFixture();
 
     expect(port.capabilities.canNotify).toBe(false);
@@ -465,7 +464,7 @@ describe("nine-item host port contract semantic table: headless host port", () =
     ]);
   });
 
-  it("item 9 - readDroppedFiles: UNSUPPORTED unconditionally, without reading", async () => {
+  it("readDroppedFiles: UNSUPPORTED unconditionally, without reading", async () => {
     const { engineHome, port } = await createFixture();
     const droppedPath = path.join(engineHome, "dropped.txt");
 
@@ -489,9 +488,10 @@ describe("nine-item host port contract semantic table: headless host port", () =
 
 describe("nine-item host port contract frozen shape", () => {
   it("HostPort extends HostPortStartup, so a headless port is a startup port", async () => {
-    // Declaration-level claim: the v2 contract is a pure extension of v1, which
-    // is what lets B1's startup consumers keep compiling : persistence is
-    // 4.4: "three semantics unchanged, pure addition").
+    // Declaration-level claim: `HostPort` is a pure extension of
+    // `HostPortStartup`, which is what lets the startup consumers keep
+    // compiling: three semantics stay unchanged and the nine items are a pure
+    // addition.
     expect(HOST_PORT_SOURCE).toMatch(/export interface HostPort extends HostPortStartup\s*\{/);
 
     const { port } = await createFixture();

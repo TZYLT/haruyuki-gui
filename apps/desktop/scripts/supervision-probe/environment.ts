@@ -4,8 +4,8 @@
  *
  * The side effects at module scope are deliberate and must happen before Electron
  * becomes ready: `userData` and `crashDumps` decide where a crash lands, and a
- * crash lands, and a privileged scheme cannot be registered after ready. The entry
- * imports this module first, so none of it depends on a check running.
+ * privileged scheme cannot be registered after ready. The entry imports this
+ * module first, so none of it depends on a check running.
  *
  * No user data is read: the temp root is either the caller's (the smoke script
  * removes it) or a fresh `mkdtemp` directory.
@@ -32,7 +32,10 @@ const PROBE_APP_VERSION = "0.1.0-supervision-probe";
 /** The engine bundle the smoke script resolved; absent means the engine checks skip. */
 const ENGINE_BUNDLE = absoluteEnvironmentPath("HARUYUKI_ENGINE_BUNDLE");
 
-/** The built renderer root; absent means renderer-recovery-sequence skips instead of judging a stand-in. */
+/**
+ * The built renderer root; absent means the renderer-recovery check skips instead
+ * of judging a stand-in.
+ */
 const RENDERER_ROOT = absoluteEnvironmentPath("HARUYUKI_RENDERER_ROOT");
 
 /** The engine version the probe asks `Engine.start` to confirm. */
@@ -48,8 +51,8 @@ const USER_DATA = path.join(TEMP_ROOT, "user-data");
 const CRASH_DUMPS = path.join(TEMP_ROOT, "crash-dumps");
 
 // Isolate Electron before anything can read a path: the crash path and the
-// crash path and the marker path both key off userData, and a probe must not
-// touch the user's real profile).
+// marker path both key off userData, and a probe must not touch the user's real
+// profile.
 mkdirSync(USER_DATA, { recursive: true });
 mkdirSync(CRASH_DUMPS, { recursive: true });
 app.setPath("userData", USER_DATA);
@@ -67,7 +70,7 @@ crashReporter.start({ uploadToServer: false, compress: false, rateLimit: false }
 
 // The scheme must be registered before ready. The probe registers the shell's own
 // scheme with the shell's own privileges so the recovery check drives the real
-// through the real handler, not a fixture that mimics one.
+// renderer bundle through the real handler, not a fixture that mimics one.
 try {
   protocol.registerSchemesAsPrivileged([{ scheme: APP_SCHEME, privileges: { ...APP_PRIVILEGES } }]);
 } catch (error) {

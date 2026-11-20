@@ -2,7 +2,7 @@
  * The frame type table: every frame type this repository itself emits.
  *
  * The table is data, not behaviour:
- * C1, E* and D3 each append rows for their own frame types, and the rows are
+ * Each frame producer appends rows for its own frame types, and the rows are
  * what `scripts/check-frame.mjs` scans source literals against. Two properties
  * are load-bearing:
  *
@@ -156,6 +156,6 @@ export const FRAME_TYPES = {
  *
  * A closed union on purpose, but only as a convenience for this package and
  * its tests: `Frame["t"]` stays `string`, because a host may inject a table the
- * shared package has never heard of (C5-Q24).
+ * shared package has never heard of.
  */
 export type KnownFrameType = keyof typeof FRAME_TYPES;

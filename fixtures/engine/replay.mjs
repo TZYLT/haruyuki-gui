@@ -2,7 +2,7 @@
  * replay.mjs - deterministic s2c replay engine for the fake engine server.
  *
  * The replay plan and handle shapes and the `wire` fixture line format are
- * `wire` fixture line format. This module parses the fixture, turns fixture plus
+ * frozen. This module parses the fixture, turns fixture plus
  * plan into an ordered step list, and drives it against a clock and two socket
  * callbacks; `fake-server.mjs` is the socket side ("replay" mode).
  *

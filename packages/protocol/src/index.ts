@@ -65,12 +65,11 @@ export * from "./session/types.js";
 export * from "./session/select.js";
 
 /**
- * The typed capability layer (docs/62 §6.1, docs/63 §3.1): one row per
- * capability, `{ input; output }`, composed per domain. E1's `FZ-12` types
- * `CommandCall.capability`/`body` and `CommandReply.data` with the two aliases
- * below; pages never import the rows directly.
+ * The typed capability layer: one row per capability, `{ input; output }`,
+ * composed per domain. The two aliases below type `CommandCall.capability`/
+ * `body` and `CommandReply.data`; pages never import the rows directly.
  *
- * The dependency on `@letta-ai/letta-client` is type-only and deliberate
+ * The dependency on `@letta-ai/letta-client` is type-only and deliberate:
  * three domain roots (`AgentState`, `Conversation`, `Message`)
  * are defined by that SDK, so referencing the definition beats re-declaring a
  * shape that silently drifts. Their member types expand from the SDK's `.d.ts`;

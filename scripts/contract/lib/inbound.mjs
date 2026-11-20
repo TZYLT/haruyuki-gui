@@ -359,7 +359,7 @@ export function findGuardWire(sourceText, guardName) {
  * `is<Name>` becomes `<Name>`, `<Name>` is resolved from the injected
  * `fromFile`, and its `type` literal becomes the wire id. The guard files are
  * deliberately not used as `fromFile`: they are outside `src/types`, so the
- * index would answer `unsupported-ref` (seam fact 3 in the work log).
+ * index would answer `unsupported-ref`.
  *
  * @param {{resolveTypeRef?: (ref: string, fromFile: string) => object}} index type index
  * @param {string} guardName guard name as written in the OR chain
@@ -422,7 +422,7 @@ export function lookupGuardType(index, guardName, fromFile) {
  *
  * The index is asked first (the normal path). Only when the index cannot answer
  * is the guard body scanned, because the guard files live outside `src/types`
- * and the index cannot be pointed at them (seam fact 3 in the work log).
+ * and the index cannot be pointed at them.
  *
  * @param {object} index type index
  * @param {string} guard guard name as written in the OR chain

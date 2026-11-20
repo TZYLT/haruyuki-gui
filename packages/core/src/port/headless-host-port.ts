@@ -1,31 +1,34 @@
 /**
- * Headless host port: `nine-item contract` (nine items) for a plain `node` process.
+ * Headless host port: the nine-item `HostPort` contract for a plain `node`
+ * process.
  *
  * `host-port.ts` owns the shape: `HostPortStartup` for the three startup items
- * file), 3.3(a) (HostPortStartup) and 5.1 (isolation rules) for the startup
+ * and `HostPort` for the full nine. This file supplies the headless reading of
  * every member - the semantics that apply to any shell, plus the headless
  * answers - and `host-port-contract.test.ts` and `headless-host-port.test.ts`
  * pin that reading case by case.
  *
  * This is the second implementation of the host port contract: the desktop
- * shell (D2) will answer `true` to some capabilities, while this one answers
+ * shell will answer `true` to some capabilities, while this one answers
  * `false` to all four and roots every path in a disposable directory. That makes
- * it the evidence for INIME safety ("every port method must be implementable
- * headlessly") and the reason docs/17-A3 section 4.2 calls this "the only real
- * implementation and the contract evidence for `HostPortStartup`".
+ * it the evidence that every port method is implementable headlessly, and the
+ * contract evidence a shell port is measured against.
  *
  * Deliberately out of scope: no state machine, no WebSocket, no stdout parsing
- * and no token content. Those belong to the log / snapshot assembly / `transport.ts` / . This module
- * only answers what the shell provides - "where may the engine write" (paths),
- * "how is it started" (the spawn spec) and the six host capabilities. One thing
- * it does own is the watchdog INJECTION string (decision D-02):
- * `runtime/watchdog.cjs` itself is the watchdog file, but composing `NODE_OPTIONS` is
- * part of building the spawn spec, so it lives here.
+ * and no token content. Those belong to the engine facade (`engine/engine.ts`),
+ * the WebSocket session (`engine/socket-session.ts`), the stdout port discovery
+ * (`engine/port-discovery.ts`) and the token store (`engine/token.ts`). This
+ * module only answers what the shell provides - "where may the engine write"
+ * (paths), "how is it started" (the spawn spec) and the six host capabilities.
+ * One thing it does own is the watchdog injection string:
+ * `runtime/watchdog.cjs` itself is the runtime module's file, but composing
+ * `NODE_OPTIONS` is part of building the spawn spec, so it lives here.
  *
  * The watchdog path is derived from `import.meta.url` and never imported. Two
  * reasons: the script is CommonJS meant to be preloaded into a different
- * process, and the bridge writes it concurrently, so a static import would couple our
- * build (and our test collection) to a file this package does not own.
+ * process, and it is maintained on the runtime side, so a static import would
+ * couple our build (and our test collection) to a file this module does not
+ * own.
  *
  * The six new items are all "record instead of perform" by construction: a
  * headless process has no browser to open, no dialog to show and no OS
@@ -93,10 +96,9 @@ const TEMP_ENGINE_HOME_PREFIX = "haruyuki-headless-";
 /**
  * The schemes `openExternal` accepts: `http:` and `https:` only.
  *
- * Authority: docs/01-3 section 2.2 item 4 ("only http:/https:, reject the
- * rest") and docs/17-A3 section 4.1 row 4 with the `A3-Q09` adjudication.
- * `mailto:` is deliberately absent - it is not a browser URL and the frozen
- * requirement rejects it with everything else.
+ * The requirement is "only http:/https:, reject the rest", applied identically
+ * by every shell. `mailto:` is deliberately absent - it is not a browser URL
+ * and the requirement rejects it with everything else.
  *
  * An allow-list, not a deny-list: `file:` would hand the renderer a way to open
  * local files in a system application and `javascript:` would execute inside
@@ -120,16 +122,15 @@ const ACCEPTED_EXTERNAL_PROTOCOLS: ReadonlySet<string> = new Set(["http:", "http
  *   `engineHome`; a value outside `engineHome` is rejected instead of silently
  *   escaping the isolated root.
  * - `pickQueue`: the answers a `pickPaths` call will return, in order. One entry
- *   is consumed per call; an empty queue means the user cancelled . The rule is-A3
- *   section 4.1 row 5: "an injected queue gives a deterministic answer; an empty
- *   queue is a cancellation").
+ *   is consumed per call; an empty queue means the user cancelled. An injected
+ *   queue gives a deterministic answer, and an empty queue is a cancellation.
  * - `allowedRoots`: the whitelist for `resolveLocalResource`. Omitted means
- *   `[engineHome]` when `engineHome` was supplied and no root at all otherwise
+ *   `[engineHome]` when `engineHome` was supplied and no root at all otherwise.
  *   Relative entries are resolved against the host's cwd, once, at
- *   resolved against the host's cwd, once, at construction.
+ *   construction.
  * - `secureSeed`: initial contents of the in-memory secure store. Each port owns
  *   its own copy, so two ports never share a secret: persistence is in-process,
- *   row 3: "in-process persistence, not shared across instances").
+ *   not shared across instances.
  */
 export type HeadlessHostPortOptions = {
   bundlePath: string;
@@ -142,8 +143,8 @@ export type HeadlessHostPortOptions = {
 
 /**
  * The headless port plus its two implementation-specific additions. They are
- * this implementation. They are test-facing, but they are part of the exported
- * type because `@haruyuki/core` re-exports this module: a test that reaches for
+ * test-facing, but they are part of the exported type because
+ * `@haruyuki/core` re-exports this module: a test that reaches for
  * `dispose` must not need a deep import.
  *
  * `dispose` exists because a plain node process has no OS shutdown event to hang
@@ -253,7 +254,7 @@ export async function createHeadlessHostPort(
       // would refuse a bundle that appears moments later.
       //
       // The path must be absolute: the contract fixes an absolute engine JS
-      // engine JS bundle path). A relative one would resolve against the host's
+      // bundle path. A relative one would resolve against the host's
       // cwd here but against `paths.userData` in the child, so it would look
       // valid and then fail at spawn time with an ENOENT nobody can explain.
       if (!isAbsolute(options.bundlePath)) {
@@ -294,8 +295,8 @@ export async function createHeadlessHostPort(
         windowsHide: true,
         // POSIX gets its own process group so the stop path can signal the whole
         // group and take the engine's descendants with it: `detached` creates
-        // "detached: POSIX creates a process group, used by the watchdog and by
-        // tree killing"; section 4.2: without it "orphan control stops working").
+        // that group, the watchdog and the tree-killing stop path rely on it,
+        // and without it orphan control stops working.
         // Windows has no process groups in this sense; there the stop path
         // forces `taskkill /T /F` instead.
         detached: process.platform !== "win32",
@@ -322,8 +323,7 @@ export async function createHeadlessHostPort(
     async secureSet(key, value) {
       // Overwriting is the normal refresh path and never throws: the store is a
       // Map, so there is no I/O and therefore no partial write to guard against.
-      // The value stays in process memory only, never on disk as plaintext
-      // : persistence is in-process, row 3: "never plaintext at rest").
+      // The value stays in process memory only, never on disk as plaintext.
       secrets.set(key, value);
 
       return { ok: true };
@@ -359,8 +359,7 @@ export async function createHeadlessHostPort(
       // One queued answer per call. An entry may be a single path or a list, so a
       // `multiple: true` call can return several; a single-value call truncates,
       // the way a real dialog honours the properties it was opened with. An empty
-      // queue is the documented cancellation, which is `[]` and not an error
-      // .
+      // queue is the documented cancellation, which is `[]` and not an error.
       const picked = pickQueue.shift();
 
       if (picked === undefined) {
@@ -403,17 +402,16 @@ export async function createHeadlessHostPort(
     },
 
     async notify(level, message) {
-      // `canNotify` is false, so the documented answer is silent success
+      // `canNotify` is false, so the documented answer is silent success. The
       // message is recorded first so a test can assert the text and level the
-      // can assert the text and level the core tried to raise.
+      // core tried to raise.
       calls.notify.push({ level, message });
     },
 
     async readDroppedFiles(_files) {
-      // Unconditional, by requirement: docs/17-A3 section 4.1 row 9 ("returns
-      // `unsupported`"), the `A3-Q09` adjudication, docs/01-3 section 2.2 item
-      // 9 and the headless column of docs/01-3 section 2.3. The `ok` branch of
-      // the frozen union exists for the other hosts, not for this one.
+      // Unconditional, by contract: a headless host has no dropped-file source,
+      // so it always answers `UNSUPPORTED`. The `ok` branch of the frozen union
+      // exists for the other hosts, not for this one.
       //
       // The answer does not depend on the input, so a name-only entry, an entry
       // with a path and an empty list all get the same refusal. Nothing is read
@@ -495,9 +493,8 @@ function resolveTokenDir(engineHome: string, tokenDir: string | undefined): stri
 /**
  * Resolve the `resolveLocalResource` whitelist.
  *
- * The default is `[engineHome]`, but only when the caller actually supplied an
- * engine home , so the corpus-A3 section 3.4.1: "default = [engineHome], otherwise no
- * root is allowed"). When the factory created its own `mkdtemp` directory the
+ * The default is `[engineHome]` when the caller supplied an engine home, and no
+ * root at all otherwise. When the factory created its own `mkdtemp` directory the
  * caller never saw that path, so treating it as an implicit grant would let a
  * resource be resolved against a directory the caller cannot reason about; an
  * empty whitelist makes the refusal explicit instead.

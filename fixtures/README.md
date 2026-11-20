@@ -1,6 +1,6 @@
 # Fixtures
 
-Data for the replay and bridge-comparison pipelines (docs/18 section 3.1, section 3.4.2).
+Data for the replay and bridge-comparison pipelines.
 Everything here is data, not code: one message per line, so a broken fixture can
 be reported as `<file>:<line>`.
 
@@ -9,7 +9,7 @@ Two corpora live here:
 | Directory | Kind | Producer |
 |---|---|---|
 | `fixtures/engine/recordings/*.jsonl` | wire recordings (engine to client) | `scripts/engine/record.mjs` plus the redaction pass |
-| `fixtures/bridge/*.jsonl` | bridge frame sequences | hand-written or template-generated (docs/18 R-07) |
+| `fixtures/bridge/*.jsonl` | bridge frame sequences | hand-written or template-generated |
 
 `fixtures/engine/fake-server.mjs` and `fixtures/engine/replay.mjs` are code, not
 corpus; the gate does not read them.
@@ -47,7 +47,7 @@ change.
 ## Commands
 
 ```bash
-pnpm fixtures:check                 # gate the corpus (shape, redaction, V-14 warning)
+pnpm fixtures:check                 # gate the corpus (shape, redaction, version-drift warning)
 node scripts/engine/scenarios/index.mjs --emit <name>   # write the --send list
 pnpm record --scenario <name> --send _research/engine-raw/<name>.cmd.json
 node scripts/redact-fixtures.mjs <raw.jsonl> <out.jsonl>  # redaction pass (r0 -> r2)
@@ -111,8 +111,7 @@ are never echoed.
 
 ## Wire recording format
 
-Line 1 is the header; every later line is one engine message, in emission order
-(docs/18 INV-A3-1).
+Line 1 is the header; every later line is one engine message, in emission order.
 
 ```json
 {"kind":"wire","schemaVersion":1,"engine":{"version":"0.6.0","commit":"1641a4f"},"scenario":"tool-call","redaction":"r2","clock":"virtual","recordedAt":"2026-11-14T00:00:00.000Z"}
@@ -150,7 +149,7 @@ did, and a fixture without them cannot explain its own responses.
 
 ## Bridge frame format
 
-Line 1 is the header; every later line is one `Frame` envelope (docs/18 section 3.4.2).
+Line 1 is the header; every later line is one `Frame` envelope.
 
 ```json
 {"kind":"frames","schemaVersion":1,"bridgeVersion":1,"clock":"virtual","note":"t vocabulary pending C5"}
@@ -171,16 +170,16 @@ The frames header has no `redaction` field: bridge frames are hand-written from
 the frozen vocabulary, not captured, so there is nothing to redact. If a header
 does carry a `redaction` marker, it must still be `r1` or later.
 
-Frame `t` values are limited to the vocabulary already written in docs/01-3
-section 3.1; C5 owns the final word list, so do not invent new values here.
+Frame `t` values are limited to the vocabulary already registered in
+`packages/protocol/src/frame/frame-types.ts`; that list is closed, so do not
+invent new values here.
 
 ## What `synthetic: true` means
 
-Some scenarios cannot be driven without a UI (docs/18 section 7 R-01: approval,
-subagent and compaction may fail the probe). When that happens the frames are
-written by hand from the shapes in docs/18 section 2.6, not captured from a real
-engine. The header then carries `synthetic: true`, and the deviation is
-registered in docs/16.
+Some scenarios cannot be driven without a UI: approval, subagent and
+compaction may fail the probe. When that happens the frames are written by hand
+from the shapes the protocol defines, not captured from a real engine. The
+header then carries `synthetic: true`.
 
 So `synthetic: true` means: the line shapes are frozen and valid, but the
 content is hand-made and is not evidence that a real engine produced it. Do not
@@ -189,8 +188,8 @@ field and does not otherwise validate it; setting it is the writer's duty.
 
 ## Redaction rules
 
-The corpus is public, so a fixture never contains real content (docs/17 A3-Q12).
-Redaction happens at record time and is irreversible (docs/18 R-06); this gate
+The corpus is public, so a fixture never contains real content.
+Redaction happens at record time and is irreversible; this gate
 only re-checks it.
 
 | Rule id | Fires on |
@@ -223,11 +222,11 @@ does not.
 Violation lines are `<file>:<line> <rule> <message>`. The gate deliberately does
 not echo the offending value: its output is public too.
 
-## Version alignment (V-14)
+## Version alignment
 
 Each wire header's `engine.version` / `engine.commit` is compared with the pair
 pinned in `packages/protocol/src/contract/snapshot.json`. A drift prints a
-`WARN` line and does not change the exit code (docs/18 R-09): a hard failure
+`WARN` line and does not change the exit code: a hard failure
 would force a full re-record on every engine bump. A wire fixture with no
 readable pin is a configuration error (exit `2`).
 
@@ -240,5 +239,4 @@ readable pin is a configuration error (exit `2`).
    and `redaction: "r2"` in the header).
 3. Put the file under the right corpus directory.
 4. Run `pnpm fixtures:check`; it must print `PASS` (warnings are fine, violations
-   are not). A red gate means the fixture does not get committed (docs/18
-   INV-A3-9).
+   are not). A red gate means the fixture does not get committed.

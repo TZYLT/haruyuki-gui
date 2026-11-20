@@ -22,14 +22,15 @@
  * Every case names the edit that turns it red in the comment above it. A case
  * without such an edit would not be a test.
  *
- * No wire id literal appears in this file: pick-path scans the whole `client/`
- * directory, so the wire vocabulary is always read from the contract or reached
+ * No wire id literal appears in this file: the whole `client/` directory is
+ * scanned for them, so the wire vocabulary is always read from the contract or
+ * reached
  * through `wireIdOf`. The literals a leak guard needs live in
  * `capability-names.test.ts`, which is the file exempted for that purpose.
  *
  * There is no promise here to settle: `buildFrame` is synchronous, writes nothing
  * and starts no timer. The `expectSettles` discipline that `channel.ts` needs
- * to `channel.ts`, not to this module - and the gate run at the end proves no
+ * applies there, not to this module - and the gate run at the end proves no
  * handle leaked anyway.
  */
 
@@ -259,8 +260,9 @@ describe("the send path builds the envelope", () => {
   });
 
   it("refuses a body that sets a field the send path owns", () => {
-    // Red when: the body is allowed to override `request_id` (the diagnostic-bundle-tree defect),
-    // or is merged before the envelope is written. Every field here is one the
+    // Red when: the body is allowed to override `request_id` - the defect this
+    // module exists to prevent - or is merged before the envelope is written.
+    // Every field here is one the
     // send path produces, so a caller setting it is assembling the envelope.
     const cases: readonly Record<string, unknown>[] = [
       { request_id: "caller-1" },
@@ -278,7 +280,7 @@ describe("the send path builds the envelope", () => {
 
   it("refuses the three server-side envelope fields in a body as well", () => {
     // Red when: only `type` and `request_id` are guarded. The whole envelope is
-    // envelope as the client's, so a caller writing one is doing our work even
+    // the client's, so a caller writing one is doing our work even
     // though we do not send that field ourselves.
     for (const key of ["event_seq", "emitted_at", "idempotency_key"]) {
       expect(
@@ -347,7 +349,7 @@ describe("the id travels or it does not", () => {
     // Red when: the caller's id is forwarded to an untracked command. The wire
     // has no `request_id` field, so forwarding one sends a name the engine does
     // not read - and for a keystroke it would also turn two identical frames into
-    // frames into one correlatable pair.
+    // one correlatable pair.
     //
     // The field's absence is asserted on the **parsed object**, not on the
     // serialized string: `JSON.stringify` drops an `undefined` value, so a string
@@ -430,7 +432,7 @@ describe("the id travels or it does not", () => {
 
   it("prefers the caller's explicit id over the minted one", () => {
     // Red when: the mint always wins. The caller's explicit parameter is a
-    // parameter", so the parameter is a decision and the mint is a convenience.
+    // decision and the mint is a convenience.
     const frame = frameOf(requestFor("agent.list", { requestId: "caller-1" }), "minted-1");
 
     expect(frame.requestId).toBe("caller-1");
@@ -687,7 +689,7 @@ describe("the budget comes from the family table", () => {
   it("falls back to the default when the caller states no timeout", () => {
     // Red when: a constant is used instead of the family table. The two
     // expectations are read from `timeouts.ts` itself, so the send path cannot
-    // the table it is supposed to consult.
+    // drift from the table it is supposed to consult.
     for (const name of CAPABILITY_NAMES) {
       const frame = frameOf(requestFor(name), "minted-1");
 
@@ -698,12 +700,11 @@ describe("the budget comes from the family table", () => {
 
   it("propagates the clamp as a fact rather than failing the send", () => {
     // Red when: `clamped` is hard-coded false, or an over-cap value throws.
-    //  §4.4 is explicit that a defensive parameter must not cost the
-    // caller their command.
+    // A defensive parameter must not cost the caller their command.
     const name: CapabilityName = "compaction.prepare";
     // `maxTimeoutMs` is already the cap, so one millisecond past it is the
     // smallest input that can clamp - and the expected value is read from
-    // rather than multiplied out a second time here.
+    // `timeouts.ts` rather than multiplied out a second time here.
     const frame = frameOf(requestFor(name, { timeoutMs: maxTimeoutMs(name) + 1 }), "minted-1");
 
     expect(frame.timeoutMs).toBe(maxTimeoutMs(name));

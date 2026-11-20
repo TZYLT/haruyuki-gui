@@ -1,7 +1,8 @@
 /**
  * The media channel's transport half: URL shape, boundary, ranges, streaming.
  *
- * What these tests are really pinning, as opposed to the type table (``transport.ts``):
+ * What these tests are really pinning, as opposed to the type table
+ * (`media-mime.test.ts`):
  *
  *   The path is *one opaque segment*. Traversal is unrepresentable rather than
  *   filtered, so a payload like `..%2f..%2fetc%2fpasswd` decodes to a string that
@@ -350,7 +351,7 @@ describe("the real policy composed with the real handler", () => {
 
   it("serves every text extension as exactly text/plain with a charset", async () => {
     // The header is asserted to be exactly equal for each extension. The table's own
-    // this asserts what a request actually returns.
+    // test asserts the lookup; this asserts what a request actually returns.
     for (const name of ["a.txt", "a.md", "a.json", "a.log", "a.ts", "a.html", "a.js", "a.svg"]) {
       const response = await serve(name);
 

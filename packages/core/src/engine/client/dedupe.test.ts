@@ -1,11 +1,10 @@
 /**
  * Tests for the outbound dedupe table.
  *
- * Contract: docs/26 §5.1 `V-9` (bounded at 4096, LRU eviction), §1.2 facts 6 and
- * 8, §6.7 (all three tables must be bounded) and the `D-09` ruling: the caller
- * owns intent, the client owns "this one call is not sent twice", `request_id` is
- * the only interchange, and the engine's `client_message_id` layer must not be
- * copied.
+ * The contract: bounded at 4096 with LRU eviction, and every table in this client
+ * must be bounded. The caller owns intent, the client owns "this one call is not
+ * sent twice", `request_id` is the only interchange, and the engine's
+ * `client_message_id` layer must not be copied.
  *
  * Every case names the one deliberate change that turns it red.
  */

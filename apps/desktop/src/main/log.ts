@@ -98,7 +98,8 @@ export interface LoggerOptions {
   /**
    * Where a record goes when the file cannot be written. Defaults to stderr.
    *
-   * The requirement is explicit (Another test: 目录不可写时降级为 stderr 并记一条自诊断).
+   * The requirement is explicit: when the directory is not writable, degrade to
+   * stderr and record one self-diagnostic entry.
    * The first version swallowed the error entirely, so an unwritable log
    * directory produced a shell that logged nothing anywhere and looked healthy --
    * the worst combination, because the missing log is exactly what someone would

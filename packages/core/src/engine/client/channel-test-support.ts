@@ -11,9 +11,9 @@
  *
  * - **`makeClock`** - a fake clock, because a single real `slow`-family wait would
  *   cost three minutes of wall-clock time, which the test suite forbids outright.
- *   implements the two properties a naive fake gets wrong: a cancelled timer never
- *   fires, and a timer scheduled *while* another is firing is honoured in deadline
- *   order rather than run immediately.
+ *   It implements the two properties a naive fake gets wrong: a cancelled timer
+ *   never fires, and a timer scheduled *while* another is firing is honoured in
+ *   deadline order rather than run immediately.
  * - **`makeInlineClock`** - the adversarial clock that fires a timer the instant it
  *   is scheduled. It is what proves the in-flight entry is inserted before its
  *   timer starts; see `channel.test.ts`.

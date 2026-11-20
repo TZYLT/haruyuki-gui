@@ -5,7 +5,7 @@
  * envelope, never a class and never a union discriminant on `body`: the
  * transport must be able to route on `ch` alone, before a body decoder is
  * chosen. That is why `Frame["t"]` stays a plain `string` -- a host may inject
- * frame types this package does not know about (C5-Q24); the repository's own
+ * frame types this package does not know about; the repository's own
  * literals are checked against `FRAME_TYPES` by `scripts/check-frame.mjs`
  * instead of by narrowing the type.
  *
@@ -44,7 +44,7 @@ export type FrameChannel = "control" | "stream" | "bulk";
  * The common envelope of every frame on every channel.
  *
  * @typeParam T the frame type literal, e.g. `"bulk.page"`. Deliberately open:
- *   a host-injected table is a legal producer (C5-Q24).
+ *   a host-injected table is a legal producer.
  * @typeParam B the decoded body. `unknown` by default so a consumer must
  *   narrow before reading, rather than inheriting an unchecked shape.
  */

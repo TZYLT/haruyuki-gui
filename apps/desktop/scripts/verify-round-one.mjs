@@ -1,11 +1,10 @@
 /**
- * `W8-VERIFY` first script: does one command produce a runtime tree and its lock?
+ * First verify script: does one command produce a runtime tree and its lock?
  *
- * This is the `leaked-child-reclaimeda` judge, and it is deliberately narrower than "the
- * pipeline works". Round 1 has a stopping point: four of the eight steps run,
- * and what they leave behind is the runtime tree plus `runtime-lock.json`.
- * An artifact does not exist yet, and saying otherwise would be the whole
- * defect this item exists to remove.
+ * This judge is deliberately narrower than "the pipeline works". Round 1 has a
+ * stopping point: four of the eight steps run, and what they leave behind is the
+ * runtime tree plus `runtime-lock.json`. An artifact does not exist yet, and
+ * saying otherwise would be the whole defect this item exists to remove.
  *
  * Run it from the repository root:
  *

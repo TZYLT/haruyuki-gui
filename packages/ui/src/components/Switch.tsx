@@ -12,7 +12,7 @@
  *
  * Controlled: `checked` and `onChange` both come from the caller.
  *
- * The callback is named `onChange`, matching FZ §6.4, rather than base-ui's
+ * The callback is named `onChange`, matching the other form controls, rather than base-ui's
  * `onCheckedChange`. Base UI's name is more precise -- a switch has a state, not a
  * value -- but the frozen surface is the public contract and every other control
  * in this package calls its callback `onChange`, so a divergent name here would be

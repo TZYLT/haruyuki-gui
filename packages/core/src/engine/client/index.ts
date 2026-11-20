@@ -1,14 +1,14 @@
 /**
- * The public surface of the engine client: everything B2 owns, nothing else.
+ * The public surface of the engine client: everything this package owns, nothing
+ * else.
  *
- * Shape source:  section 3.3 (this file is the "export only" entry
- * point), section 3.2 (the three data flows) and section 5.1 (the frozen
- * `Channel` / `ChannelPool` signatures).
+ * The entry point is export-only: it re-exports each layer's public surface,
+ * including the frozen `Channel` / `ChannelPool` signatures.
  *
  * ## What this module is
  *
- * A consumer (C1's event merger, C2's capability gate, B3's reconnect logic, B4's
- * typed helpers, D4's diagnostics panel) imports from here and nowhere else under
+ * A consumer (an event merger, a capability gate, reconnect logic, typed helper
+ * modules, a diagnostics panel) imports from here and nowhere else under
  * `client/`. The per-layer modules stay importable for their own tests, but the
  * surface is this file: it names what is promised, so a change to a layer module
  * that would leak through here has to be a deliberate edit here too.
@@ -34,9 +34,9 @@
  *   appears anywhere under `client/`, this file included. A caller states a
  *   capability name; `send.ts` resolves the wire.
  * - **No `Engine` import.** This direction would be `client -> engine`, and the
- *   facade's own additions are D4's file. The wiring takes a structural
- *   `{ endpoint }` instead ({@link EndpointSource}), which the real `Engine`
- *   satisfies by construction.
+ *   facade's own additions are kept outside `client/`. The wiring takes a
+ *   structural `{ endpoint }` instead ({@link EndpointSource}), which the real
+ *   `Engine` satisfies by construction.
  * - **No test doubles.** `*-test-support.ts`, `*-harness.ts` and every
  *   `*.test.ts` import these layers directly; they are not part of the promise.
  */

@@ -7,7 +7,7 @@
  * failure paths -- rename that dies between write and move, a directory that
  * cannot be listed -- are exercised with an in-memory `LayoutFs`, which is the
  * whole reason the interface exists: the rule is not to mock `node:fs`. The
- * `node:fs`. The injected fake also lets a test prove that the OLD file is still
+ * injected fake also lets a test prove that the OLD file is still
  * readable after a failed rename, which a real filesystem cannot be made to do
  * on demand.
  */
@@ -279,7 +279,7 @@ function createFakeFs(
   return { fs, files };
 }
 
-describe("POSIX hardening (W3 R-07)", () => {
+describe("POSIX hardening", () => {
   it("pins the modes it writes with", () => {
     // Requirement values, not incidental numbers: a draft file
     // holds the user's text, so widening these must fail here.

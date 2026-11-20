@@ -1,6 +1,5 @@
 /**
- * Contract tests for the engine client surface . The seam for "whichs 6.1..6.5,
- *  section 5.1).
+ * Contract tests for the engine client surface.
  *
  * Two kinds of assertion are mixed on purpose, exactly as in
  * `packages/core/src/engine/types.test.ts`:
@@ -424,8 +423,8 @@ describe("DiagnosticRecord", () => {
 
   it("carries a timestamp, because a diagnostic with no time cannot be matched to 'it broke just now'", () => {
     // The diagnostic surface asks for a code, the operation, a TIME and the
-    // a TIME and the engine version. The other four fields are asserted
-    // elsewhere; this one is the field that had nowhere to live.
+    // engine version. The other four fields are asserted elsewhere; this one is
+    // the field that had nowhere to live.
     const record = {
       at: 1_700_000_000_000,
       kind: "timeout",
@@ -834,7 +833,7 @@ describe("Endpoint", () => {
 });
 
 describe("wire vocabulary", () => {
-  /** The two files this work package owns, relative to this test. */
+  /** The two source files this suite scans, relative to this test. */
   const OWNED_SOURCES = ["types.ts", "errors.ts"] as const;
 
   /**

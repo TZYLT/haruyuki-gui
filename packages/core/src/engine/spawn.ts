@@ -11,9 +11,8 @@
  *
  * - POSIX: SIGTERM, up to 2 s; then SIGKILL, up to 1 s. When the child was
  *   spawned `detached` it leads its own process group, so both signals go to the
- *   GROUP (`kill(-pid)`), which is what the spec's "POSIX 建进程组，供看门狗与
- *   杀树用" (docs/13 section 4.1/4.2) is for: a `git` the engine started must not
- *   outlive it.
+ *   GROUP (`kill(-pid)`): that is what the detached process group is for, and a
+ *   `git` the engine started must not outlive it.
  * - Windows: `taskkill /PID <pid> /T` without `/F` (tree-wide and graceful),
  *   up to 1.5 s; then `taskkill /PID <pid> /T /F` (tree-wide and forced), up to
  *   1 s; then `child.kill()`, which is TerminateProcess on the direct child only,
@@ -23,7 +22,7 @@
  * (measured on Windows 10.0.19045 / Node 24: exit code 128, "can only be
  * terminated forcefully"), so the forced tree kill is the normal path there. The
  * graceful attempt is still made first: GUI-subsystem children honour it, and
- * the watchdog document treats force-kill as the last resort.
+ * force-kill remains the last resort.
  *
  * `timeoutMs` is a total budget, not a per-stage one: every stage is capped by
  * whatever is left of the budget, so a caller asking for 500 ms never waits the
@@ -41,7 +40,7 @@ import type { ChildProcess } from "node:child_process";
 
 import type { EngineSpawnSpec } from "./types";
 
-/** Default total graceful-stop budget; mirrors Engine.stopGraceful (section 3.3(c)). */
+/** Default total graceful-stop budget; mirrors `Engine.stopGraceful`. */
 const DEFAULT_STOP_TIMEOUT_MS = 5000;
 
 /** POSIX: SIGTERM grace before escalating to SIGKILL. */
@@ -94,7 +93,7 @@ const inFlightStops = new WeakMap<ChildProcess, Promise<void>>();
  *
  * This is a thin, platform-free `spawn` wrapper: the child runs as
  * `<exePath> <bundlePath> <argvPrefix...>` (`node haruyuki.js server ...` in the
- * headless today), `env` is passed through verbatim (the spec already contains
+ * headless today), `env` is passed through verbatim (`EngineSpawnSpec` already contains
  * the complete environment, callers must not merge `process.env` afterwards),
  * and stdio stays piped so the port discovery layer can read stdout and the
  * watchdog keeps a live stdin. The promise of readiness is deliberately absent:
@@ -310,8 +309,8 @@ async function stopGracefulOnce(child: ChildProcess, budgetMs: number): Promise<
     }
 
     // Forced, still tree-wide: the parent-side fallback. `child.kill()` alone is
-    // section 3.4). `child.kill()` alone is TerminateProcess on the direct child
-    // and would leave whatever the engine started behind.
+    // TerminateProcess on the direct child and would leave whatever the engine
+    // started behind.
     requestTaskkill(child, true);
 
     if (await waitForExit(child, stageTimeout(deadline, WINDOWS_FORCE_TASKKILL_GRACE_MS))) {

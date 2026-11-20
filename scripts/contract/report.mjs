@@ -1,8 +1,8 @@
 /**
  * report.mjs - render a contract snapshot diff as the frozen seven-section report.
  *
- * The format is fixed by requirements doc 07 section 6.5 and route doc 08
- * section 3.4b: a header block (title, engine line, counts line, summary line)
+ * The format is fixed: a header block (title, engine line, counts line and
+ * summary line)
  * followed by seven sections in a fixed order. Empty sections still print a
  * single `(none)` line so a script can assert the report shape without parsing
  * prose. Every line is plain ASCII and holds exactly one entry; the report is
@@ -12,9 +12,8 @@
  *   1 added          2 removed        3 suspected renames   4 field changes
  *   5 parity         6 capability impact                   7 action required
  *
- * The order follows route doc 08 section 4.2 and the assigned work package:
- * added before removed. Requirements doc 07 section 6.5 was aligned to the same
- * order (decision D-18), so section 1 is added and section 2 is removed.
+ * The order is fixed: added before removed. The report was aligned to the same
+ * order, so section 1 is added and section 2 is removed.
  *
  * Rendering is pure: `renderReport(result)` takes the object produced by
  * `scripts/contract/diff.mjs`, returns a string array and never reads files.

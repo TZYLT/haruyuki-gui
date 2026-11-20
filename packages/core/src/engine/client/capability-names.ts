@@ -3,7 +3,7 @@
  * its wire id.
  *
  * The command model is owned by the protocol package; the vocabulary itself is
- * is generated, never authored here.
+ * generated, never authored here.
  *
  * The rule this module exists to keep: `packages/core/src/engine/client/` must
  * not contain a wire id literal. Nothing below names one.

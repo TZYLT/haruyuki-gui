@@ -1,5 +1,6 @@
 /**
- * Smoke tests for the headless host port as `nine-item contract` (nine items).
+ * Smoke tests for the headless host port implemented against the nine-item
+ * `HostPort` contract.
  *
  * The shape is declared in `host-port.ts`, `host-port-contract.test.ts` is the
  * per-item semantic table, and `headless-host-port.ts` is the implementation
@@ -14,10 +15,9 @@
  * directories, no mocks of `node:fs`, no engine process ever started, and no
  * assertion on internals that a stricter contract test is free to change.
  *
- * Cleanup is point-by-point rather than recursive removal (no recursive section 5.1,
- * rule 3): each file is unlinked and each directory is removed only after its
- * children, so a bug in the fixture can never delete a tree this suite did not
- * create.
+ * Cleanup is point-by-point rather than recursive removal: each file is
+ * unlinked and each directory is removed only after its children, so a bug in
+ * the fixture can never delete a tree this suite did not create.
  */
 
 import { statSync, writeFileSync } from "node:fs";
@@ -182,7 +182,7 @@ describe("headless host port: nine-item contract", () => {
     expect(await port.secureDelete("added")).toEqual({ ok: true });
 
     // A second port does not inherit the first one's store: persistence is
-    // 4.1 row 3: in-process persistence, not shared across instances).
+    // in-process, not shared across instances.
     const { port: other } = await createFixture();
 
     expect(await other.secureGet("token")).toEqual({ ok: false, code: "NOT_FOUND" });
@@ -225,8 +225,7 @@ describe("headless host port: nine-item contract", () => {
     expect(await port.pickPaths({ kind: "directory", multiple: true })).toEqual(answers[1]);
     expect(await port.pickPaths({ kind: "file", multiple: true })).toEqual([]);
 
-    // An empty queue is a cancellation, which is an empty array and not an error
-    // .
+    // An empty queue is a cancellation, which is an empty array and not an error.
     expect(await port.pickPaths({ kind: "file" })).toEqual([]);
 
     // Every call counts, including the cancelled ones.
@@ -308,7 +307,7 @@ describe("headless host port: nine-item contract", () => {
     const droppedPath = path.join(engineHome, "dropped.txt");
 
     // The answer does not depend on the input: empty list, name-only entries,
-    // empty list, name-only entries, an entry with a path, and a mixture.
+    // an entry with a path, and a mixture.
     const lists: { name: string; path?: string }[][] = [
       [],
       [{ name: "one.txt" }, { name: "two.txt" }],

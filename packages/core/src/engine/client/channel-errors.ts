@@ -14,9 +14,8 @@
  * 1. **`detail` is English ASCII and human-only.** One line, naming the operation
  *    and the measured fact. It never carries a wire id, a token or a file path,
  *    because it is quoted in logs. No code in this repository branches on it - the
- *    only exception is the `NOT_CONNECTED` wording below, which  section
- *    5.2.2 makes a requirement *for a human reader* (B3 may map it), not for a
- *    parser.
+ *    only exception is the `NOT_CONNECTED` wording below, which is a requirement
+ *    *for a human reader* (a reconnect policy may map it), not for a parser.
  * 2. **Every failure is a value.** Nothing here throws: these constructors return
  *    the `ok: false` arm's payload, so `send` can resolve instead of reject.
  */
@@ -41,9 +40,10 @@ import type { DiagnosticKind } from "./types";
  * comment used to claim the code surfaced through a rejected `send`; nothing ever
  * produced that, and a reader would have gone looking for it.
  *
- * If B3 needs to tell "the token was rejected" apart from "the port was shut"
- * when retrying, the code has to be carried out of the dial rather than guessed
- * from its message. That is an addition to the wiring state, not a signal here.
+ * If a reconnect policy needs to tell "the token was rejected" apart from "the
+ * port was shut" when retrying, the code has to be carried out of the dial
+ * rather than guessed from its message. That is an addition to the wiring state,
+ * not a signal here.
  *
  * `MALFORMED_RESPONSE` is present but is not the only producer of the `malformed`
  * signal: a frame that does not parse at all is reported by the channel directly,
@@ -79,8 +79,7 @@ export function diagnosticFor(code: EngineClientErrorCode): DiagnosticKind | und
  * A tracked request outlived its budget.
  *
  * The quoted number is the budget that was actually granted, not the family
- * default, so a clamped override is visible in the message a user reports
- * .
+ * default, so a clamped override is visible in the message a user reports.
  *
  * @param capability the capability that did not answer
  * @param timeoutMs the budget that expired
@@ -186,11 +185,11 @@ export function sendFailedError(capability: string): EngineClientError {
  * | never came up (`idle`/`spawning`/`handshaking`) | `engine has not become ready` | a startup problem |
  * | was up, then dropped | `channel was ready and dropped` | a reconnect problem |
  *
- * The distinction exists because B3 decides from it whether a send is worth
- * replaying at all: "never connected" has nothing to resume, while "dropped" is
- * exactly the case a reconnect handles. The code stays the same on both arms -
+ * The distinction exists because a reconnect policy decides from it whether a
+ * send is worth replaying at all: "never connected" has nothing to resume, while
+ * "dropped" is exactly the case a reconnect handles. The code stays the same on
  * both arms - the error-code list is closed and a new code is not available - so
- * wording is the only carrier, which is why it is pinned by test.
+ * the wording is the only carrier, which is why it is pinned by test.
  *
  * @param everReady whether this channel was ever usable
  * @param extra optional clause naming the operation, appended after the state

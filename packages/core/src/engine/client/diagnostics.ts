@@ -2,11 +2,10 @@
  * Engine-client diagnostics: what the channel saw go wrong, bounded, redacted
  * and aggregated.
  *
- * Scope sources: docs/26-B2 section 6.5 (the record shape, and the redaction
- * rule "no token, no absolute path survives"), -B2 section 2.10 facts
- * 44-45 and decisions `B2-D07` (an unknown event type is COUNTED per type,
- * never stored per frame) and `B2-D09` (a fixed 512-record ring, 4 KB per
- * record).
+ * The record shape is below, and the redaction rule it enforces is "no token, no
+ * absolute path survives". Two constraints shape the storage: an unknown event
+ * type is COUNTED per type, never stored per frame, and the ring is a fixed 512
+ * records of at most 4 KB each.
  *
  * Three jobs are kept in three pieces, because each one has its own failure
  * mode and its own test:
@@ -31,11 +30,11 @@
  *
  * The one boundary text substitution cannot enforce is `Endpoint`. A
  * `{url, token}` pair must never enter a record as a whole. The seam for "which
- * 6.6, boundary 2). The seam for "which engine did this" is
- * {@link describeEndpoint}: it yields host:port and nothing else - no scheme,
- * no path, no query, no token - and an unparsable URL falls back to a
- * placeholder rather than being passed through, because a URL that will not
- * parse is exactly the one that may carry a secret in an unexpected position.
+ * engine did this" is {@link describeEndpoint}: it yields host:port and nothing
+ * else - no scheme, no path, no query, no token - and an unparsable URL falls
+ * back to a placeholder rather than being passed through, because a URL that
+ * will not parse is exactly the one that may carry a secret in an unexpected
+ * position.
  */
 
 import type { DiagnosticKind, DiagnosticRecord, Endpoint } from "./types";
@@ -44,7 +43,7 @@ import type { DiagnosticKind, DiagnosticRecord, Endpoint } from "./types";
  * How many records the ring keeps before it overwrites the oldest.
  *
  * 512 is roughly three full approval round trips, small enough that the buffer
- * the buffer can never be the reason a process grows.
+ * can never be the reason a process grows.
  */
 export const DIAGNOSTIC_RING_CAPACITY = 512;
 
@@ -52,7 +51,7 @@ export const DIAGNOSTIC_RING_CAPACITY = 512;
  * Per-field UTF-8 byte ceiling for a stored record's text.
  *
  * `engineText` is capped at 4 KB, and the same fence is applied to `subject`
- * applied to `subject` and `engineVersion`: a record is bounded or it is not,
+ * and `engineVersion`: a record is bounded or it is not,
  * and a hostile `subject` would otherwise be an unbounded string in the buffer.
  * 4 KB covers the engine's longest observed rejection reason.
  */
@@ -245,8 +244,7 @@ export type RedactionRule = {
 };
 
 /**
- * The substitutions that implement "no token, no absolute path" (docs/26
- * section 6.5).
+ * The substitutions that implement "no token, no absolute path".
  *
  * Order is load-bearing and is tested, in three bands:
  *
@@ -543,8 +541,8 @@ export function sanitizeDiagnosticRecord(record: DiagnosticRecord): DiagnosticRe
  *
  * This is the only sanctioned way to put an endpoint near a diagnostic, and it
  * exists because `{url, token}` must never enter one: the URL is a credential
- * boundary 2 - the URL is a credential carrier too: the token may sit in its
- * query string, and its path can name a workspace).
+ * carrier too - the token may sit in its query string, and its path can name a
+ * workspace.
  *
  * An unparsable URL yields {@link ENDPOINT_FALLBACK} rather than the raw string,
  * because a URL that fails to parse is precisely the one whose secret may be

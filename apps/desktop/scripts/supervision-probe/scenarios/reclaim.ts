@@ -1,6 +1,6 @@
 /**
  * Reclaim and the two directions it can point: process evidence and the
- * directions it can point.
+ * two-condition decision.
  *
  * A reclamation needs a real leak: a child that outlives the process which wrote
  * its marker, reclaimed by the shell's own boot scan. The opposite case is a live
@@ -414,7 +414,7 @@ async function checkV04(): Promise<void> {
 /**
  * Another shell's live marker plus an unrelated live PID must not be killed, and
  * the manual dialog must show that evidence, cancel without a kill, and only kill
- * kill, and only kill after the explicit confirm.
+ * after the explicit confirm.
  *
  * The marker deliberately names a different image and a younger start time, so
  * the double-condition decision is `ambiguous`; that is the honest "another

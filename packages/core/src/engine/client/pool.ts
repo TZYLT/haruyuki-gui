@@ -2,27 +2,22 @@
  * ChannelPool: the `agentId -> Channel` table, and the only place a channel is
  * built, dropped or kept.
  *
- * Shape source:  section 5.1 (the frozen `ChannelPool` signature),
- * section 3.1 (the layer split: the pool decides *who has how many connections*,
- * the channel decides *what happens on one*), section 3.3 (`pool.ts` is this
- * work package's file), section 6.2 (`the bridge`: build/close/local failure) and
- * section 3.6 (the endpoint seam). User-facing behaviour: docs/26 section 4.7
- * and the `` ruling - **one connection per agent**.
- *
- * The pool is deliberately thin, and the thinness is the design:
+ * The pool decides *who has how many connections*; the channel decides *what
+ * happens on one*. The pool is deliberately thin, and the thinness is the
+ * design:
  *
  * - **It does not own a socket.** The connection, its handshake queue and its
  *   readiness live behind {@link ChannelFactory}, which the wiring
  *   (`wiring.ts`) connects to the transport. That keeps the pool replaceable:
- *   one-connection-many-subscriptions implementation changes this file only,
- *   because no channel code moves.
+ *   swapping it for a one-connection-many-subscriptions implementation changes
+ *   this file only, because no channel code moves.
  * - **It holds no wire vocabulary.** No frame, no field name and no
  *   command name appears here; a channel is addressed by agent id and an
  *   endpoint, both of which are caller-side values.
  * - **It never holds the endpoint.** The endpoint is read once per creation and
  *   handed straight to the factory; it is not stored, not logged and not put in
  *   a diagnostic (the token is a plaintext leak surface). A pool that cached it
- *   leak surface). A pool that cached it would widen that surface from the life
+ *   would widen that surface from the life
  *   of one creation call to the life of the process.
  * - **It introduces no shared state between channels.** Each channel owns its
  *   own subscriber sets, in-flight table and diagnostics (`channel.ts`); the
@@ -32,11 +27,10 @@
  * Five rules the tests are built around, because each one has a user-visible
  * failure mode:
  *
- * 1. **One channel per agent** (``, INV-6). Two calls for one agent return
- *    the same instance; two agents never share one. This is also what makes
- *    "close C and A keeps running" possible at all: there is no shared socket
- *    to cancel . The pool itself 2.3 fact 14 - measured, A finished 10/10 after
- *    C's connection was closed).
+ * 1. **One channel per agent.** Two calls for one agent return the same
+ *    instance; two agents never share one. This is also what makes "close C and
+ *    A keeps running" possible at all: there is no shared socket to cancel
+ *    (measured: A finished 10/10 after C's connection was closed).
  * 2. **A conversation id is not a connection key.** It is a request scope
  *    (documented on the frozen `ChannelPool` type), so a
  *    second conversation for the same agent reuses the channel and the socket.
@@ -45,11 +39,11 @@
  * 3. **`getChannel` is synchronous.** It registers intent; it never awaits a
  *    network. A caller on a render path cannot await, and a channel that is not
  *    connected yet answers `NOT_CONNECTED` instead of blocking. The pool itself
- *    5.1). The pool itself has no promise in it at all.
+ *    has no promise in it at all.
  * 4. **Local failure does not spread.** One agent's close, one agent's failed
- *    agent's failed creation and one agent's throwing `close()` touch that agent
+ *    creation and one agent's throwing `close()` touch that agent and nothing
  *    else. This is the whole value of one connection per agent: no shared
- *    no shared failure.
+ *    subject, so no shared failure.
  * 5. **`closeAll` is not a terminal dispose.** It closes what exists now and
  *    drops the entries; a later `getChannel` builds a fresh channel. It is the
  *    "close the window" action, not "shut the pool down for good", and it says
@@ -211,7 +205,8 @@ function isClosedNow(channel: Channel): boolean {
  * this runs, so the channel is unreachable from the pool either way. Letting the
  * throw escape would mean one broken channel can stop `closeAll` from closing
  * the rest - a shared failure over a per-agent fault, which is exactly the class
- * of bug one-connection-per-agent removes for the user. The channel's own defect still surfaces
+ * of bug one connection per agent removed for the user. The channel's own
+ * defect still surfaces
  * where it belongs: in that channel's diagnostics, or in the test that owns it.
  *
  * @param channel the channel to close
@@ -265,7 +260,7 @@ function assertConversationId(conversationId: string): void {
  * `everReady: false` is the load-bearing half: it makes `NOT_CONNECTED` say
  * "engine has not become ready" rather than "was ready and dropped", which is
  * the distinction a reconnect policy needs in order to tell a startup problem
- * tell a startup problem from a dropped connection.
+ * from a dropped connection.
  *
  * @returns never ready, and never was
  */
@@ -277,7 +272,7 @@ const NEVER_READY: () => ChannelReadiness = () => ({ ready: false, everReady: fa
  * A degraded channel reports not-ready, and `send` checks readiness *before* it
  * writes (`channel.ts`), so this is never called. It throws rather than
  * returning quietly so that a future change which starts writing anyway fails
- * loudly in a test instead of dropping a command on the floor - a silent drop is
+ * loudly in a test instead of dropping a command on the floor - a silent drop
  * is the one failure mode that must never happen.
  */
 const UNREACHABLE_WRITE: ChannelWriter = () => {
@@ -344,11 +339,10 @@ export class EngineChannelPool implements ChannelPool {
    *   conversation the channel was built for stays its creation scope: the
    *   channel was opened (subscribed, handed to the factory) for that scope, and
    *   re-scoping an established connection behind the caller's back would
-   *   redirect commands another caller already issued - the exact cross-talk
-   *   one-connection-per-agent removes. A caller that needs a different scope states it per
-   *   request (`CommandRequest.runtime`); if a *second connection* per
-   *   conversation is ever wanted, that is a different pool, not a flag here
-   *   (see the work report for the blast radius).
+   *   redirect commands another caller already issued - the exact cross-talk one
+   *   connection per agent removed. A caller that needs a different scope states
+   *   it per request (`CommandRequest.runtime`); if a *second connection* per
+   *   conversation is ever wanted, that is a different pool, not a flag here.
    * - **A wrapper that closed itself is replaced, not returned.** A consumer may
    *   call `close()` on the `Channel` it holds. Returning that instance would
    *   make every later send fail forever, so the dead entry is dropped and a
@@ -361,7 +355,7 @@ export class EngineChannelPool implements ChannelPool {
    * - **A stand-in is not cached, because "no endpoint yet" is temporary.** The
    *   one thing this method must not do is promote a *moment* into a *verdict*:
    *   the endpoint is non-null only while the engine is ready, and the engine is
-   *   engine is handshaking at startup, so "null endpoint" describes the normal
+   *   handshaking at startup, so "null endpoint" describes the normal
    *   first few hundred milliseconds - during which a window may well ask for a
    *   channel to restore a conversation. Caching the stand-in would make that
    *   agent unreachable for the whole process, with no retry and no signal the
@@ -461,8 +455,8 @@ export class EngineChannelPool implements ChannelPool {
    * Closes one agent's channel and drops its entry.
    *
    * This is the operation one connection per agent exists for: it closes
-   * channel. Other channels keep their entries, their subscribers, their
-   * in-flight requests and their timers, so an agent that is mid-answer keeps
+   * **only** this agent's channel. Other channels keep their entries, their
+   * subscribers, their in-flight requests and their timers, so an agent that is
    * mid-answer keeps answering after a neighbour is closed.
    * Nothing here touches the map entry of another agent, and there is no
    * pool-level resource to dispose - the whole point of one channel per agent.
@@ -520,9 +514,8 @@ export class EngineChannelPool implements ChannelPool {
    * the pool's own re-entrancy error is treated as "this agent's connection
    * could not be opened" - the endpoint was not available, the transport refused
    * or the factory threw - and becomes a channel that answers `NOT_CONNECTED`.
-   * That is  section 3.6.3's promise that the endpoint seam changes
-   * nothing here: whatever the resolver returns, the pool still hands the caller
-   * a `Channel`.
+   * The endpoint seam changes nothing here: whatever the resolver returns, the
+   * pool still hands the caller a `Channel`.
    *
    * Returns `undefined` when no channel could be built, so the caller can hand out
    * a stand-in without storing it. Keeping "build a channel" and "decide whether

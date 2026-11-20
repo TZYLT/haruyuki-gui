@@ -1,8 +1,8 @@
 /**
  * Empty state.
  *
- * **Draws, does not decide.** The requirement is explicit (FZ §6.4 item 8,
- * `A4-Q22`): whether an empty result is worth an empty state -- as opposed to
+ * **Draws, does not decide.** The requirement is explicit: whether an empty
+ * result is worth an empty state -- as opposed to
  * nothing, or a different message -- is a decision the page makes. This component
  * therefore has no `isEmpty`, no `items.length` check and no timing logic; it
  * renders what it is given, when it is given.

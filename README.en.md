@@ -22,7 +22,7 @@ This section and the next describe **what you can see once you have the package*
 
 ## 2. Current Status
 
-This section reflects `main@903e27f` on the main branch (version `0.1.0`).
+This section reflects `main@2e87ca9` on the main branch (version `0.1.0`).
 
 This version is **a foundation that installs and starts**, not a finished application that can chat. Every line below sits in exactly one of three states, and there is no fourth:
 

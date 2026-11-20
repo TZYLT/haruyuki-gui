@@ -2,7 +2,7 @@
 //
 // Global ignores + TypeScript parser wiring live in the shared block below.
 // The per-package blocks implement the package-boundary rules (the frozen
-// acceptance matrix plus the shell host-API rules): importing across a
+// permission matrix plus the shell host-API rules): importing across a
 // forbidden edge, or value-importing a package that may only be type-imported,
 // or reaching for the other app shell's host API, is an error. Each rule id is
 // embedded in its message so gate self-tests can assert which rule fired.
@@ -142,7 +142,7 @@ function uiImportPatterns({ r6 }) {
       // This fast pass cannot see the enumerated allow-list (ESLint has no
       // "forbid all names except these" form), so its wording says what it can
       // enforce: type imports here, and the value imports only through the
-      // authoritative gate in scripts/check-boundaries.mjs (CONST_EXPORTS_BY_EDGE,
+      // authoritative gate in scripts/check-boundaries.mjs (CONST_EXPORTS_BY_EDGE).
       // A file that imports one of those tables disables this
       // rule with a comment naming the gate, which keeps the exception visible.
       message:

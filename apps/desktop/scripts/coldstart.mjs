@@ -2,8 +2,7 @@
 /**
  * coldstart.mjs - measure how long the shell takes to become usable.
  *
- * Scope: docs/23 section 5, the large-image stage. The criterion's definition, agreed in `D1-Q34`:
- * cold start is process start to *both* of
+ * Cold start is process start to *both* of:
  *
  *   `ready-to-show` fired  -- the window is painted and about to appear
  *   `readyState === "complete"` -- the renderer document finished loading

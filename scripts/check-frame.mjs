@@ -293,8 +293,7 @@ function readFrameTypes(root) {
       if (ts.isSpreadAssignment(property)) {
         throw new Error(
           `FRAME_TYPES spreads another object in ${FRAME_TYPES_FILE}; the gate resolves rows ` +
-            "statically and cannot follow a spread, so those rows would be silently unregistered " +
-            "",
+            "statically and cannot follow a spread, so those rows would be silently unregistered",
         );
       }
 

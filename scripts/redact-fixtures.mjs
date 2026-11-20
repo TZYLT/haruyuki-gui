@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 /**
- * redact.mjs - deterministic redaction pass for wire recordings (A3; docs/18
- * section 1.2 R-06, section 3.2 step 1, section 5.1 and section 8 INV-A3-2).
+ * redact.mjs - deterministic redaction pass for wire recordings.
  *
  * Usage:
  *   node scripts/redact-fixtures.mjs <input.jsonl> <output.jsonl>

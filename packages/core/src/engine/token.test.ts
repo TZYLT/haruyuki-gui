@@ -3,7 +3,7 @@
  *
  * Every case builds its own `mkdtemp` directory and the shared `afterEach` only
  * unlinks the two known file names before removing the directory (no recursive
- * section 5.1 rule 3: no recursive removal).
+ * removal).
  *
  * The ACL cases are split by platform on purpose: POSIX asserts the exact mode,
  * Windows asserts the real `icacls` output, so a degrading environment fails the
@@ -189,7 +189,8 @@ describe("platform ACL", () => {
   it.skipIf(process.platform !== "win32")(
     "keeps the ACL exact for a directory with spaces and non-ASCII characters",
     async () => {
-      // Escapes keep this source file ASCII while the real path exercises R-5.
+      // Escapes keep this source file ASCII while the real path exercises the
+      // degraded ACL branch.
       const dir = await createTempDir("haruyuki-token-\u6d4b\u8bd5 ");
       const token = generateToken();
 

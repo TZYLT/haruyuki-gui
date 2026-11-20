@@ -1,8 +1,7 @@
 /**
  * app_server_info handshake: the second half of "ready".
  *
- * Scope source: no recursive-B1 sections 2.3 (F-15..F-17), 3.1, 3.3 (d) and (f), and
- * section 8 invariant 2 ("WS open is not ready"). The engine answers one
+ * An open WebSocket is not "ready" by itself, so the engine answers one
  * request_id-correlated control frame:
  *
  *   -> {"type":"app_server_info","request_id":"<non-empty>"}
@@ -10,7 +9,7 @@
  *       "letta_code_version":"0.6.0","protocol_version":1,"backend":"local",
  *       "capabilities":{...}}
  *
- * F-17: the engine echoes any non-empty `request_id`, and the response is
+ * The engine echoes any non-empty `request_id`, and the response is
  * correlated by it, so a frame with the right type but a foreign id belongs to
  * another request and is ignored. That is intentional here: the engine uses one
  * socket for several request/response pairs, and treating a stray id as a fatal
@@ -20,7 +19,7 @@
  * This module is private by design: it is not exported from `engine/index.ts`,
  * so the facade (`engine.ts`) is its only consumer. Failures are
  * raised as `EngineConnectionError` with `code = "PROTOCOL_MISMATCH"` - the
- * frozen code for "opened but did not answer with a matching response"
+ * frozen code for "opened but did not answer with a matching response".
  * The facade catches that class and forwards `toEngineError()`; it
  * does not need to inspect messages or build an error of its own.
  */
@@ -34,10 +33,10 @@ import type { AppServerInfo } from "./types";
 /** Request frame type; the engine's handler keys on this literal. */
 const APP_SERVER_INFO_TYPE = "app_server_info";
 
-/** Response frame type that completes the handshake (F-15). */
+/** Response frame type that completes the handshake. */
 const APP_SERVER_INFO_RESPONSE_TYPE = "app_server_info_response";
 
-/** Default handshake budget; F-16 measured 59 ms, so 5 s is generous. */
+/** Default handshake budget; the measured handshake takes 59 ms, so 5 s is generous. */
 const DEFAULT_HANDSHAKE_TIMEOUT_MS = 5_000;
 
 /** Upper bound of a frame summary copied into `wireHint`. */
@@ -53,7 +52,7 @@ const MAX_WIRE_HINT_CHARS = 300;
  * budget runs out.
  *
  * Rejects with `EngineConnectionError` and `code = "PROTOCOL_MISMATCH"` when:
- * - no matching response arrived within `timeoutMs` (default 5 s, F-16);
+ * - no matching response arrived within `timeoutMs` (default 5 s);
  * - the engine answered `success: false`;
  * - the matching answer is missing a valid `protocol_version` /
  *   `letta_code_version`;

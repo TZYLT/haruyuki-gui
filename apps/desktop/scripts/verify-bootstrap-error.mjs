@@ -2,7 +2,7 @@
  * The bootstrap error surface, driven for real.
  *
  * The requirement says the main-process error page must be visible when `app://`
- * serve. It was marked accepted, but `bootstrapErrorHtml` had no call site at
+ * cannot serve. It was marked accepted, but `bootstrapErrorHtml` had no call site at
  * all: a failed launch printed to stderr and called `app.exit(1)`. A unit test of
  * the HTML string could not catch that, because the missing piece was the wiring,
  * not the string.

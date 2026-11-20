@@ -459,7 +459,7 @@ describe("bulk paging", () => {
     sender.send(bulkFrame(singlePageItems(3)));
 
     // Consecutive numbers are what makes the pages read as one snapshot on a
-    // channel where cross-channel order is not promised (INV-A3-8).
+    // channel where cross-channel order is not promised.
     expect(transport.received.map((frame) => frame.seq)).toEqual(expected);
   });
 
@@ -497,7 +497,7 @@ describe("bulk paging", () => {
 
     const tokens = transport.received.map((frame) => frame.page?.token);
 
-    // C5-R07 and `packages/ui/src/bridge/entry.ts`: the dedup key is
+    // `packages/ui/src/bridge/entry.ts`: the dedup key is
     // `${watermark}:${token}`, and every page of one snapshot shares the
     // watermark, so a shared token would make the renderer drop pages 2..n as
     // duplicates of page 1.

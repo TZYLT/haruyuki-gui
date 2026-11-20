@@ -5,7 +5,7 @@
  * Scope: three of the five assertions:
  *
  *   - the engine reaches `ready` through `@haruyuki/core`, in a real Electron main
- *           main process, not through the acceptance script's own copy of the logic
+ *     process, not through the acceptance script's own copy of the logic
  *   - the handshake reports `protocol_version = 1` and an engine version
  *   - the process stops gracefully and the child is gone afterwards
  *
@@ -267,7 +267,7 @@ async function main() {
 
   // The facade exposes no `url` accessor -- discovery happens internally and the URL
   // goes straight to the socket. So the timing is what this assertion can cover: it
-  // `start()` returning, which is the definition of ready (socket open AND
+  // measures `start()` returning, which is the definition of ready (socket open AND
   // `app_server_info` answered, per engine.ts).
   if (typeof result.portMs !== "number" || result.portMs <= 0) {
     fail(`the ready timing was not measured: ${JSON.stringify(result.portMs)}`);

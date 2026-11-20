@@ -13,8 +13,8 @@
  * One frame, no pages
  *   `publish` builds exactly one `layout.snapshot` on the `bulk` channel and
  *   hands it over untouched. It does not mint `seq` and it does not fill
- *   `page.watermark`/`page.token`/`page.more`: the C5 sender numbers and pages
- *   a snapshot, and a producer that guessed those fields would fork the paging
+ *   `page.watermark`/`page.token`/`page.more`: the shared frame sender
+ *   (`createFrameSender`) numbers and pages a snapshot, and a producer that
  *   guessed those fields would fork the paging contract. The body is
  *   `{ ...store.getStatus(), revision, items: [doc] }` -- an array body, which
  *   is what makes the pager treat the document as one page on its own.
@@ -24,8 +24,8 @@
  *   {@link LAYOUT_SAVE_WINDOW_MS}, the last document wins, and the window fires
  *   one `store.save`. The window is not restarted by a later request: ten
  *   changes in flight are one write, and the deadline stays the one set by the
- *   first change. 800 rather than 1000 leaves room for E1's own <=100 ms merge
- *   (the renderer must not add a second long debounce) and the write itself to
+ *   first change. 800 rather than 1000 leaves room for the renderer's own
+ *   <=100 ms merge (it must not add a second long debounce) and for the write
  *   itself, so a save still fits the one-second budget.
  *
  * Revision, twice
@@ -35,9 +35,9 @@
  *   the current snapshot instead of a guess.
  *   The check runs a second time right before the write, because the window may
  *   have opened while an earlier save was still in flight; when that save
- *   advanced the revision the queued batch is stale after all
+ *   advanced the revision the queued batch is stale after all. Saves are
  *   serialized on one promise chain, so two batches never write the same file
- *   batches never write the same file at once.
+ *   at once.
  *
  * Delivery is not durability
  *   If `send` throws after a successful save, the document stays on disk, the
@@ -48,8 +48,8 @@
  * Drafts are delegated, never throttled
  *   `handleDraftGet`/`handleDraftSet`/`handleDraftClear` are thin calls into the
  *   injected `DraftStore`. The draft store writes immediately; the renderer
- *   immediately; E5 owns the typing debounce. This module adding one would make
- *   a draft loss window on quit.
+ *   owns the typing debounce. This module adding one would make a draft loss
+ *   window on quit.
  *
  * Ownership
  *   The channel owns its timer and nothing else. The stores are injected and
@@ -94,7 +94,7 @@ export type LayoutChannelScheduler = {
 export type LayoutChannelOptions = {
   store: LayoutStore;
   draftStore: DraftStore;
-  /** Emit one frame. Must be the C5 sender in production; must not be a back door. */
+  /** Emit one frame. Must be `createFrameSender` in production, not a back door. */
   send: (frame: Frame) => void;
   /** Override {@link LAYOUT_SAVE_WINDOW_MS}; tests inject 0 or a short window. */
   saveWindowMs?: number;

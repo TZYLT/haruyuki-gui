@@ -5,7 +5,7 @@
  * to the navigation page. An entry whose target is missing is omitted rather
  * than shown disabled: a settings item that does nothing is worse than no item.
  *
- * The edit menu is a small popover rather than A4's Dialog because it must act on
+ * The edit menu is a small popover rather than a Dialog because it must act on
  * the focused page without stealing focus first; `document.execCommand` is the
  * only API that reaches the current selection across the Electron renderer.
  */

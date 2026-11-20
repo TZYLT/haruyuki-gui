@@ -184,8 +184,7 @@ describe("allowlist", () => {
     //
     // D2 appends the dropped-file report, D4 the three diagnostics commands, D3
     // its seven, G1 the five runtime channels, and E1 the layout read and the
-    // command entry. `channel-name v1` freezes the bridge's *members*, not its channel
-    // list.
+    // command entry. The bridge's *members* are frozen, not its channel list.
     expect(CHANNEL_ALLOWLIST).toEqual([
       PING,
       "bridge:control.diagnostics.export",

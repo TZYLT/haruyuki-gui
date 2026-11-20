@@ -9,9 +9,9 @@
  * Why the bodies are declared here
  *   `@haruyuki/protocol` exports the frame envelope and the frame type table,
  *   but none of the three handshake bodies (checked against its public surface
- *   at the time of writing). The protocol package is not ours to widen in this
- *   work package, so the bodies are declared here, verbatim from the frozen
- *   shapes, and stay module-local until that package decides to own them.
+ *   at the time of writing). The protocol package is not ours to widen for this
+ *   change, so the bodies are declared here, verbatim from the frozen shapes,
+ *   and stay module-local until that package decides to own them.
  *
  * The two halves of the round trip
  *   {@link evaluateReady} is the pure decision: one already-validated ready body
@@ -32,7 +32,7 @@
  *
  * Version equality is exact
  *   `bridgeVersion` is compared with `===` and never parsed or otherwise
- *   reasoned about (C5-Q07: the version comes from the protocol package version
+ *   reasoned about (the version comes from the protocol package version
  *   and only an exact match is accepted). `appVersion` is diagnostic only: it
  *   describes the renderer build and never takes part in the decision.
  *

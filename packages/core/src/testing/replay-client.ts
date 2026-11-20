@@ -2,7 +2,7 @@
  * replay-client.ts - drive a wire fixture through the fake engine server.
  *
  * Scope: the replay data flow - `loadFixture` ->
- * `startFakeServer({ mode: "replay" })` -> client), section 3.4.3 (the frozen
+ * `startFakeServer({ mode: "replay" })` -> client - plus the plan and
  * fake-server handle shapes declared below.
  *
  * When is a replay finished? The fake server has no completion event: it stays

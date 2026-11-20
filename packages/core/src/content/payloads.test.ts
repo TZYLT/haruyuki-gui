@@ -4,14 +4,14 @@
  *
  * The point is not throughput but fidelity: each test compares the payload that
  * went in with the string on the block character for character, and the tool
- * result is taken through a JSON round trip as well. The sizes are the ones the
- * requirement names -- 100,000 characters of prose, a 1 MiB base64 image and a
- * 50 MiB tool result -- so a future cap added for "safety" fails here instead of
+ * result is taken through a JSON round trip as well. The sizes are the stress
+ * values -- 100,000 characters of prose, a 1 MiB base64 image and a 50 MiB tool
+ * result -- so a future cap added for "safety" fails here instead of
  * silently trimming what the engine sent.
  *
- * The 50 MiB case is the only slow one; its measured duration is reported in
- * the task log rather than asserted, because a wall-clock bound would make the
- * suite flaky on a busy machine.
+ * The 50 MiB case is the only slow one; its measured duration is reported
+ * rather than asserted, because a wall-clock bound would make the suite flaky
+ * on a busy machine.
  */
 
 import type {

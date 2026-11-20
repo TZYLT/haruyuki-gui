@@ -1,5 +1,5 @@
 /**
- * W-15's real-engine half, opt-in.
+ * The command dispatcher's real-engine half, opt-in.
  *
  * It is skipped unless `E1_ENGINE` names the engine package entry. The engine
  * is the 0.6.0 npm package (`haruyuki.js`), not a Windows executable: the
@@ -8,7 +8,7 @@
  *
  * Run with:
  *   E1_ENGINE=J:/Projects/Haruyuki-desktop/_research/engine-0.6.0/package/haruyuki.js \
- *     pnpm vitest run packages/core/src/command/w15-real-engine.test.ts
+ *     pnpm vitest run packages/core/src/command/command-real-engine.test.ts
  *
  * The renderer half is not in this test; the fake-port seam test covers the
  * dispatcher/merger/sender, and the desktop renderer tests cover the client.
@@ -57,9 +57,9 @@ function waitForUrl(stream: NodeJS.ReadableStream, pattern: RegExp): Promise<str
   });
 }
 
-describe.skipIf(!enabled)("W-15 real engine", () => {
+describe.skipIf(!enabled)("command real engine", () => {
   beforeAll(async () => {
-    temp = mkdtempSync(join(tmpdir(), "e1-w15-"));
+    temp = mkdtempSync(join(tmpdir(), "command-real-engine-"));
     const tokenPath = join(temp, "ws-token.txt");
     const token = "a".repeat(64);
     writeFileSync(tokenPath, token);
@@ -188,7 +188,7 @@ describe.skipIf(!enabled)("W-15 real engine", () => {
     const dispatcher = createCommandDispatcher({ getChannel: () => channel });
     const reply = await dispatcher.invoke({
       capability: "terminal.kill",
-      body: { terminal_id: "e1-w15-missing" },
+      body: { terminal_id: "command-missing" },
     });
 
     expect(reply).toEqual({ ok: true, completion: "accepted" });

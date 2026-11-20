@@ -1,12 +1,11 @@
 /**
  * Engine client: the outward contract of one agent's channel.
  *
- * Shape source: docs/26-B2 sections 6.1, 6.2, 6.4 and 6.5 (the request, result,
- * scope, event, capability, diagnostic and endpoint shapes) and  section
- * 5.1 (the `Channel` and `ChannelPool` signatures). Those shapes are signed and
- * are reproduced here without a signature change; the file is types only - no
- * class, no default, no parsing, no capability resolution - so the
- * implementation (D4) can change without reopening the contract.
+ * The request, result, scope, event, capability, diagnostic and endpoint shapes,
+ * plus the `Channel` and `ChannelPool` signatures, are frozen and reproduced
+ * here without a signature change; the file is types only - no class, no default,
+ * no parsing, no capability resolution - so the implementation can change without
+ * reopening the contract.
  *
  * Architecture decision that shapes everything below: **one WebSocket per
  * agent.** `Channel` is the only handle a consumer ever holds; the socket, the
@@ -60,7 +59,7 @@ export type RuntimeScope = {
  * single wire id.
  *
  * `body` is `unknown` rather than a per-capability generic: the contract is one
- * non-generic request shape (§6.1), and per-capability typing belongs to the
+ * non-generic request shape, and per-capability typing belongs to the
  * caller's own wrapper. `requestId` is minted by the implementation when
  * omitted. `runtime` is omitted for the device-wide commands that carry no
  * scope. `timeoutMs` is a per-request budget; the channel default applies when
@@ -226,8 +225,7 @@ export type DiagnosticKind = (typeof DIAGNOSTIC_KINDS)[number];
  * record findable); and `engineText` / `engineVersion` carry the engine's own
  * words and build so a field report can be matched against engine output without
  * re-running the failing scenario. Those five together are what the diagnostic
- * surface shows a user . The seam for "which 4.2): a code, the operation, a time and
- * the engine version.
+ * surface shows a user: a code, the operation, a time and the engine version.
  *
  * `engineText` is untrusted engine output. It is never rendered as UI text and
  * never parsed for control flow: it is quoted in logs. Nothing in this module
@@ -247,9 +245,8 @@ export type DiagnosticRecord = {
    * nothing. `at` answers "when did we see this", which is the only question a
    * diagnostic needs to answer; ordering engine events is `event_seq`'s job.
    *
-   * It exists so the diagnostic shown to a user can carry a timestamp at all
-   * . The seam for "whichs 4.2 and 6.5): "it broke a moment ago" is unusable
-   * against a record with no time on it.
+   * It exists so the diagnostic shown to a user can carry a timestamp at all:
+   * "it broke a moment ago" is unusable against a record with no time on it.
    */
   readonly at: number;
   /** The stable branch key. */

@@ -2,29 +2,28 @@
  * Layout acceptance: boundaries, performance, copy and logging.
  *
  * Not every acceptance criterion is about behaviour that the store and channel
- * unit tests can see; they are about the shape of the shipped code:
+ * unit tests can see; the ones below are about the shape of the shipped code:
  *
- *   -  the layout layer imports no host: no `electron`, no `vscode`, no
- *         renderer package, no app shell. The full boundary gate is `pnpm
- *         verify` (W-14); this is the C4-local check so a violation fails in
- *         C4's own file first.
- *   layout perf  the performance baseline from docs/35 §1.7: a 256 KiB document loads
- *         and saves inside P50/P95 budgets, and a 1 MiB draft reads and writes
- *         inside its P50 budgets. Numbers are printed so the report carries
- *         measurements, not just green checkmarks.
- *     core emits no user-facing copy: every string literal in the shipped
- *         layout sources is code-facing (codes, file names, keys), never CJK
- *         prose and never an i18n key. Comments are exempt.
- *   IME safety  diagnostics carry codes, file names and counts only -- never document
- *         text, draft text, page props or absolute paths.
+ *   - the layout layer imports no host: no `electron`, no `vscode`, no renderer
+ *     package, no app shell. The full boundary gate is `pnpm verify`; this is
+ *     the local check so a violation fails in this file first.
+ *   - the performance baseline: a 256 KiB document loads and saves inside
+ *     P50/P95 budgets, and a 1 MiB draft reads and writes inside its P50
+ *     budgets. Numbers are printed so the report carries measurements, not just
+ *     green checkmarks.
+ *   - core emits no user-facing copy: every string literal in the shipped
+ *     layout sources is code-facing (codes, file names, keys), never CJK prose
+ *     and never an i18n key. Comments are exempt.
+ *   - diagnostics carry codes, file names and counts only -- never document
+ *     text, draft text, page props or absolute paths.
  *
  * Determinism and the thresholds
- *   Timings are wall-clock on the machine running the test, which is what
+ *   Timings are wall-clock on the machine running the test, which is the
  *   baseline the budgets describe: a local disk on a development machine.
- *   measured ones, so the numbers describe a warm cache; the doc says cold
- *   cache is recorded separately. Thresholds are the published ones and are
- *   not loosened here: a machine that cannot meet them should surface the real
- *   numbers, not a relaxed threshold.
+ *   Warm-up iterations run before the measured ones, so the numbers describe a
+ *   warm cache; cold cache is recorded separately. Thresholds are the published
+ *   ones and are not loosened here: a machine that cannot meet them should
+ *   surface the real numbers, not a relaxed threshold.
  */
 
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
@@ -45,8 +44,11 @@ import type { LayoutShell } from "./layout-paths";
 import { createLayoutStore } from "./layout-store";
 import { validateLayoutDoc } from "./layout-validate";
 
-/** layout perf measures wall-clock time; run it standalone with C4_PERF=1. */
-const RUN_PERF = process.env["C4_PERF"] === "1";
+/**
+ * The performance case measures wall-clock time; run it standalone with
+ * LAYOUT_PERF=1.
+ */
+const RUN_PERF = process.env["LAYOUT_PERF"] === "1";
 
 /** The shipped sources this item owns, resolved from `import.meta.url`. */
 const CORE_LAYOUT_DIR = fileURLToPath(new URL("./", import.meta.url));
@@ -525,7 +527,7 @@ describe("layout acceptance", () => {
       (await layoutSourceFiles()).map(async (file) => ({ ...file, scan: scanSource(file.source) })),
     );
 
-    // Product copy lives in the shell, not in core (I-7). Tests are excluded
+    // Product copy lives in the shell, not in core. Tests are excluded
     // from the literal scan because synthetic draft text there is user data,
     // not copy; the i18n import check still covers every file.
     const shipped = files.filter(({ name }) => !name.endsWith(".test.ts"));
@@ -550,7 +552,7 @@ describe("layout acceptance", () => {
   });
 
   it("load failures log codes, file names and reasons only -- never document content", async () => {
-    const sentinel = "V18-SENTINEL-DO-NOT-LOG";
+    const sentinel = "LOG-SENTINEL-DO-NOT-LOG";
     const entries: LogEntry[] = [];
 
     // A parseable but invalid document. The sentinel lives in a tab's props
@@ -624,7 +626,7 @@ describe("layout acceptance", () => {
     expect(serialised).not.toContain("vendor.future");
     expect(serialised.length).toBeLessThan(1000);
 
-    // Drafts are text by contract (I-10); a refusal or eviction must not log it.
+    // Drafts are text by contract; a refusal or eviction must not log it.
     const draftEntries: LogEntry[] = [];
     const draft: DraftStore = createDraftStore({
       fs: createNodeLayoutFs(),

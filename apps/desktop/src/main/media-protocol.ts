@@ -16,7 +16,7 @@
  *
  * What it does NOT own: which types may be served and what headers they carry.
  * That is `media-mime.ts`, reached through {@link MediaTypePolicy}. The split is
- * split is deliberate and has a cost: two packages edit this module, so the seam
+ * deliberate and has a cost: two packages edit this module, so the seam is marked
  * `TODO(mime)` and each half can land on its own.
  *
  * Three facts from the route probe shape this file, each of which cost a run:

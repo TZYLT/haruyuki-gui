@@ -347,7 +347,7 @@ export const en = {
   "error.workspaceMissingTitle": "No folder is open",
   "error.workspaceMissingRisk": "Starting in {homeDir} lets the engine write its files there.",
   "error.workspaceUseHomeDir": "I understand the risk; use the home directory",
-  // The two ends `section 4.10` names separately. A stopped engine leaves the
+  // The two ends are named separately. A stopped engine leaves the
   // window and its content in place; a stopped core takes the shell's own child
   // with it, which is a different sentence and a different repair.
   "error.runtimeEngineLost": "The engine is no longer running",

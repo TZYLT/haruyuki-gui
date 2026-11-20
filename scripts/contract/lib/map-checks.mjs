@@ -25,7 +25,7 @@
  *   contract-cover   `detail: true` wires must equal the field-level snapshot
  *                    commands; both differences are reported separately.
  *                    The three `execute_command` parity invariants are also
- *                    re-evaluated here by the gate (P5-8): an advertised id
+ *                    re-evaluated here by the gate: an advertised id
  *                    without a handler, an unadvertised dispatch case without
  *                    an alias, and an alias without a dispatch case.
  *   contract-health  `health.degraded === true` is red; `coarse` entries are a

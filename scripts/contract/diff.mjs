@@ -2,16 +2,16 @@
  * diff.mjs - structural diff between two contract snapshots.
  *
  * `contract diff <a.json> [b.json]` compares two snapshot files, or a file
- * against the committed snapshot when `b` is omitted (requirements doc 07
- * section 5.2). Snapshot objects are accepted too; no extractor runs, no engine
+ * against the committed snapshot when `b` is omitted. Snapshot objects are
+ * accepted too; no extractor runs, no engine
  * source is read and nothing reaches the network.
  *
- * Output: the seven-section report from requirements doc 07 section 6.5,
- * rendered by `report.mjs`. Section 6 reverse-looks-up affected wires in
+ * Output: the seven-section report, rendered by `report.mjs`. Section 6
+ * reverse-looks-up affected wires in
  * `capabilities.json` and marks field-level (`detail`) capabilities.
  *
  * Section 5 (PARITY) also owns two drift signals the frozen seven-section layout
- * has no section for (P5-1): the per-command `inbound` flag
+ * has no section for: the per-command `inbound` flag
  * (`inbound.accepted` lost/gained) and the report counts (`counts.<attribute>`
  * changed from/to, `inboundOnly` included). Both reach `summary.parityChanges`
  * and therefore `summary.total`; every entry also yields a section-7 action.
@@ -23,7 +23,7 @@
  * used here (gate-only); 2 = broken input (missing file, bad JSON, unknown
  * schemaVersion, malformed snapshot or capability table). `engine.extractedAt`
  * is ignored. `runDiff({a, b, out})` throws `DiffInputError` for the caller to
- * caller to map to 2; field changes need `fieldLevel` on both sides; suspected
+ * map to 2; field changes need `fieldLevel` on both sides; suspected
  * renames pair unique fingerprints only; added/removed lists stay complete.
  * The `special`-block/count comparison itself lives in `lib/diff-parity.mjs`.
  */

@@ -1,16 +1,15 @@
 /**
  * Replay-corpus harness for the equivalence suite.
  *
- * Scope sources:  section 2.5 (what the replayer can and cannot do),
- * section 2.10 (the corpus facts) and section 6.4 (the `test` budget); docs/26
- * section 5.1 .
+ * Scope: what the replayer can and cannot do, the corpus layout, and the suite's
+ * own time budget.
  *
  * ## What this module is for
  *
  * The equivalence suite asks one question: **does the real client stack rebuild
- * event sequence - order, type, count - when fed the recorded frames?** Answering
- * it needs four things that would otherwise be copied by every suite that replays
- * a recording:
+ * the recorded event sequence - order, type, count - when fed the recorded
+ * frames?** Answering it needs four things that would otherwise be copied by
+ * every suite that replays a recording:
  *
  * 1. **The corpus, read rather than transcribed.** Every expectation is derived
  *    from `fixtures/engine/recordings/*.jsonl` at run time, which is also what keeps
@@ -20,7 +19,7 @@
  * 2. **A plan built from the recording.** The replayer emits `s2c` lines in fixture
  *    order, paced by the fixture's own `at` deltas.
  *    A plan therefore needs only `speed` - which **must be a number**, because the
- *    default `"instant"` makes `plan.inject` unobservable (fact 24).
+ *    default `"instant"` makes `plan.inject` unobservable.
  * 3. **A clock that is asked, not obeyed.** {@link createRecordingClock} keeps the
  *    recorded pacing as *requested* delays and returns at once, so a recording whose
  *    last frame sits at 30 s costs no wall clock. The requests are kept because they
@@ -33,9 +32,9 @@
  *
  * ## What it deliberately does not do
  *
- * - **No second socket.** The replayer serves one live connection (fact 27); a
+ * - **No second socket.** The replayer serves one live connection; a
  *   second client receives nothing. {@link startReplaySession} opens one transport.
- * - **No `c2s` writes.** Replay never answers a command (fact 19), so a write could
+ * - **No `c2s` writes.** Replay never answers a command, so a write could
  *   only produce a frame nobody recorded; the `write` port is a no-op.
  * - **No hand-written frames.** A synthetic frame could not disagree with the
  *   implementation; these can, which is why the corpus is read from disk.
@@ -72,11 +71,11 @@ import type {
 /* The corpus                                                                */
 /* ------------------------------------------------------------------------- */
 
-/** `fixtures/engine/recordings/`, the read-only A3 corpus. */
+/** `fixtures/engine/recordings/`, the read-only replay corpus. */
 const CORPUS_DIR_URL = new URL("../../../../../fixtures/engine/recordings/", import.meta.url);
 
 /** Capability token this suite shares between the fake server and the client. */
-const REPLAY_TOKEN = "w10-replay-token";
+const REPLAY_TOKEN = "replay-token";
 
 /** Budget for one connection attempt; a stuck upgrade must fail, not hang. */
 const CONNECT_BUDGET_MS = 1_000;
@@ -111,8 +110,7 @@ export type RecordedFrame = {
    * as `\uXXXX`, while replay emits `JSON.stringify(msg)`, which writes them
    * literally. Whether such a difference is *only* escaping is decided by
    * {@link isEscapingOnlyDifference} at the point of use - both texts are kept and
-   * the verdict is derived, never cached as a second record of one fact (`docs/28`
-   * `R-084`).
+   * the verdict is derived, never cached as a second record of one fact.
    */
   readonly byteIdentical: boolean;
 };
@@ -672,7 +670,7 @@ export type ReplaySession = {
    * How many times a transport was actually opened.
    *
    * Distinct from {@link ReplaySession.isConnected}, which stays true even when a
-   * second socket was opened behind it. The replayer serves one live connection
+   * second socket was opened behind it. The replayer serves one live connection,
    * so the count is the observable the guard keeps
    * at one.
    */
@@ -735,7 +733,7 @@ export type StartReplayOptions = {
  *
  * The server is started **before** the client connects, and the driver waits for
  * a socket before its first emission (the single-live-connection rule), so a case
- * -connection rule), so a case may inspect `server.emitted` in between.
+ * may inspect `server.emitted` in between.
  *
  * @param options the recording and an optional plan
  * @returns the session, already registered for teardown
@@ -857,7 +855,7 @@ export async function startReplaySession(options: StartReplayOptions): Promise<R
           `replay did not settle: ${String(frameTexts.length)} of ` +
             `${String(plannedDelays.length)} planned frame(s) arrived within ` +
             `${String(budgetMs)} ms. The plan and the recording disagree, or the driver ` +
-            "stalled on a socket - in replay mode a frame waits for a connection " +
+            "stalled on a socket - in replay mode a frame waits for a connection, " +
             "so this is a wiring failure, not a slow machine.",
         );
       }

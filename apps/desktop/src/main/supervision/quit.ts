@@ -3,8 +3,7 @@
  *
  * Why `before-quit` and not `will-quit`: `will-quit` is not cancellable, so an
  * asynchronous stop there would be cut off. `before-quit` can hold the quit open
- * with `preventDefault()` until the engine has really stopped (docs/33 section
- * 5.2, requirement section 4.6 item 4).
+ * with `preventDefault()` until the engine has really stopped.
  *
  * The order is the requirement's, not a preference:
  *

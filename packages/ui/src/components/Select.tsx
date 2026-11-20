@@ -1,7 +1,7 @@
 /**
  * Select.
  *
- * Single-select only, matching FZ §6.4. Base UI owns the floating positioning,
+ * Single-select only. Base UI owns the floating positioning,
  * the roving focus, the typeahead and the ARIA wiring -- all of which are easy to
  * get 90% right by hand and impossible to get fully right, because the last 10%
  * is screen-reader behaviour on a moving popup.

@@ -2,9 +2,8 @@
  * Engine client errors: the closed code set, the one error shape, and the
  * code -> message-key table.
  *
- * Shape source: docs/26-B2 sections 6.3 and 6.5. The seven codes are frozen:
- * a failure that does not fit one of them is a design gap to be fixed, not a
- * new member to be added here.
+ * The seven codes are frozen: a failure that does not fit one of them is a
+ * design gap to be fixed, not a new member to be added here.
  *
  * Two rules this file exists to make mechanical:
  *
@@ -33,7 +32,7 @@
  *
  * The tuple is the single source of truth for {@link EngineClientErrorCode}, so
  * tests and log filters can iterate the whole set and an exhaustive `Record`
- * fails to compile when a member is added. Order is the documentation order of
+ * fails to compile when a member is added. The order is fixed, not an ordering
  * the code depends on.
  *
  * - `TIMEOUT` - the request or the bounded wait outlived its budget.

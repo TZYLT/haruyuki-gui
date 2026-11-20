@@ -5,9 +5,9 @@
  *
  * This complements `replay.test.ts`: that suite drives hand-built
  * `MergerChange`s, which proves the content layer is deterministic but not that
- * a recorded session survives the whole C1 -> C3 path. Here the frames keep
- * their recorded `event_seq`, `runtime` and idempotency key, so the merger's
- * ordering and dedupe run for real.
+ * a recorded session survives the whole event-merger-to-content-model path.
+ * Here the frames keep their recorded `event_seq`, `runtime` and idempotency
+ * key, so the merger's ordering and dedupe run for real.
  *
  * The recording is read only. It is also the fixture that carries an
  * `approval_classification_end` stream delta, which makes the process-event

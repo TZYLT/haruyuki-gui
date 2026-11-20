@@ -1,13 +1,11 @@
 /**
  * Start-path internals of the engine facade.
  *
- * Shape source: no recursive-B1 sections 3.3 (b) (the frozen spawn spec), 3.3 (c)
- * (the facade surface), 3.3 (e)/(f) and section 4.2 . Everything here is
- * machinery the `Engine` class in `./engine` needs and nothing else: the
- * classified error it rejects with, the single-shot fault signal that lets a dead
- * child end an awaited step early, the race that combines the two, the spawn-spec
- * validation that runs before anything is created, and three small readers that
- * treat a thrown value as untrusted input.
+ * Everything here is machinery the `Engine` class in `./engine` needs and
+ * nothing else: the classified error it rejects with, the single-shot fault
+ * signal that lets a dead child end an awaited step early, the race that combines
+ * the two, the spawn-spec validation that runs before anything is created, and
+ * three small readers that treat a thrown value as untrusted input.
  *
  * Why a separate module: the facade file is the state machine and nothing else.
  * These pieces are pure - no socket, no child, no state - so they can be read and
@@ -21,7 +19,7 @@
 
 import type { EngineErrorCode, EngineSpawnSpec } from "./types";
 
-/** The eight fields of the frozen spawn spec (section 3.3 (b)), in data order. */
+/** The eight fields of the frozen spawn spec, in data order. */
 const SPAWN_SPEC_FIELDS = [
   "exePath",
   "env",

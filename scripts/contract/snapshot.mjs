@@ -1,14 +1,14 @@
 /**
  * snapshot.mjs - assemble the v1 contract snapshot from the frozen extractors.
  *
- * Pipeline (route doc 08 section 3.1):
+ * Pipeline:
  *
  *   engine source -> command records + messages/inbound + parity
  *                 -> this module: capability join, counts, health merge
  *                 -> canonicalizeSnapshot() -> validateSnapshot() -> snapshot
  *
- * The output shape is frozen by route doc 08 section 3.4(a). Key order, array
- * ordering and the "fields only when fieldLevel" rule come from
+ * The output shape is frozen. Key order, array ordering and the "fields only
+ * when fieldLevel" rule come from
  * `lib/schema.mjs`; this module supplies data and lets the validator reject
  * anything else, so no second copy of the shape can drift.
  *
@@ -16,7 +16,7 @@
  *   `fieldLevel` is true exactly when `capabilities.json` registers the wire
  *   with `detail: true`. The detail set is read from the file at runtime and is
  *   never hard-coded, because table B keeps growing in that file. Commands and
- *   flight. Commands and messages share the same rule (today only commands are
+ *   messages share the same rule (today only commands are
  *   registered, but a future detail message would pass through the same join); a
  *   record outside the detail set keeps `fields: []` even though the extractors
  *   extracted fields for it.
@@ -27,7 +27,7 @@
  *     unionMembers        command-union member count (115)
  *     wireCommands        command records with a wire (124; a coarse `wire: null`
  *                         record stays in `commands[]` but is not a wire command,
- *                         matching 07 section 6.6)
+ *                         so the count excludes it)
  *     messages            expanded message records (136, not the 127 union)
  *     inboundAccepted     accepted inbound set size (124)
  *     inboundOnly         accepted set minus the wire command set (0)
@@ -36,9 +36,10 @@
  *
  * Health
  *   `degraded` is true when any extractor degraded, when the type index hit a
- *   parse diagnostic, when the engine `package.json` version cannot be read
- *   (A2-D14) or when the git commit cannot be read. `coarse` and `unparsed` are
- *   deduplicated and sorted: the capability table and  can report the same message-side item,
+ *   parse diagnostic, when the engine `package.json` version cannot be read or
+ *   when the git commit cannot be read. `coarse` and `unparsed` are
+ *   deduplicated and sorted: command and message extraction can report the same
+ *   message-side item,
  *   so raw concatenation is not allowed. A coarse command with a null wire stays
  *   in `commands[]` and makes `validateSnapshot` fail loudly, which is the
  *   intended "no plausible-looking empty result" behaviour.
@@ -249,7 +250,8 @@ function indexHealthForSnapshot(index) {
 /**
  * Render one health entry as a stable ASCII line.
  *
- * the extractors already report strings; `transport.ts` reports structured objects
+ * Command and message extraction already report strings; parity extraction
+ * reports structured objects
  * (`{file, line, symbol, reason}`). Both end up in `health.coarse`, which the
  * frozen schema requires to be an array of strings.
  *

@@ -1,6 +1,5 @@
 /**
- * Gate self-test for scripts/check-frame.mjs - the `frame` gate
- * (docs/21 section 5, C5-R14).
+ * Gate self-test for scripts/check-frame.mjs - the `frame` gate.
  *
  * The gate is spawned as a real child process against a temporary tree, and
  * one case also imports `collectViolations` directly. Nothing inside the gate

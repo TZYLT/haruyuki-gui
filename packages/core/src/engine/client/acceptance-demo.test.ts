@@ -1,8 +1,8 @@
 /**
- * B2 验收演示 —— 不是测试，是**给用户看的一次演示**。
+ * 引擎客户端验收演示 —— 不是测试，是**给用户看的一次演示**。
  *
  * 它跑在测试框架里只因为那是仓库里唯一不需要额外安装东西的 TypeScript
- * 运行器。它做的事是：起一个本机的假引擎，用 B2 的客户端连上去，做四件事，
+ * 运行器。它做的事是：起一个本机的假引擎，用引擎客户端连上去，做四件事，
  * 把每一步**它看见什么**打印出来。
  *
  * 用户看的是打印出来的那几十行，不是测试报告。
@@ -11,7 +11,7 @@
  *
  * 真引擎要 spawn 子进程、写 token 文件、等它变 ready，而用户机器上不一定装了。
  * 假引擎是仓库里已有的 `fixtures/`（`ws` 服务端），它说的协议与真引擎相同——
- * 下面这四件事是 B2 的职责，与引擎真假无关。
+ * 下面这四件事是客户端的职责，与引擎真假无关。
  *
  * ## 这四条为什么值得看
  *
@@ -45,10 +45,10 @@ const { WebSocketServer } = require("ws");
  * than spelled here.
  *
  * The wire-vocabulary rule keeps engine vocabulary out of this directory, and the
- * over every file - including test files that would otherwise be a convenient
- * place to write "just this one type name". Reading them from the snapshot keeps
- * the demo honest about speaking the real protocol without becoming a second
- * source of names.
+ * `capability-names.test.ts` scan enforces it over every file - including test
+ * files that would otherwise be a convenient place to write "just this one type
+ * name". Reading them from the snapshot keeps the demo honest about speaking the
+ * real protocol without becoming a second source of names.
  */
 function demoTypes(): {
   readonly handshakeReply: string;
@@ -253,7 +253,7 @@ function wire(transport: EngineTransport, channel: ReturnType<typeof createChann
 /* 演示                                                                      */
 /* ------------------------------------------------------------------------- */
 
-describe("B2 acceptance demo", () => {
+describe("engine client acceptance demo", () => {
   it("shows four behaviours a person can judge", async () => {
     const engine = await startDemoEngine();
     const teardown: (() => void)[] = [];
@@ -261,7 +261,7 @@ describe("B2 acceptance demo", () => {
     try {
       say();
       say("================================");
-      say(" B2 acceptance demo");
+      say(" engine client acceptance demo");
       say("================================");
       info(`a stand-in engine is listening at ${engine.url}`);
       info("(that port number is different every run - it is a free port, not a check)");

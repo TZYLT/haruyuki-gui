@@ -1,5 +1,5 @@
 /**
- * Bounded stderr tail for the engine facade (B1 document-level contract v1.1).
+ * Bounded stderr tail for the engine facade.
  *
  * The watch package owns the single stderr reader in `spawn.ts` (`drainStream`);
  * this class is only a subscriber to that reader. It must never attach its own

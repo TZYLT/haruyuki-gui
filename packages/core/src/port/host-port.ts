@@ -2,20 +2,20 @@
  * Host port: what the shell (Electron main, a VSCode webview host, or the
  * headless test runner) must provide to the engine host, and nothing more.
  *
- * Shape source: no recursive-B1 section 3.3(a) for the startup subset, extended by
- * docs/18-A3 section 3.4.1 to the nine-item `nine-item contract` contract. Semantics come
- * from docs/01-3 section 2.2, and the headless reading of each item from
- * docs/17-A3 section 4.1; where those disagree with the frozen shape, the shape
- * in section 3.4.1 wins. This file is types only on purpose - the Electron
- * implementation and the headless implementation both live elsewhere (the
- * headless one in `send.ts`), so the contract stays implementable in a plain `node`
+ * `HostPortStartup` freezes the startup subset and `HostPort` extends it to the
+ * nine-item contract. The declarations here are the definition: where an
+ * implementation's reading of a member disagrees with this file, this file
+ * wins. This file is types only on purpose - the Electron implementation and
+ * the headless implementation both live elsewhere (the headless one in
+ * `headless-host-port.ts`), so the contract stays implementable in a plain `node`
  * process and therefore testable without a desktop shell.
  *
- * The shapes are spelled inline to mirror the frozen contract literally: the
- * shared contract test  reads this interface as the definition of `HostPortStartup`, and
- * a one-to-one match keeps that comparison mechanical. `HostPortStartup` is
- * ``HostPortStartup` v1` and stays byte-for-byte unchanged: the B1 regression depends on it,
- * and the six new items are a pure addition rather than a revision.
+ * The shapes are spelled inline so the whole contract is readable in one
+ * place: the shared contract test (`contract.test.ts`) reads this interface as
+ * the definition, and a one-to-one match keeps that comparison mechanical.
+ * `HostPortStartup` stays byte-for-byte unchanged: the startup contract is
+ * already consumed, and the six new members are a pure addition rather than a
+ * revision.
  */
 
 import type { EngineSpawnSpec } from "../engine/types";
@@ -65,15 +65,14 @@ export interface HostPortStartup {
 }
 
 /**
- * The full `nine-item contract` port: the three startup items above plus the six
- * capabilities that genuinely differ between shells , so the corpus-A3 section 3.4.1,
- * frozen).
+ * The full nine-item port: the three startup items above plus the six
+ * capabilities that genuinely differ between shells.
  *
  * Two properties hold for every member that returns a promise: it is `async`
  * even when the answer is already known, and it reports its documented failures
  * as a value (`ok: false` plus a frozen code) instead of throwing. The three
  * synchronous members are the ones the contract calls sync values or sync
- * sync registration: `capabilities`, `paths` and `onShutdown`.
+ * registration: `capabilities`, `paths` and `onShutdown`.
  *
  * The union return types are frozen. Do not add a code, widen a code to
  * `string`, or turn a success/failure union into a thrown error: the shells are
@@ -125,7 +124,7 @@ export interface HostPort extends HostPortStartup {
    * Ask the user for files or a directory.
    *
    * A user cancellation is an empty array, not an error: "nobody picked
-   * item 5): "nobody picked anything" is a normal outcome of opening a dialog.
+   * anything" is a normal outcome of opening a dialog.
    */
   pickPaths(opts: { kind: "file" | "directory"; multiple?: boolean }): Promise<string[]>;
 
@@ -147,9 +146,9 @@ export interface HostPort extends HostPortStartup {
    * Register a callback that runs when the shell shuts down.
    *
    * Synchronous registration: a caller must be able to register from a
-   * able to register from a synchronous context, and the "async execution" half
-   * belongs to whoever triggers the shutdown. This is a courtesy hook, not a
-   * safety net - a crash or a hard kill skips it, which is why the watchdog
+   * synchronous context, and the "async execution" half belongs to whoever
+   * triggers the shutdown. This is a courtesy hook, not a safety net - a crash
+   * or a hard kill skips it, which is why the watchdog in `watchdog-watch.ts`
    * exists and why orphan cleanup may not depend on this callback.
    */
   onShutdown(cb: () => void): void;
@@ -158,8 +157,8 @@ export interface HostPort extends HostPortStartup {
    * Raise a system notification.
    *
    * Optional capability: when `canNotify` is false the call succeeds silently
-   * false the call succeeds silently and the refusal is expressed by the flag,
-   * never by an error, so a caller's notification path needs no branch.
+   * and the refusal is expressed by the flag, never by an error, so a caller's
+   * notification path needs no branch.
    */
   notify(level: "info" | "warn" | "error", message: string): Promise<void>;
 
@@ -168,9 +167,9 @@ export interface HostPort extends HostPortStartup {
    * base64 when the shell cannot expose a readable path.
    *
    * Optional capability: a host without it answers `UNSUPPORTED` and the caller
-   * answers `UNSUPPORTED` and the caller falls back to `pickPaths`. The
-   * per-entry shape keeps `name` always and makes `path`/`base64` alternatives,
-   * because a shell may hand over one or the other but never needs both.
+   * falls back to `pickPaths`. The per-entry shape keeps `name` always and
+   * makes `path`/`base64` alternatives, because a shell may hand over one or
+   * the other but never needs both.
    */
   readDroppedFiles(
     files: readonly { name: string; path?: string }[],

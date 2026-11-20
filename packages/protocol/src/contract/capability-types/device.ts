@@ -2,7 +2,7 @@
  * Capability IO for the `device` family.
  *
  * `device.info` is the capability probe itself: its payload carries the engine
- * version and the coarse feature flags that `availabilityOf` consumes
+ * version and the coarse feature flags that `availabilityOf` consumes.
  * `device.setState` is untracked — no reply frame, so its
  * output is `never`.
  */

@@ -1,5 +1,5 @@
 /**
- * Tests for the three-channel bounded queue (C5).
+ * Tests for the three-channel bounded queue.
  *
  * The hard semantics under test come from a measurement, not from taste: a
  * producer that blocks on a full buffer stalls the engine, and silently
